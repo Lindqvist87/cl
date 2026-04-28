@@ -19,13 +19,16 @@ export async function GET(
   }
 
   const buffer = await auditReportToDocxBuffer(report, report.manuscript.title);
+  const body = new Uint8Array(buffer.byteLength);
+  body.set(buffer);
   const fileName = `${safeFileName(report.manuscript.title)}-audit.docx`;
 
-  return new Response(buffer, {
+  return new Response(body, {
     headers: {
       "Content-Type":
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "Content-Disposition": `attachment; filename="${fileName}"`
+      "Content-Disposition": `attachment; filename="${fileName}"`,
+      "Content-Length": buffer.byteLength.toString()
     }
   });
 }
