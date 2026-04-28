@@ -1,0 +1,51 @@
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { PlayCircle } from "lucide-react";
+
+export function AuditButton({
+  manuscriptId,
+  disabled
+}: {
+  manuscriptId: string;
+  disabled?: boolean;
+}) {
+  const router = useRouter();
+  const [isRunning, setIsRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function runAudit() {
+    setIsRunning(true);
+    setError(null);
+
+    const response = await fetch(`/api/manuscripts/${manuscriptId}/audit`, {
+      method: "POST"
+    });
+    const payload = (await response.json()) as { error?: string };
+
+    setIsRunning(false);
+
+    if (!response.ok) {
+      setError(payload.error ?? "Audit failed.");
+      return;
+    }
+
+    router.refresh();
+  }
+
+  return (
+    <div className="flex flex-col gap-2">
+      <button
+        type="button"
+        onClick={runAudit}
+        disabled={disabled || isRunning}
+        className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 bg-ink px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+      >
+        <PlayCircle size={18} aria-hidden="true" />
+        {isRunning ? "Running Audit..." : "Run Manuscript Audit"}
+      </button>
+      {error ? <p className="text-sm text-danger">{error}</p> : null}
+    </div>
+  );
+}

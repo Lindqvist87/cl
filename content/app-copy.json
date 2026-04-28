@@ -1,0 +1,27 @@
+{
+  "metadata": {
+    "title": "Manuscript Audit",
+    "description": "Chunked manuscript analysis and rewrite MVP"
+  },
+  "shell": {
+    "brand": "Manuscript Audit",
+    "badge": "MVP 1"
+  },
+  "dashboard": {
+    "title": "Manuscripts",
+    "intro": "Upload a full manuscript, split it into structured chunks, and run a resumable audit pipeline.",
+    "sectionTitle": "Recent Manuscripts",
+    "emptyState": "No manuscripts uploaded yet.",
+    "metrics": {
+      "words": "Words",
+      "chapters": "Chapters",
+      "status": "Status"
+    }
+  },
+  "upload": {
+    "emptyFileError": "Choose a .txt or .docx manuscript.",
+    "failedError": "Upload failed.",
+    "idleLabel": "Upload Manuscript",
+    "busyLabel": "Uploading..."
+  }
+}

@@ -1,0 +1,262 @@
+generator client {
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
+}
+
+datasource db {
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [vector]
+}
+
+enum ManuscriptFormat {
+  TXT
+  DOCX
+}
+
+enum AnalysisStatus {
+  NOT_STARTED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum AnalysisRunStatus {
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum AnalysisOutputStatus {
+  COMPLETED
+  FAILED
+}
+
+enum AnalysisPassType {
+  PREMISE_GENRE
+  STRUCTURE
+  PACING
+  CHARACTER
+  PROSE_STYLE
+  COMMERCIAL_MARKET_FIT
+  SYNTHESIS
+  REWRITE
+}
+
+model Manuscript {
+  id             String         @id @default(cuid())
+  title          String
+  sourceFileName String
+  sourceMimeType String?
+  sourceFormat   ManuscriptFormat
+  wordCount      Int            @default(0)
+  chapterCount   Int            @default(0)
+  paragraphCount Int            @default(0)
+  chunkCount     Int            @default(0)
+  analysisStatus AnalysisStatus @default(NOT_STARTED)
+  metadata       Json?
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  chapters  Chapter[]
+  scenes    Scene[]
+  paragraphs Paragraph[]
+  chunks    ManuscriptChunk[]
+  runs      AnalysisRun[]
+  reports   AuditReport[]
+  rewrites  ChapterRewrite[]
+  versions  ManuscriptVersion[]
+  outputs   AnalysisOutput[]
+
+  @@index([createdAt])
+  @@index([analysisStatus])
+}
+
+model ManuscriptVersion {
+  id             String   @id @default(cuid())
+  manuscriptId   String
+  versionNumber  Int
+  sourceText     String
+  sourceHash     String
+  parserVersion  String
+  createdAt      DateTime @default(now())
+
+  manuscript Manuscript @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+
+  @@unique([manuscriptId, versionNumber])
+  @@index([sourceHash])
+}
+
+model Chapter {
+  id           String     @id @default(cuid())
+  manuscriptId String
+  order        Int
+  title        String
+  heading      String?
+  wordCount    Int        @default(0)
+  startOffset  Int?
+  endOffset    Int?
+  createdAt    DateTime   @default(now())
+
+  manuscript Manuscript        @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  scenes     Scene[]
+  paragraphs Paragraph[]
+  chunks     ManuscriptChunk[]
+  rewrites   ChapterRewrite[]
+
+  @@unique([manuscriptId, order])
+  @@index([manuscriptId])
+}
+
+model Scene {
+  id           String   @id @default(cuid())
+  manuscriptId String
+  chapterId    String
+  order        Int
+  title        String
+  wordCount    Int      @default(0)
+  marker       String?
+  createdAt    DateTime @default(now())
+
+  manuscript Manuscript        @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  chapter    Chapter           @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  paragraphs Paragraph[]
+  chunks     ManuscriptChunk[]
+
+  @@unique([chapterId, order])
+  @@index([manuscriptId])
+}
+
+model Paragraph {
+  id                 String   @id @default(cuid())
+  manuscriptId       String
+  chapterId          String
+  sceneId            String
+  globalOrder        Int
+  chapterOrder       Int
+  sceneOrder         Int
+  text               String
+  wordCount          Int      @default(0)
+  approximateOffset  Int?
+  createdAt          DateTime @default(now())
+
+  manuscript Manuscript @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  chapter    Chapter    @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  scene      Scene      @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+
+  @@unique([manuscriptId, globalOrder])
+  @@index([chapterId])
+  @@index([sceneId])
+}
+
+model ManuscriptChunk {
+  id                 String   @id @default(cuid())
+  manuscriptId       String
+  chapterId          String
+  sceneId            String?
+  chunkIndex         Int
+  text               String
+  wordCount          Int      @default(0)
+  startParagraph     Int
+  endParagraph       Int
+  tokenEstimate      Int      @default(0)
+  metadata           Json?
+  embedding          Unsupported("vector(1536)")?
+  createdAt          DateTime @default(now())
+
+  manuscript Manuscript       @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  chapter    Chapter          @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  scene      Scene?           @relation(fields: [sceneId], references: [id], onDelete: SetNull)
+  outputs    AnalysisOutput[]
+
+  @@unique([manuscriptId, chunkIndex])
+  @@index([manuscriptId])
+  @@index([chapterId])
+}
+
+model AnalysisRun {
+  id           String            @id @default(cuid())
+  manuscriptId String
+  status       AnalysisRunStatus @default(RUNNING)
+  currentPass  AnalysisPassType?
+  globalMemory Json?
+  checkpoint   Json?
+  error        String?
+  startedAt    DateTime          @default(now())
+  completedAt  DateTime?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  manuscript Manuscript       @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  outputs    AnalysisOutput[]
+  report     AuditReport?
+  rewrites   ChapterRewrite[]
+
+  @@index([manuscriptId, status])
+}
+
+model AnalysisOutput {
+  id             String               @id @default(cuid())
+  runId          String
+  manuscriptId   String
+  passType       AnalysisPassType
+  scopeType      String
+  scopeId        String
+  chunkId        String?
+  chapterId      String?
+  promptVersion  String
+  model          String
+  inputSummary   Json?
+  output         Json
+  rawText        String?
+  status         AnalysisOutputStatus @default(COMPLETED)
+  error          String?
+  createdAt      DateTime             @default(now())
+
+  run        AnalysisRun      @relation(fields: [runId], references: [id], onDelete: Cascade)
+  manuscript Manuscript       @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  chunk      ManuscriptChunk? @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+
+  @@unique([runId, passType, scopeType, scopeId])
+  @@index([manuscriptId, passType])
+  @@index([chunkId])
+}
+
+model AuditReport {
+  id               String   @id @default(cuid())
+  manuscriptId     String
+  runId            String   @unique
+  executiveSummary String
+  topIssues        Json
+  chapterNotes     Json
+  rewriteStrategy  String
+  structured       Json
+  markdown         String
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  manuscript Manuscript @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  run        AnalysisRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@index([manuscriptId])
+}
+
+model ChapterRewrite {
+  id            String   @id @default(cuid())
+  manuscriptId  String
+  chapterId     String
+  runId         String?
+  promptVersion String
+  model         String
+  sourceSummary Json?
+  content       String
+  rationale     Json?
+  createdAt     DateTime @default(now())
+
+  manuscript Manuscript  @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  chapter    Chapter     @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  run        AnalysisRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+
+  @@index([manuscriptId])
+  @@index([chapterId])
+}
