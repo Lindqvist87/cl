@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build",
+    "build": "node scripts/apply-migrations-if-configured.mjs && next build",
     "start": "next start",
     "lint": "next lint",
     "test": "tsx --test tests/parsing.test.ts tests/chunking.test.ts tests/pipelineSteps.test.ts",

@@ -7,16 +7,14 @@ import { UploadForm } from "@/components/UploadForm";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  const manuscripts = await prisma.manuscript.findMany({
-    orderBy: { createdAt: "desc" },
-    take: 20,
-    include: {
-      reports: {
-        orderBy: { createdAt: "desc" },
-        take: 1
-      }
-    }
-  });
+  let dbError: string | null = null;
+  let manuscripts: Awaited<ReturnType<typeof getDashboardManuscripts>> = [];
+
+  try {
+    manuscripts = await getDashboardManuscripts();
+  } catch (error) {
+    dbError = error instanceof Error ? error.message : "Database is unavailable.";
+  }
 
   return (
     <div className="space-y-6">
@@ -31,6 +29,8 @@ export default async function DashboardPage() {
         </div>
         <UploadForm />
       </section>
+
+      {dbError ? <DatabaseErrorPanel message={dbError} /> : null}
 
       <section className="border border-line bg-white shadow-panel">
         <div className="border-b border-line px-4 py-3">
@@ -81,6 +81,37 @@ export default async function DashboardPage() {
         )}
       </section>
     </div>
+  );
+}
+
+function getDashboardManuscripts() {
+  return prisma.manuscript.findMany({
+    orderBy: { createdAt: "desc" },
+    take: 20,
+    include: {
+      reports: {
+        orderBy: { createdAt: "desc" },
+        take: 1
+      }
+    }
+  });
+}
+
+function DatabaseErrorPanel({ message }: { message: string }) {
+  return (
+    <section className="border border-danger bg-white p-4 shadow-panel">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-danger">
+        Database setup needs attention
+      </h2>
+      <p className="mt-2 text-sm leading-6 text-slate-700">
+        The app is deployed, but the database could not be read. If this happened
+        right after a schema change, run the production Prisma migration or redeploy
+        with `DATABASE_URL` available during build.
+      </p>
+      <p className="mt-3 break-words bg-paper p-3 text-xs text-slate-600">
+        {message}
+      </p>
+    </section>
   );
 }
 
