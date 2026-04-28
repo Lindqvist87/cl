@@ -1,17 +1,26 @@
-# Manuscript Audit MVP
+# Manuscript Intelligence V2
 
-Production-oriented MVP for manuscript upload, parsing, chunked AI analysis, audit reporting, and a demo chapter rewrite flow.
+Next.js manuscript analysis and rewrite engine with a database-backed, resumable pipeline.
 
 ## Stack
 
 - Next.js App Router, TypeScript, Tailwind
-- Postgres with Prisma
-- pgvector-ready schema via `Unsupported("vector(1536)")`
-- OpenAI API, with deterministic local stubs when `OPENAI_API_KEY` is missing
-- `.txt` and `.docx` import, Markdown report export, basic DOCX report export route
-- pgvector is enabled through a custom migration with `CREATE EXTENSION IF NOT EXISTS vector`
+- Vercel deployment target
+- Postgres with Prisma and pgvector
+- Neon Postgres-compatible schema
+- OpenAI API for chunked editorial analysis, benchmarking, trend comparison, rewrite planning, and chapter rewrites
+- Deterministic local stubs when `OPENAI_API_KEY` is missing
 
-## Run locally
+## What V2 Adds
+
+- Full manuscript pipeline: parse, chapters, chunks, embeddings, chunk summaries, chapter summaries, manuscript profile, chapter audits, whole-book audit, corpus comparison, trend comparison, rewrite plan, and chapter rewrite drafts.
+- Literature corpus tables for Project Gutenberg, Litteraturbanken/Sprakbanken, DOAB, manual imports, and private references.
+- Rights tracking per corpus book: public domain, open license, licensed, private reference, metadata only, and unknown.
+- Trend signal storage for public metadata and market signals without storing copyrighted full text.
+- Audit exports as Markdown and JSON.
+- Rewritten chapter and full rewritten manuscript Markdown exports.
+
+## Run Locally
 
 1. Copy `.env.example` to `.env`.
 2. Start Postgres:
@@ -20,11 +29,12 @@ Production-oriented MVP for manuscript upload, parsing, chunked AI analysis, aud
 docker compose up -d
 ```
 
-3. Install dependencies and create the database schema:
+3. Install dependencies and apply migrations:
 
 ```bash
 npm install
-npx prisma migrate dev --name init
+npx prisma migrate dev
+npx prisma db seed
 ```
 
 4. Start the app:
@@ -35,19 +45,73 @@ npm run dev
 
 Open `http://localhost:3000`.
 
-Prisma Studio may not be able to display tables with `vector` columns. Use the app UI or SQL queries for chunk records if Studio complains about the unsupported vector type.
+## Environment
 
-## Git-hosted content and deployment
+```bash
+DATABASE_URL="postgresql://postgres:postgres@localhost:5432/manuscript_audit?schema=public"
+OPENAI_API_KEY=""
+OPENAI_EDITOR_MODEL="gpt-5.5"
+OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
+NEXT_PUBLIC_APP_NAME="Manuscript Audit"
+```
 
-Editable app copy starts in `content/app-copy.json`, so text-only changes can be made through GitHub, Codex, or a local editor and then deployed by pushing the repo.
+`OPENAI_EDITOR_MODEL` drives the v2 structured editorial services. The older MVP audit/rewrite model variables are still accepted for compatibility with the legacy route code.
 
-For repository setup, production environment variables, and hosting notes, see `docs/git-hosting-workflow.md`.
+## V2 Pipeline
 
-## Architecture notes
+`runFullManuscriptPipeline(manuscriptId)` lives in `lib/pipeline/manuscriptPipeline.ts`.
 
-- The full manuscript is never sent to the model in a single request.
-- Upload parsing creates chapters, scenes, paragraphs, and chunks.
-- Analysis runs are resumable: each pass/chunk output is stored with a unique scope key, and reruns skip completed outputs.
-- The pipeline builds batch summaries, pass summaries, and a global manuscript memory object instead of sending all chunk outputs to one prompt.
-- Every AI response is persisted in `AnalysisOutput`.
-- The trend engine is intentionally a stubbed interface for MVP 1.
+Steps are checkpointed on `AnalysisRun.checkpoint` and skip completed work on resume:
+
+1. `parseAndNormalizeManuscript`
+2. `splitIntoChapters`
+3. `splitIntoChunks`
+4. `createEmbeddingsForChunks`
+5. `summarizeChunks`
+6. `summarizeChapters`
+7. `createManuscriptProfile`
+8. `runChapterAudits`
+9. `runWholeBookAudit`
+10. `compareAgainstCorpus`
+11. `compareAgainstTrendSignals`
+12. `createRewritePlan`
+13. `generateChapterRewriteDrafts`
+
+The full manuscript is never sent in one model call. Chunk, chapter, whole-book, corpus, trend, rewrite-plan, and chapter-rewrite outputs are persisted in the database.
+
+## Corpus And Rights
+
+Use `/corpus` for manual imports. A rights status is required before import. Full text is only stored for:
+
+- `PUBLIC_DOMAIN`
+- `OPEN_LICENSE`
+- `LICENSED`
+- `PRIVATE_REFERENCE`
+
+`METADATA_ONLY` and `UNKNOWN` records store metadata only. API adapter stubs exist for Gutenberg, Litteraturbanken/Sprakbanken, and DOAB.
+
+## Trends
+
+Use `/trends` to add public metadata signals. Trend rows are metadata and snippets only, not full copyrighted books. Google Books and NYT adapter stubs are present for later credentialed ingestion.
+
+## Deploy On Vercel
+
+1. Provision Neon Postgres with pgvector enabled.
+2. Set `DATABASE_URL`, `OPENAI_API_KEY`, `OPENAI_EDITOR_MODEL`, and `OPENAI_EMBEDDING_MODEL` in Vercel project settings.
+3. Run Prisma migrations against Neon during deployment or from a trusted local machine:
+
+```bash
+npx prisma migrate deploy
+```
+
+4. Deploy the Next.js app to Vercel.
+
+Long analysis jobs can exceed serverless duration for very large manuscripts. The v2 pipeline is resumable, so failed or timed-out jobs can be rerun and will skip completed steps and stored AI outputs.
+
+## Tests
+
+```bash
+npm test
+```
+
+Tests cover chapter parsing, chunking, and pipeline checkpoint idempotency.

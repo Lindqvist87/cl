@@ -20,7 +20,11 @@ export default function RootLayout({
             <a href="/" className="text-base font-semibold tracking-normal">
               {copy.shell.brand}
             </a>
-            <span className="text-sm text-slate-500">{copy.shell.badge}</span>
+            <nav className="flex items-center gap-4 text-sm text-slate-600">
+              <a href="/corpus" className="hover:text-ink">Corpus</a>
+              <a href="/trends" className="hover:text-ink">Trends</a>
+              <span>{copy.shell.badge}</span>
+            </nav>
           </div>
         </div>
         <main className="mx-auto max-w-6xl px-5 py-6">{children}</main>

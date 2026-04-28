@@ -10,6 +10,9 @@ type CreateManuscriptInput = {
   sourceFileName: string;
   sourceMimeType?: string;
   sourceFormat: Prisma.ManuscriptCreateInput["sourceFormat"];
+  authorName?: string;
+  targetGenre?: string;
+  targetAudience?: string;
 };
 
 export async function createStoredManuscript(input: CreateManuscriptInput) {
@@ -17,9 +20,13 @@ export async function createStoredManuscript(input: CreateManuscriptInput) {
     const manuscript = await tx.manuscript.create({
       data: {
         title: input.parsed.title,
+        authorName: input.authorName,
+        targetGenre: input.targetGenre,
+        targetAudience: input.targetAudience,
         sourceFileName: input.sourceFileName,
         sourceMimeType: input.sourceMimeType,
         sourceFormat: input.sourceFormat,
+        originalText: input.parsed.normalizedText,
         wordCount: input.parsed.wordCount,
         chapterCount: input.parsed.chapters.length,
         paragraphCount: input.parsed.paragraphCount,
@@ -44,12 +51,18 @@ export async function createStoredManuscript(input: CreateManuscriptInput) {
     const sceneIdByKey = new Map<string, string>();
 
     for (const chapter of input.parsed.chapters) {
-      const storedChapter = await tx.chapter.create({
+      const chapterText = chapter.scenes
+        .flatMap((scene) => scene.paragraphs.map((paragraph) => paragraph.text))
+        .join("\n\n");
+
+      const storedChapter = await tx.manuscriptChapter.create({
         data: {
           manuscriptId: manuscript.id,
           order: chapter.order,
+          chapterIndex: chapter.order,
           title: chapter.title,
           heading: chapter.heading,
+          text: chapterText,
           wordCount: chapter.wordCount,
           startOffset: chapter.startOffset,
           endOffset: chapter.endOffset
@@ -110,7 +123,10 @@ export async function createStoredManuscript(input: CreateManuscriptInput) {
             wordCount: chunk.wordCount,
             startParagraph: chunk.startParagraph,
             endParagraph: chunk.endParagraph,
+            paragraphStart: chunk.startParagraph,
+            paragraphEnd: chunk.endParagraph,
             tokenEstimate: chunk.tokenEstimate,
+            tokenCount: chunk.tokenEstimate,
             metadata: jsonInput(chunk.metadata)
           };
         })

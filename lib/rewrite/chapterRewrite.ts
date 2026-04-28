@@ -117,6 +117,16 @@ export async function rewriteChapterOne(manuscriptId: string) {
       runId: latestRun?.id,
       promptVersion: PROMPT_VERSION,
       model: hasOpenAIKey() ? REWRITE_MODEL : "stub",
+      originalText: chapter.text,
+      rewrittenText: rewrittenParts.join("\n\n"),
+      changeLog: jsonInput({
+        notes: rationales.slice(0, 30)
+      }),
+      continuityNotes: jsonInput({
+        basedOnAuditRun: latestRun?.id,
+        scope: "chapter-1-demo"
+      }),
+      status: "DRAFT",
       sourceSummary: jsonInput({
         chunkCount: chunks.length,
         basedOnAuditRun: latestRun?.id

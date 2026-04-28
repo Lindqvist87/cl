@@ -22,6 +22,7 @@ enum AnalysisStatus {
 }
 
 enum AnalysisRunStatus {
+  QUEUED
   RUNNING
   COMPLETED
   FAILED
@@ -41,11 +42,195 @@ enum AnalysisPassType {
   COMMERCIAL_MARKET_FIT
   SYNTHESIS
   REWRITE
+  CHUNK_ANALYSIS
+  CHAPTER_AUDIT
+  WHOLE_BOOK_AUDIT
+  CORPUS_COMPARISON
+  TREND_COMPARISON
+  REWRITE_PLAN
+  CHAPTER_REWRITE
+}
+
+enum AnalysisRunType {
+  FULL_AUDIT
+  CHAPTER_AUDIT
+  CORPUS_COMPARISON
+  TREND_COMPARISON
+  REWRITE_PLAN
+  CHAPTER_REWRITE
+}
+
+enum SourceType {
+  GUTENBERG
+  LITTERATURBANKEN
+  SPRAKBANKEN
+  DOAB
+  GOOGLE_BOOKS
+  NYT_BOOKS
+  MANUAL
+  PRIVATE
+}
+
+enum RightsStatus {
+  PUBLIC_DOMAIN
+  OPEN_LICENSE
+  LICENSED
+  PRIVATE_REFERENCE
+  METADATA_ONLY
+  UNKNOWN
+}
+
+enum CorpusIngestionStatus {
+  QUEUED
+  IMPORTED
+  CHUNKED
+  PROFILED
+  FAILED
+  METADATA_ONLY
+}
+
+enum CorpusAnalysisStatus {
+  NOT_STARTED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model Source {
+  id          String     @id @default(cuid())
+  name        String
+  type        SourceType
+  baseUrl     String?
+  rightsNotes String?
+  createdAt   DateTime   @default(now())
+
+  books CorpusBook[]
+
+  @@index([type])
+}
+
+model CorpusBook {
+  id                String                 @id @default(cuid())
+  sourceId          String
+  title             String
+  author            String?
+  language          String?
+  publicationYear   Int?
+  genre             String?
+  sourceUrl         String?
+  rightsStatus      RightsStatus           @default(UNKNOWN)
+  licenseType       String?
+  allowedUses       Json?
+  fullTextAvailable Boolean                @default(false)
+  ingestionStatus   CorpusIngestionStatus  @default(QUEUED)
+  analysisStatus    CorpusAnalysisStatus   @default(NOT_STARTED)
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  source  Source           @relation(fields: [sourceId], references: [id], onDelete: Cascade)
+  text    CorpusBookText?
+  chunks  CorpusChunk[]
+  profile BookProfile?
+
+  @@index([sourceId])
+  @@index([rightsStatus])
+  @@index([ingestionStatus])
+  @@index([analysisStatus])
+  @@index([genre])
+  @@index([language])
+}
+
+model CorpusBookText {
+  id          String   @id @default(cuid())
+  bookId      String   @unique
+  rawText     String
+  cleanedText String
+  wordCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  book CorpusBook @relation(fields: [bookId], references: [id], onDelete: Cascade)
+}
+
+model CorpusChunk {
+  id             String                     @id @default(cuid())
+  bookId         String
+  chapterIndex   Int?
+  sectionIndex   Int?
+  paragraphIndex Int?
+  chunkIndex     Int
+  text           String
+  tokenCount     Int                        @default(0)
+  embedding      Unsupported("vector(1536)")?
+  summary        String?
+  metrics        Json?
+  createdAt      DateTime                   @default(now())
+
+  book CorpusBook @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@unique([bookId, chunkIndex])
+  @@index([bookId])
+  @@index([chapterIndex])
+}
+
+model BookProfile {
+  id                       String   @id @default(cuid())
+  bookId                   String   @unique
+  wordCount                Int      @default(0)
+  chapterCount             Int      @default(0)
+  avgChapterWords          Int      @default(0)
+  avgSentenceLength        Float    @default(0)
+  dialogueRatio            Float    @default(0)
+  expositionRatio          Float    @default(0)
+  actionRatio              Float    @default(0)
+  introspectionRatio       Float    @default(0)
+  lexicalDensity           Float    @default(0)
+  povEstimate              String?
+  tenseEstimate            String?
+  openingHookType          String?
+  pacingCurve              Json?
+  emotionalIntensityCurve  Json?
+  conflictDensityCurve     Json?
+  chapterEndingPatterns    Json?
+  styleFingerprint         Json?
+  genreMarkers             Json?
+  tropeMarkers             Json?
+  createdAt                DateTime @default(now())
+
+  book CorpusBook @relation(fields: [bookId], references: [id], onDelete: Cascade)
+}
+
+model TrendSignal {
+  id            String   @id @default(cuid())
+  source        String
+  title         String?
+  author        String?
+  genre         String?
+  category      String?
+  rank          Int?
+  listName      String?
+  signalDate    DateTime?
+  description   String?
+  blurb         String?
+  reviewSnippet String?
+  externalUrl   String?
+  metadata      Json?
+  createdAt     DateTime @default(now())
+
+  @@index([source])
+  @@index([genre])
+  @@index([category])
+  @@index([signalDate])
+  @@index([rank])
 }
 
 model Manuscript {
   id             String         @id @default(cuid())
   title          String
+  authorName     String?
+  targetGenre    String?
+  targetAudience String?
+  originalFileUrl String?
+  originalText   String?
   sourceFileName String
   sourceMimeType String?
   sourceFormat   ManuscriptFormat
@@ -53,23 +238,29 @@ model Manuscript {
   chapterCount   Int            @default(0)
   paragraphCount Int            @default(0)
   chunkCount     Int            @default(0)
+  status         String         @default("UPLOADED")
   analysisStatus AnalysisStatus @default(NOT_STARTED)
   metadata       Json?
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @updatedAt
 
-  chapters  Chapter[]
-  scenes    Scene[]
-  paragraphs Paragraph[]
-  chunks    ManuscriptChunk[]
-  runs      AnalysisRun[]
-  reports   AuditReport[]
-  rewrites  ChapterRewrite[]
-  versions  ManuscriptVersion[]
-  outputs   AnalysisOutput[]
+  chapters     ManuscriptChapter[]
+  scenes       Scene[]
+  paragraphs   Paragraph[]
+  chunks       ManuscriptChunk[]
+  profile      ManuscriptProfile?
+  runs         AnalysisRun[]
+  reports      AuditReport[]
+  rewrites     ChapterRewrite[]
+  versions     ManuscriptVersion[]
+  outputs      AnalysisOutput[]
+  findings     Finding[]
+  rewritePlans RewritePlan[]
 
   @@index([createdAt])
   @@index([analysisStatus])
+  @@index([status])
+  @@index([targetGenre])
 }
 
 model ManuscriptVersion {
@@ -87,25 +278,33 @@ model ManuscriptVersion {
   @@index([sourceHash])
 }
 
-model Chapter {
-  id           String     @id @default(cuid())
+model ManuscriptChapter {
+  id           String   @id @default(cuid())
   manuscriptId String
   order        Int
+  chapterIndex Int      @default(0)
   title        String
   heading      String?
-  wordCount    Int        @default(0)
+  text         String   @default("")
+  summary      String?
+  wordCount    Int      @default(0)
+  status       String   @default("PENDING")
   startOffset  Int?
   endOffset    Int?
-  createdAt    DateTime   @default(now())
+  createdAt    DateTime @default(now())
 
   manuscript Manuscript        @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
   scenes     Scene[]
   paragraphs Paragraph[]
   chunks     ManuscriptChunk[]
   rewrites   ChapterRewrite[]
+  findings   Finding[]
 
+  @@map("Chapter")
   @@unique([manuscriptId, order])
   @@index([manuscriptId])
+  @@index([manuscriptId, chapterIndex])
+  @@index([status])
 }
 
 model Scene {
@@ -119,7 +318,7 @@ model Scene {
   createdAt    DateTime @default(now())
 
   manuscript Manuscript        @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
-  chapter    Chapter           @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  chapter    ManuscriptChapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
   paragraphs Paragraph[]
   chunks     ManuscriptChunk[]
 
@@ -140,9 +339,9 @@ model Paragraph {
   approximateOffset  Int?
   createdAt          DateTime @default(now())
 
-  manuscript Manuscript @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
-  chapter    Chapter    @relation(fields: [chapterId], references: [id], onDelete: Cascade)
-  scene      Scene      @relation(fields: [sceneId], references: [id], onDelete: Cascade)
+  manuscript Manuscript        @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  chapter    ManuscriptChapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  scene      Scene             @relation(fields: [sceneId], references: [id], onDelete: Cascade)
 
   @@unique([manuscriptId, globalOrder])
   @@index([chapterId])
@@ -150,49 +349,83 @@ model Paragraph {
 }
 
 model ManuscriptChunk {
-  id                 String   @id @default(cuid())
+  id                 String                     @id @default(cuid())
   manuscriptId       String
   chapterId          String
   sceneId            String?
   chunkIndex         Int
   text               String
-  wordCount          Int      @default(0)
+  wordCount          Int                        @default(0)
   startParagraph     Int
   endParagraph       Int
-  tokenEstimate      Int      @default(0)
+  paragraphStart     Int?
+  paragraphEnd       Int?
+  tokenEstimate      Int                        @default(0)
+  tokenCount         Int                        @default(0)
   metadata           Json?
+  localMetrics       Json?
+  summary            String?
   embedding          Unsupported("vector(1536)")?
-  createdAt          DateTime @default(now())
+  createdAt          DateTime                   @default(now())
 
-  manuscript Manuscript       @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
-  chapter    Chapter          @relation(fields: [chapterId], references: [id], onDelete: Cascade)
-  scene      Scene?           @relation(fields: [sceneId], references: [id], onDelete: SetNull)
+  manuscript Manuscript        @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  chapter    ManuscriptChapter @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  scene      Scene?            @relation(fields: [sceneId], references: [id], onDelete: SetNull)
   outputs    AnalysisOutput[]
+  findings   Finding[]
 
   @@unique([manuscriptId, chunkIndex])
   @@index([manuscriptId])
   @@index([chapterId])
 }
 
+model ManuscriptProfile {
+  id                       String   @id @default(cuid())
+  manuscriptId             String   @unique
+  wordCount                Int      @default(0)
+  chapterCount             Int      @default(0)
+  avgChapterWords          Int      @default(0)
+  avgSentenceLength        Float    @default(0)
+  dialogueRatio            Float    @default(0)
+  expositionRatio          Float    @default(0)
+  actionRatio              Float    @default(0)
+  introspectionRatio       Float    @default(0)
+  pacingCurve              Json?
+  emotionalIntensityCurve  Json?
+  conflictDensityCurve     Json?
+  styleFingerprint         Json?
+  genreMarkers             Json?
+  tropeMarkers             Json?
+  createdAt                DateTime @default(now())
+
+  manuscript Manuscript @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+}
+
 model AnalysisRun {
   id           String            @id @default(cuid())
   manuscriptId String
+  type         AnalysisRunType   @default(FULL_AUDIT)
   status       AnalysisRunStatus @default(RUNNING)
+  model        String?
   currentPass  AnalysisPassType?
   globalMemory Json?
   checkpoint   Json?
+  metadata     Json?
   error        String?
   startedAt    DateTime          @default(now())
   completedAt  DateTime?
   createdAt    DateTime          @default(now())
   updatedAt    DateTime          @updatedAt
 
-  manuscript Manuscript       @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
-  outputs    AnalysisOutput[]
-  report     AuditReport?
-  rewrites   ChapterRewrite[]
+  manuscript   Manuscript       @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  outputs      AnalysisOutput[]
+  report       AuditReport?
+  rewrites     ChapterRewrite[]
+  findings     Finding[]
+  rewritePlans RewritePlan[]
 
   @@index([manuscriptId, status])
+  @@index([manuscriptId, type])
 }
 
 model AnalysisOutput {
@@ -241,22 +474,79 @@ model AuditReport {
   @@index([manuscriptId])
 }
 
-model ChapterRewrite {
-  id            String   @id @default(cuid())
-  manuscriptId  String
-  chapterId     String
-  runId         String?
-  promptVersion String
-  model         String
-  sourceSummary Json?
-  content       String
-  rationale     Json?
-  createdAt     DateTime @default(now())
+model Finding {
+  id                 String   @id @default(cuid())
+  analysisRunId      String
+  manuscriptId       String
+  chapterId          String?
+  chunkId            String?
+  issueType          String
+  severity           Int
+  confidence         Float
+  problem            String
+  evidence           String?
+  recommendation     String
+  rewriteInstruction String?
+  createdAt          DateTime @default(now())
 
-  manuscript Manuscript  @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
-  chapter    Chapter     @relation(fields: [chapterId], references: [id], onDelete: Cascade)
-  run        AnalysisRun? @relation(fields: [runId], references: [id], onDelete: SetNull)
+  analysisRun AnalysisRun        @relation(fields: [analysisRunId], references: [id], onDelete: Cascade)
+  manuscript  Manuscript         @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  chapter     ManuscriptChapter? @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+  chunk       ManuscriptChunk?   @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+
+  @@index([analysisRunId])
+  @@index([manuscriptId])
+  @@index([chapterId])
+  @@index([chunkId])
+  @@index([issueType])
+  @@index([severity])
+}
+
+model RewritePlan {
+  id                String   @id @default(cuid())
+  manuscriptId      String
+  analysisRunId     String
+  globalStrategy    String
+  chapterPlans      Json
+  continuityRules   Json
+  styleRules        Json
+  marketPositioning Json
+  createdAt         DateTime @default(now())
+
+  manuscript      Manuscript       @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  analysisRun     AnalysisRun      @relation(fields: [analysisRunId], references: [id], onDelete: Cascade)
+  chapterRewrites ChapterRewrite[]
+
+  @@index([manuscriptId])
+  @@index([analysisRunId])
+}
+
+model ChapterRewrite {
+  id              String   @id @default(cuid())
+  manuscriptId    String
+  chapterId       String
+  runId           String?
+  rewritePlanId   String?
+  version         Int      @default(1)
+  originalText    String   @default("")
+  rewrittenText   String   @default("")
+  changeLog       Json?
+  continuityNotes Json?
+  status          String   @default("DRAFT")
+  promptVersion   String   @default("v2")
+  model           String   @default("stub")
+  sourceSummary   Json?
+  content         String   @default("")
+  rationale       Json?
+  createdAt       DateTime @default(now())
+
+  manuscript  Manuscript         @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  chapter     ManuscriptChapter  @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  run         AnalysisRun?       @relation(fields: [runId], references: [id], onDelete: SetNull)
+  rewritePlan RewritePlan?       @relation(fields: [rewritePlanId], references: [id], onDelete: SetNull)
 
   @@index([manuscriptId])
   @@index([chapterId])
+  @@index([rewritePlanId])
+  @@index([status])
 }

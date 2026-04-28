@@ -51,9 +51,27 @@ export function UploadForm() {
       onSubmit={onSubmit}
       className="border border-line bg-white p-4 shadow-panel"
     >
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+      <div className="grid gap-3 lg:grid-cols-3">
+        <input
+          name="authorName"
+          placeholder="Author name"
+          className="focus-ring min-h-10 border border-line bg-paper px-3 py-2 text-sm"
+        />
+        <input
+          name="targetGenre"
+          placeholder="Target genre"
+          className="focus-ring min-h-10 border border-line bg-paper px-3 py-2 text-sm"
+        />
+        <input
+          name="targetAudience"
+          placeholder="Target audience"
+          className="focus-ring min-h-10 border border-line bg-paper px-3 py-2 text-sm"
+        />
+      </div>
+      <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
         <input
           ref={inputRef}
+          name="file"
           type="file"
           accept=".txt,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
           className="focus-ring min-h-10 flex-1 border border-line bg-paper px-3 py-2 text-sm"

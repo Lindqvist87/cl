@@ -24,7 +24,10 @@ export async function POST(request: Request) {
       chunks,
       sourceFileName: file.name,
       sourceMimeType: extracted.mimeType,
-      sourceFormat: extracted.format
+      sourceFormat: extracted.format,
+      authorName: textField(formData, "authorName"),
+      targetGenre: textField(formData, "targetGenre"),
+      targetAudience: textField(formData, "targetAudience")
     });
 
     return NextResponse.json({
@@ -39,4 +42,9 @@ export async function POST(request: Request) {
       error instanceof Error ? error.message : "Unable to upload manuscript.";
     return NextResponse.json({ error: message }, { status: 400 });
   }
+}
+
+function textField(formData: FormData, name: string) {
+  const value = formData.get(name);
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }

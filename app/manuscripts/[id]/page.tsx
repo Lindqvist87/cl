@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Download, FileText } from "lucide-react";
+import { BarChart3, Download, FileText } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { AuditButton } from "@/components/AuditButton";
-import { RewriteChapterButton } from "@/components/RewriteChapterButton";
 import type { AuditReportJson } from "@/lib/types";
+import { pipelineProgress } from "@/lib/pipeline/steps";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +20,8 @@ export default async function ManuscriptPage({
       chapters: { orderBy: { order: "asc" } },
       reports: { orderBy: { createdAt: "desc" }, take: 1 },
       runs: { orderBy: { createdAt: "desc" }, take: 1 },
-      rewrites: { orderBy: { createdAt: "desc" }, take: 1 }
+      rewrites: { orderBy: { createdAt: "desc" }, take: 1 },
+      findings: { take: 1 }
     }
   });
 
@@ -32,6 +33,7 @@ export default async function ManuscriptPage({
   const structured = report?.structured as AuditReportJson | undefined;
   const latestRun = manuscript.runs[0];
   const latestRewrite = manuscript.rewrites[0];
+  const progress = pipelineProgress(latestRun?.checkpoint ?? {});
 
   return (
     <div className="space-y-6">
@@ -44,16 +46,36 @@ export default async function ManuscriptPage({
             {manuscript.title}
           </h1>
           <p className="mt-1 text-sm text-slate-500">{manuscript.sourceFileName}</p>
+          {[manuscript.authorName, manuscript.targetGenre, manuscript.targetAudience].some(Boolean) ? (
+            <p className="mt-1 text-sm text-slate-500">
+              {[manuscript.authorName, manuscript.targetGenre, manuscript.targetAudience]
+                .filter(Boolean)
+                .join(" | ")}
+            </p>
+          ) : null}
           {latestRun?.error ? (
             <p className="mt-3 text-sm text-danger">{latestRun.error}</p>
           ) : null}
+          <div className="mt-3 flex flex-wrap gap-3 text-sm">
+            <Link href={`/manuscripts/${manuscript.id}/audit`} className="text-accent hover:underline">
+              Audit
+            </Link>
+            <a href={`/api/manuscripts/${manuscript.id}/rewritten/markdown`} className="text-accent hover:underline">
+              Full rewritten Markdown
+            </a>
+            <Link href="/corpus" className="text-accent hover:underline">
+              Corpus
+            </Link>
+            <Link href="/trends" className="text-accent hover:underline">
+              Trends
+            </Link>
+          </div>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
           <AuditButton
             manuscriptId={manuscript.id}
             disabled={manuscript.analysisStatus === "RUNNING"}
           />
-          <RewriteChapterButton manuscriptId={manuscript.id} />
         </div>
       </div>
 
@@ -64,6 +86,26 @@ export default async function ManuscriptPage({
         <Stat label="Analysis" value={formatStatus(manuscript.analysisStatus)} />
       </section>
 
+      <section className="border border-line bg-white p-4 shadow-panel">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+              Pipeline Progress
+            </h2>
+            <p className="mt-1 text-sm text-slate-500">
+              {progress.completed} of {progress.total} steps complete
+            </p>
+          </div>
+          <div className="inline-flex items-center gap-2 text-sm font-semibold">
+            <BarChart3 size={18} aria-hidden="true" />
+            {progress.percent}%
+          </div>
+        </div>
+        <div className="mt-3 h-2 overflow-hidden bg-paper">
+          <div className="h-full bg-accent" style={{ width: `${progress.percent}%` }} />
+        </div>
+      </section>
+
       <section className="grid gap-6 lg:grid-cols-[280px_1fr]">
         <div className="border border-line bg-white shadow-panel">
           <div className="border-b border-line px-4 py-3 text-sm font-semibold">
@@ -71,12 +113,16 @@ export default async function ManuscriptPage({
           </div>
           <div className="max-h-[520px] overflow-auto">
             {manuscript.chapters.map((chapter) => (
-              <div key={chapter.id} className="border-b border-line px-4 py-3 last:border-b-0">
+              <Link
+                key={chapter.id}
+                href={`/manuscripts/${manuscript.id}/chapters/${chapter.id}`}
+                className="block border-b border-line px-4 py-3 last:border-b-0 hover:bg-paper"
+              >
                 <div className="text-sm font-semibold">{chapter.title}</div>
                 <div className="mt-1 text-xs text-slate-500">
                   {chapter.wordCount.toLocaleString()} words
                 </div>
-              </div>
+              </Link>
             ))}
           </div>
         </div>
@@ -104,7 +150,7 @@ export default async function ManuscriptPage({
                 </h2>
               </div>
               <div className="max-h-[540px] overflow-auto whitespace-pre-wrap px-4 py-4 text-sm leading-7">
-                {latestRewrite.content}
+                {latestRewrite.rewrittenText || latestRewrite.content}
               </div>
             </section>
           ) : null}
@@ -150,6 +196,13 @@ function ReportPanel({
           >
             <Download size={16} aria-hidden="true" />
             Markdown
+          </a>
+          <a
+            href={`/api/manuscripts/${manuscriptId}/report/json`}
+            className="focus-ring inline-flex min-h-9 items-center gap-2 border border-line bg-paper px-3 py-2 text-sm font-semibold"
+          >
+            <Download size={16} aria-hidden="true" />
+            JSON
           </a>
           <a
             href={`/api/manuscripts/${manuscriptId}/report/docx`}

@@ -5,11 +5,11 @@
   },
   "shell": {
     "brand": "Manuscript Audit",
-    "badge": "MVP 1"
+    "badge": "V2"
   },
   "dashboard": {
     "title": "Manuscripts",
-    "intro": "Upload a full manuscript, split it into structured chunks, and run a resumable audit pipeline.",
+    "intro": "Upload a full manuscript, split it into structured chunks, and run a resumable analysis, benchmark, trend, and rewrite pipeline.",
     "sectionTitle": "Recent Manuscripts",
     "emptyState": "No manuscripts uploaded yet.",
     "metrics": {
