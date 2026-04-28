@@ -11,8 +11,16 @@ type JsonRequest = {
   retries?: number;
 };
 
+export function getAuditModel() {
+  return env.OPENAI_AUDIT_MODEL || env.OPENAI_EDITOR_MODEL || "gpt-5.4-mini";
+}
+
+export function getRewriteModel() {
+  return env.OPENAI_REWRITE_MODEL || "gpt-5.5";
+}
+
 export function getEditorModel() {
-  return env.OPENAI_EDITOR_MODEL || "gpt-5.5";
+  return getAuditModel();
 }
 
 export function hasEditorModelKey() {
@@ -22,8 +30,8 @@ export function hasEditorModelKey() {
 export async function requestEditorJson<T>({
   system,
   user,
-  model = getEditorModel(),
-  temperature = 0.2,
+  model = getAuditModel(),
+  temperature,
   retries = 2
 }: JsonRequest): Promise<{ json: T; rawText: string; model: string }> {
   let attempt = 0;
@@ -33,7 +41,7 @@ export async function requestEditorJson<T>({
     try {
       const completion = await getOpenAIClient().chat.completions.create({
         model,
-        temperature,
+        ...(temperature === undefined ? {} : { temperature }),
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: system },

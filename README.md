@@ -50,12 +50,13 @@ Open `http://localhost:3000`.
 ```bash
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/manuscript_audit?schema=public"
 OPENAI_API_KEY=""
-OPENAI_EDITOR_MODEL="gpt-5.5"
+OPENAI_AUDIT_MODEL="gpt-5.4-mini"
+OPENAI_REWRITE_MODEL="gpt-5.5"
 OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
 NEXT_PUBLIC_APP_NAME="Manuscript Audit"
 ```
 
-`OPENAI_EDITOR_MODEL` drives the v2 structured editorial services. The older MVP audit/rewrite model variables are still accepted for compatibility with the legacy route code.
+`OPENAI_AUDIT_MODEL` drives v2 audit, corpus, trend, and planning calls. `OPENAI_REWRITE_MODEL` drives chapter rewrite calls. `OPENAI_EDITOR_MODEL` is still accepted as a legacy fallback, but new deployments should prefer the split audit/rewrite variables.
 
 ## V2 Pipeline
 
@@ -97,7 +98,7 @@ Use `/trends` to add public metadata signals. Trend rows are metadata and snippe
 ## Deploy On Vercel
 
 1. Provision Neon Postgres with pgvector enabled.
-2. Set `DATABASE_URL`, `OPENAI_API_KEY`, `OPENAI_EDITOR_MODEL`, and `OPENAI_EMBEDDING_MODEL` in Vercel project settings.
+2. Set `DATABASE_URL`, `OPENAI_API_KEY`, `OPENAI_AUDIT_MODEL`, `OPENAI_REWRITE_MODEL`, and `OPENAI_EMBEDDING_MODEL` in Vercel project settings.
 3. Run Prisma migrations against Neon during deployment or from a trusted local machine:
 
 ```bash

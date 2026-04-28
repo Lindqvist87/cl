@@ -29,7 +29,7 @@ export async function requestStructuredJson<T>({
   system,
   user,
   model = DEFAULT_AUDIT_MODEL,
-  temperature = 0.2
+  temperature
 }: {
   system: string;
   user: string;
@@ -38,7 +38,7 @@ export async function requestStructuredJson<T>({
 }): Promise<{ json: T; rawText: string; model: string }> {
   const completion = await getOpenAIClient().chat.completions.create({
     model,
-    temperature,
+    ...(temperature === undefined ? {} : { temperature }),
     response_format: { type: "json_object" },
     messages: [
       { role: "system", content: system },

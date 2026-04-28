@@ -1,4 +1,8 @@
-import { hasEditorModelKey, requestEditorJson } from "@/lib/ai/editorModel";
+import {
+  getRewriteModel,
+  hasEditorModelKey,
+  requestEditorJson
+} from "@/lib/ai/editorModel";
 import type { ChapterRewriteResult } from "@/lib/ai/analysisTypes";
 
 type ChapterRewriteInput = {
@@ -24,7 +28,7 @@ export async function rewriteChapter(input: ChapterRewriteInput) {
   }
 
   return requestEditorJson<ChapterRewriteResult>({
-    temperature: 0.4,
+    model: getRewriteModel(),
     system: [
       "You rewrite one manuscript chapter at a time.",
       "Return strict JSON only.",

@@ -148,7 +148,6 @@ async function rewriteChunk(input: {
 }) {
   return requestStructuredJson<RewriteChunkJson>({
     model: REWRITE_MODEL,
-    temperature: 0.4,
     system:
       "You are a careful fiction rewrite assistant. Return strict JSON only. Rewrite only the supplied chunk, preserving core events and continuity. Do not use copyrighted books as examples.",
     user: JSON.stringify(
