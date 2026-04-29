@@ -24,16 +24,19 @@ export type InngestEventPayloads = {
   [INNGEST_EVENTS.MANUSCRIPT_JOB_CREATED]: {
     jobId: string;
     manuscriptId: string | null;
+    corpusBookId: string | null;
     type: string;
   };
   [INNGEST_EVENTS.MANUSCRIPT_JOB_COMPLETED]: {
     jobId: string;
     manuscriptId: string | null;
+    corpusBookId: string | null;
     type: string;
   };
   [INNGEST_EVENTS.MANUSCRIPT_JOB_FAILED]: {
     jobId: string;
     manuscriptId: string | null;
+    corpusBookId: string | null;
     type: string;
     error: string;
   };
@@ -112,11 +115,13 @@ export function manuscriptPipelineStartedPayload(input: {
 export function jobEventPayload(input: {
   jobId: string;
   manuscriptId?: string | null;
+  corpusBookId?: string | null;
   type: string;
 }) {
   return {
     jobId: input.jobId,
     manuscriptId: input.manuscriptId ?? null,
+    corpusBookId: input.corpusBookId ?? null,
     type: input.type
   };
 }

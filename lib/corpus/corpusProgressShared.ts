@@ -1,3 +1,13 @@
+import {
+  areDependenciesComplete,
+  canAttemptJob,
+  dependencyIdsFromJson,
+  isJobReadyAtSatisfied,
+  isLockStale,
+  PIPELINE_JOB_STATUS,
+  type DependencySnapshot
+} from "@/lib/pipeline/jobRules";
+
 export const JOB_STALE_WARNING_SECONDS = 120;
 export const CORPUS_PROGRESS_POLL_INTERVAL_MS = 2500;
 
@@ -62,7 +72,18 @@ export type CorpusProgressStatus = {
     updatedAt: string;
     error?: string | null;
   };
+  nextEligibleJob?: CorpusProgressNextEligibleJob;
   lastUpdatedAt: string;
+};
+
+export type CorpusProgressNextEligibleJob = {
+  id: string;
+  type: string;
+  status: string;
+  eligible: boolean;
+  dependencyStatus: "none" | "complete" | "waiting" | "missing";
+  dependencies: DependencySnapshot[];
+  reason: string;
 };
 
 export type CorpusProgressRequestAction =
@@ -98,6 +119,12 @@ export type CorpusProgressJobSnapshot = {
   status: string;
   updatedAt: Date | string;
   error?: string | null;
+  dependencyIds?: unknown;
+  readyAt?: Date | string | null;
+  lockedAt?: Date | string | null;
+  lockExpiresAt?: Date | string | null;
+  attempts?: number;
+  maxAttempts?: number;
 };
 
 export type CorpusProgressBuildInput = {
@@ -156,6 +183,11 @@ const STEP_PERCENT: Record<CorpusProgressStepKey, number> = {
 
 const COMPLETE_EMBEDDING_STATUSES = new Set(["STORED", "SKIPPED", "EMPTY"]);
 const QUEUED_JOB_STATUSES = new Set(["QUEUED", "RETRYING", "BLOCKED"]);
+const NEXT_JOB_CANDIDATE_STATUSES = new Set<string>([
+  PIPELINE_JOB_STATUS.QUEUED,
+  PIPELINE_JOB_STATUS.RETRYING,
+  PIPELINE_JOB_STATUS.BLOCKED
+]);
 const ACTIVE_ANALYSIS_STATUSES = new Set(["QUEUED", "RUNNING", "RETRYING"]);
 
 export function buildCorpusProgressStatus(
@@ -276,6 +308,7 @@ export function buildCorpusProgressStatus(
 
   const counts = jobCounts(input.jobs, input.counts);
   const latestJob = latestUpdatedJob(input.jobs);
+  const nextEligibleJob = describeNextEligibleCorpusJob(input.jobs);
   const progressState = calculateCorpusProgress({
     analysisStatus: input.book.analysisStatus,
     benchmarkReady: input.book.benchmarkReady,
@@ -309,8 +342,59 @@ export function buildCorpusProgressStatus(
           error: latestJob.error ?? null
         }
       : undefined,
+    nextEligibleJob,
     lastUpdatedAt
   };
+}
+
+export function describeNextEligibleCorpusJob(
+  jobs: CorpusProgressJobSnapshot[],
+  now: Date = new Date()
+): CorpusProgressNextEligibleJob | undefined {
+  const candidates = jobs.filter((job) =>
+    NEXT_JOB_CANDIDATE_STATUSES.has(job.status)
+  );
+
+  for (const job of candidates) {
+    const dependencyIds = dependencyIdsFromJson(job.dependencyIds);
+    const dependencies = dependencyIds.map((id) => ({
+      id,
+      status: jobs.find((candidate) => candidate.id === id)?.status ?? "MISSING"
+    }));
+    const dependencyStatus = summarizeDependencyStatus(
+      dependencyIds,
+      dependencies
+    );
+    const dependenciesComplete = areDependenciesComplete(
+      dependencyIds,
+      dependencies
+    );
+    const eligible =
+      canAttemptJob(job, now) &&
+      dependenciesComplete &&
+      (job.status === PIPELINE_JOB_STATUS.QUEUED ||
+        job.status === PIPELINE_JOB_STATUS.RETRYING ||
+        job.status === PIPELINE_JOB_STATUS.BLOCKED);
+
+    return {
+      id: job.id,
+      type: job.type,
+      status: job.status,
+      eligible,
+      dependencyStatus,
+      dependencies,
+      reason: corpusJobReadinessReason({
+        job,
+        dependencies,
+        dependenciesComplete,
+        dependencyStatus,
+        eligible,
+        now
+      })
+    };
+  }
+
+  return undefined;
 }
 
 export function calculateCorpusProgress(input: {
@@ -353,6 +437,69 @@ export function calculateCorpusProgress(input: {
     isFailed,
     isComplete
   };
+}
+
+function summarizeDependencyStatus(
+  dependencyIds: string[],
+  dependencies: DependencySnapshot[]
+): CorpusProgressNextEligibleJob["dependencyStatus"] {
+  if (dependencyIds.length === 0) {
+    return "none";
+  }
+
+  if (dependencies.some((dependency) => dependency.status === "MISSING")) {
+    return "missing";
+  }
+
+  return areDependenciesComplete(dependencyIds, dependencies)
+    ? "complete"
+    : "waiting";
+}
+
+function corpusJobReadinessReason(input: {
+  job: CorpusProgressJobSnapshot;
+  dependencies: DependencySnapshot[];
+  dependenciesComplete: boolean;
+  dependencyStatus: CorpusProgressNextEligibleJob["dependencyStatus"];
+  eligible: boolean;
+  now: Date;
+}) {
+  if (
+    input.job.status === PIPELINE_JOB_STATUS.RETRYING &&
+    input.job.attempts !== undefined &&
+    input.job.maxAttempts !== undefined &&
+    input.job.attempts >= input.job.maxAttempts
+  ) {
+    return "Retry attempts are exhausted; the job will be marked failed.";
+  }
+
+  if (!input.dependenciesComplete) {
+    const waiting = input.dependencies
+      .filter((dependency) => dependency.status !== PIPELINE_JOB_STATUS.COMPLETED)
+      .map((dependency) => `${dependency.id}:${dependency.status}`)
+      .join(", ");
+    return input.dependencyStatus === "missing"
+      ? `Blocked because dependency rows are missing: ${waiting}.`
+      : `Blocked until dependencies complete: ${waiting}.`;
+  }
+
+  if (!isJobReadyAtSatisfied(input.job, input.now)) {
+    return `Waiting until readyAt ${dateToIso(input.job.readyAt) ?? "is reached"}.`;
+  }
+
+  if (input.job.lockedAt && !isLockStale(input.job, input.now)) {
+    return `Locked until ${dateToIso(input.job.lockExpiresAt) ?? "the lock expires"}.`;
+  }
+
+  if (input.eligible && input.job.status === PIPELINE_JOB_STATUS.BLOCKED) {
+    return "Dependencies are complete; the blocked job can be queued and run.";
+  }
+
+  if (input.eligible) {
+    return "Eligible: dependencies are complete, readyAt is satisfied, and no active lock exists.";
+  }
+
+  return "Not eligible for execution yet.";
 }
 
 export function shouldPollCorpusStatus(status: CorpusProgressStatus) {

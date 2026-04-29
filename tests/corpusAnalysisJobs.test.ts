@@ -13,6 +13,7 @@ import {
 } from "../lib/corpus/startCorpusAnalysis";
 import {
   buildCorpusProgressStatus,
+  describeNextEligibleCorpusJob,
   getCorpusProgressAction,
   shouldPollCorpusStatus,
   staleWarningText,
@@ -143,8 +144,11 @@ test("status moves from not started to queued/running once jobs exist", () => {
 test("after cleaning completes, corpus chapter detection becomes eligible", () => {
   const now = new Date("2026-04-29T10:05:00Z");
   const chaptersJob = {
+    id: "chapters-job",
+    type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHAPTERS,
     status: PIPELINE_JOB_STATUS.BLOCKED,
     dependencyIds: ["clean-job"],
+    updatedAt: now,
     readyAt: null,
     lockedAt: null,
     attempts: 0,
@@ -164,6 +168,22 @@ test("after cleaning completes, corpus chapter detection becomes eligible", () =
     ]),
     false
   );
+  const next = describeNextEligibleCorpusJob(
+    [
+      {
+        id: "clean-job",
+        type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CLEAN,
+        status: PIPELINE_JOB_STATUS.COMPLETED,
+        updatedAt: "2026-04-29T10:01:00Z"
+      },
+      chaptersJob
+    ],
+    now
+  );
+
+  assert.equal(next?.id, "chapters-job");
+  assert.equal(next?.eligible, true);
+  assert.equal(next?.dependencyStatus, "complete");
 });
 
 test("corpus pipeline dependencies advance cleaning to chapters to chunks", () => {
@@ -189,6 +209,131 @@ test("corpus pipeline dependencies advance cleaning to chapters to chunks", () =
     ]),
     true
   );
+  const next = describeNextEligibleCorpusJob(
+    [
+      {
+        id: "clean-job",
+        type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CLEAN,
+        status: PIPELINE_JOB_STATUS.COMPLETED,
+        updatedAt: "2026-04-29T10:01:00Z"
+      },
+      {
+        id: "chapters-job",
+        type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHAPTERS,
+        status: PIPELINE_JOB_STATUS.COMPLETED,
+        dependencyIds: ["clean-job"],
+        updatedAt: "2026-04-29T10:02:00Z"
+      },
+      {
+        id: "chunk-job",
+        type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHUNK,
+        status: PIPELINE_JOB_STATUS.QUEUED,
+        dependencyIds: ["chapters-job"],
+        updatedAt: "2026-04-29T10:03:00Z"
+      }
+    ],
+    new Date("2026-04-29T10:04:00Z")
+  );
+
+  assert.equal(next?.id, "chunk-job");
+  assert.equal(next?.eligible, true);
+});
+
+test("resume analysis diagnostics identify an existing queued corpus job", () => {
+  const next = describeNextEligibleCorpusJob(
+    [
+      {
+        id: "clean-job",
+        type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CLEAN,
+        status: PIPELINE_JOB_STATUS.COMPLETED,
+        updatedAt: "2026-04-29T10:01:00Z"
+      },
+      {
+        id: "chapters-job",
+        type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHAPTERS,
+        status: PIPELINE_JOB_STATUS.QUEUED,
+        dependencyIds: ["clean-job"],
+        updatedAt: "2026-04-29T10:02:00Z"
+      }
+    ],
+    new Date("2026-04-29T10:05:00Z")
+  );
+
+  assert.equal(next?.id, "chapters-job");
+  assert.equal(next?.type, CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHAPTERS);
+  assert.equal(next?.eligible, true);
+  assert.match(next?.reason ?? "", /Eligible/);
+});
+
+test("completed corpus jobs are not selected to rerun", () => {
+  const next = describeNextEligibleCorpusJob(
+    [
+      {
+        id: "clean-job",
+        type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CLEAN,
+        status: PIPELINE_JOB_STATUS.COMPLETED,
+        updatedAt: "2026-04-29T10:01:00Z"
+      },
+      {
+        id: "chapters-job",
+        type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHAPTERS,
+        status: PIPELINE_JOB_STATUS.QUEUED,
+        dependencyIds: ["clean-job"],
+        updatedAt: "2026-04-29T10:02:00Z"
+      }
+    ],
+    new Date("2026-04-29T10:05:00Z")
+  );
+
+  assert.equal(next?.id, "chapters-job");
+});
+
+test("blocked corpus jobs remain blocked until dependencies complete", () => {
+  const next = describeNextEligibleCorpusJob(
+    [
+      {
+        id: "chapters-job",
+        type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHAPTERS,
+        status: PIPELINE_JOB_STATUS.QUEUED,
+        updatedAt: "2026-04-29T10:02:00Z"
+      },
+      {
+        id: "chunk-job",
+        type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHUNK,
+        status: PIPELINE_JOB_STATUS.BLOCKED,
+        dependencyIds: ["chapters-job"],
+        updatedAt: "2026-04-29T10:03:00Z"
+      }
+    ],
+    new Date("2026-04-29T10:05:00Z")
+  );
+
+  assert.equal(next?.id, "chapters-job");
+  assert.equal(next?.eligible, true);
+
+  const blocked = describeNextEligibleCorpusJob(
+    [
+      {
+        id: "chunk-job",
+        type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHUNK,
+        status: PIPELINE_JOB_STATUS.BLOCKED,
+        dependencyIds: ["chapters-job"],
+        updatedAt: "2026-04-29T10:03:00Z"
+      },
+      {
+        id: "chapters-job",
+        type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHAPTERS,
+        status: PIPELINE_JOB_STATUS.QUEUED,
+        updatedAt: "2026-04-29T10:02:00Z"
+      }
+    ],
+    new Date("2026-04-29T10:05:00Z")
+  );
+
+  assert.equal(blocked?.id, "chunk-job");
+  assert.equal(blocked?.eligible, false);
+  assert.equal(blocked?.dependencyStatus, "waiting");
+  assert.match(blocked?.reason ?? "", /Blocked until dependencies complete/);
 });
 
 test("legacy imported corpus books with no jobs still show the analysis action", () => {
@@ -261,6 +406,40 @@ test("status endpoint response builder returns progress JSON shape", () => {
     ]
   );
   assert.equal(status.progress.currentStepLabel, "Chunks");
+});
+
+test("status endpoint exposes next eligible corpus job diagnostics", () => {
+  const status = buildCorpusProgressStatus(
+    progressInput({
+      jobs: [
+        {
+          id: "clean-job",
+          type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CLEAN,
+          status: PIPELINE_JOB_STATUS.COMPLETED,
+          updatedAt: "2026-04-29T10:01:00Z",
+          error: null
+        },
+        {
+          id: "chapters-job",
+          type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHAPTERS,
+          status: PIPELINE_JOB_STATUS.QUEUED,
+          dependencyIds: ["clean-job"],
+          readyAt: null,
+          lockedAt: null,
+          attempts: 0,
+          maxAttempts: 3,
+          updatedAt: "2026-04-29T10:02:00Z",
+          error: null
+        }
+      ]
+    })
+  );
+
+  assert.equal(status.nextEligibleJob?.id, "chapters-job");
+  assert.equal(status.nextEligibleJob?.type, CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHAPTERS);
+  assert.equal(status.nextEligibleJob?.status, PIPELINE_JOB_STATUS.QUEUED);
+  assert.equal(status.nextEligibleJob?.dependencyStatus, "complete");
+  assert.equal(status.nextEligibleJob?.eligible, true);
 });
 
 test("corpus progress percent is calculated from completed stages", () => {

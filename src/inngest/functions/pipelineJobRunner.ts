@@ -1,3 +1,4 @@
+import { corpusBookIdFromPipelineJob } from "@/lib/corpus/corpusAnalysisJobs";
 import { runPipelineJob } from "@/lib/pipeline/pipelineJobs";
 import { prisma } from "@/lib/prisma";
 import { inngest } from "@/src/inngest/client";
@@ -24,6 +25,7 @@ export const pipelineJobRunner = inngest.createFunction(
       const payload = jobEventPayload({
         jobId: result.jobId,
         manuscriptId: result.manuscriptId,
+        corpusBookId: result.corpusBookId,
         type: result.type
       });
       await step.sendEvent("emit job completed", {
@@ -48,6 +50,7 @@ export const pipelineJobRunner = inngest.createFunction(
         ...jobEventPayload({
           jobId: result.jobId,
           manuscriptId: result.manuscriptId,
+          corpusBookId: result.corpusBookId,
           type: result.type
         }),
         error: result.error ?? "Pipeline job failed."
@@ -71,6 +74,7 @@ export const pipelineJobRunner = inngest.createFunction(
         data: jobEventPayload({
           jobId: result.jobId,
           manuscriptId: result.manuscriptId,
+          corpusBookId: result.corpusBookId,
           type: result.type
         })
       });
@@ -80,7 +84,13 @@ export const pipelineJobRunner = inngest.createFunction(
       const jobs = await step.run("load newly ready jobs", () =>
         prisma.pipelineJob.findMany({
           where: { id: { in: result.readyJobIds } },
-          select: { id: true, manuscriptId: true, type: true }
+          select: {
+            id: true,
+            idempotencyKey: true,
+            manuscriptId: true,
+            metadata: true,
+            type: true
+          }
         })
       );
 
@@ -91,6 +101,7 @@ export const pipelineJobRunner = inngest.createFunction(
           data: jobEventPayload({
             jobId: job.id,
             manuscriptId: job.manuscriptId,
+            corpusBookId: corpusBookIdFromPipelineJob(job),
             type: job.type
           })
         }))
@@ -104,6 +115,7 @@ export const pipelineJobRunner = inngest.createFunction(
         data: jobEventPayload({
           jobId: result.jobId,
           manuscriptId: result.manuscriptId,
+          corpusBookId: result.corpusBookId,
           type: result.type
         })
       });

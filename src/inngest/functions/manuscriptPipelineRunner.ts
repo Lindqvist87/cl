@@ -1,4 +1,5 @@
 import { NonRetriableError } from "inngest";
+import { corpusBookIdFromPipelineJob } from "@/lib/corpus/corpusAnalysisJobs";
 import {
   ensureManuscriptPipelineJobs,
   runReadyPipelineJobs
@@ -50,7 +51,13 @@ export const manuscriptPipelineRunner = inngest.createFunction(
       const jobs = await step.run("load ready job events", () =>
         prisma.pipelineJob.findMany({
           where: { id: { in: batch.readyJobIds } },
-          select: { id: true, manuscriptId: true, type: true }
+          select: {
+            id: true,
+            idempotencyKey: true,
+            manuscriptId: true,
+            metadata: true,
+            type: true
+          }
         })
       );
 
@@ -61,6 +68,7 @@ export const manuscriptPipelineRunner = inngest.createFunction(
           data: jobEventPayload({
             jobId: job.id,
             manuscriptId: job.manuscriptId,
+            corpusBookId: corpusBookIdFromPipelineJob(job),
             type: job.type
           })
         }))

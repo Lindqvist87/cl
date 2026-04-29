@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   getInngestRuntimeConfig,
+  jobEventPayload,
   manuscriptPipelineStartedPayload
 } from "../src/inngest/events";
 import { getEnvVarChecks } from "../lib/system/envCheck";
@@ -20,6 +21,23 @@ test("Inngest event payload creation is stable", () => {
     mode: "FULL_PIPELINE",
     createdAt: "2026-04-29T05:00:00.000Z"
   });
+});
+
+test("job event payload includes corpusBookId diagnostics", () => {
+  assert.deepEqual(
+    jobEventPayload({
+      jobId: "job-1",
+      manuscriptId: null,
+      corpusBookId: "book-1",
+      type: "CORPUS_CHAPTERS"
+    }),
+    {
+      jobId: "job-1",
+      manuscriptId: null,
+      corpusBookId: "book-1",
+      type: "CORPUS_CHAPTERS"
+    }
+  );
 });
 
 test("missing Inngest env vars do not crash and keep fallback visible", () => {

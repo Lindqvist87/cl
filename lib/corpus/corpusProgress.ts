@@ -110,7 +110,13 @@ export async function findCorpusProgressStatus(bookId: string) {
       type: job.type,
       status: job.status,
       updatedAt: job.updatedAt,
-      error: job.error
+      error: job.error,
+      dependencyIds: job.dependencyIds,
+      readyAt: job.readyAt,
+      lockedAt: job.lockedAt,
+      lockExpiresAt: job.lockExpiresAt,
+      attempts: job.attempts,
+      maxAttempts: job.maxAttempts
     }))
   });
 }

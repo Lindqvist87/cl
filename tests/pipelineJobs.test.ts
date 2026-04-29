@@ -3,8 +3,7 @@ import assert from "node:assert/strict";
 import { pipelineStartHttpStatus } from "../lib/pipeline/startPipeline";
 import { plannedPipelineJobs } from "../lib/pipeline/jobPlanner";
 import {
-  corpusPipelineJobKey,
-  plannedCorpusPipelineJobs
+  CORPUS_ANALYSIS_PIPELINE_NAME
 } from "../lib/corpus/corpusAnalysisJobs";
 import {
   areDependenciesComplete,
@@ -149,9 +148,20 @@ test("ready runner can scope selection to corpus pipeline jobs", () => {
   const where = pipelineJobScopeWhere({ corpusBookId: "book-1" });
 
   assert.deepEqual(where, {
-    idempotencyKey: {
-      in: plannedCorpusPipelineJobs("book-1").map((job) => job.idempotencyKey)
-    }
+    AND: [
+      {
+        metadata: {
+          path: ["pipeline"],
+          equals: CORPUS_ANALYSIS_PIPELINE_NAME
+        }
+      },
+      {
+        metadata: {
+          path: ["corpusBookId"],
+          equals: "book-1"
+        }
+      }
+    ]
   });
   assert.equal(
     (where as { manuscriptId?: unknown }).manuscriptId,
@@ -165,15 +175,23 @@ test("corpusBookId scope does not match manuscript-only job filters", () => {
 
   assert.deepEqual(manuscriptWhere, { manuscriptId: "m1" });
   assert.deepEqual(
-    (corpusWhere as { idempotencyKey: { in: string[] } }).idempotencyKey.in,
-    [
-      corpusPipelineJobKey("book-2", "CORPUS_CLEAN"),
-      corpusPipelineJobKey("book-2", "CORPUS_CHAPTERS"),
-      corpusPipelineJobKey("book-2", "CORPUS_CHUNK"),
-      corpusPipelineJobKey("book-2", "CORPUS_EMBED"),
-      corpusPipelineJobKey("book-2", "CORPUS_PROFILE"),
-      corpusPipelineJobKey("book-2", "CORPUS_BENCHMARK_CHECK")
-    ]
+    corpusWhere,
+    {
+      AND: [
+        {
+          metadata: {
+            path: ["pipeline"],
+            equals: CORPUS_ANALYSIS_PIPELINE_NAME
+          }
+        },
+        {
+          metadata: {
+            path: ["corpusBookId"],
+            equals: "book-2"
+          }
+        }
+      ]
+    }
   );
 });
 

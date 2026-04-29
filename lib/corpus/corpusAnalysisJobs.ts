@@ -37,6 +37,8 @@ export const CORPUS_PIPELINE_JOB_TYPES = {
   CORPUS_BENCHMARK_CHECK: "CORPUS_BENCHMARK_CHECK"
 } as const;
 
+export const CORPUS_ANALYSIS_PIPELINE_NAME = "CORPUS_ANALYSIS" as const;
+
 export type CorpusPipelineJobType =
   (typeof CORPUS_PIPELINE_JOB_TYPES)[keyof typeof CORPUS_PIPELINE_JOB_TYPES];
 
@@ -160,6 +162,41 @@ export function isCorpusPipelineJobType(
   return CORPUS_PIPELINE_JOB_SEQUENCE.includes(type as CorpusPipelineJobType);
 }
 
+export function corpusPipelineJobWhere(
+  corpusBookId: string
+): Prisma.PipelineJobWhereInput {
+  return {
+    AND: [
+      {
+        metadata: {
+          path: ["pipeline"],
+          equals: CORPUS_ANALYSIS_PIPELINE_NAME
+        }
+      },
+      {
+        metadata: {
+          path: ["corpusBookId"],
+          equals: corpusBookId
+        }
+      }
+    ]
+  };
+}
+
+export function corpusPipelineJobTypeWhere(
+  corpusBookId: string,
+  type: CorpusPipelineJobType
+): Prisma.PipelineJobWhereInput {
+  return {
+    AND: [
+      corpusPipelineJobWhere(corpusBookId),
+      {
+        type
+      }
+    ]
+  };
+}
+
 export async function ensureCorpusAnalysisJobs(corpusBookId: string) {
   const book = await prisma.corpusBook.findUnique({
     where: { id: corpusBookId },
@@ -195,9 +232,7 @@ export async function ensureCorpusAnalysisJobs(corpusBookId: string) {
     const dependencyIds = plan.dependencyKeys
       .map((key) => jobsByKey.get(key)?.id)
       .filter((id): id is string => Boolean(id));
-    const existing = await prisma.pipelineJob.findUnique({
-      where: { idempotencyKey: plan.idempotencyKey }
-    });
+    const existing = await findExistingCorpusPipelineJob(corpusBookId, plan);
     const completed = completedFromState.has(plan.type);
     const baseData = {
       type: plan.type,
@@ -253,24 +288,22 @@ export async function ensureCorpusAnalysisJobs(corpusBookId: string) {
 }
 
 export async function findCorpusPipelineJobs(corpusBookId: string) {
-  const keys = plannedCorpusPipelineJobs(corpusBookId).map(
-    (plan) => plan.idempotencyKey
-  );
-
   return prisma.pipelineJob.findMany({
-    where: { idempotencyKey: { in: keys } },
+    where: corpusPipelineJobWhere(corpusBookId),
     orderBy: { createdAt: "asc" }
   });
 }
 
 export async function findNextReadyCorpusJob(corpusBookId: string) {
-  const keys = plannedCorpusPipelineJobs(corpusBookId).map(
-    (plan) => plan.idempotencyKey
-  );
   const now = new Date();
   const candidates = await prisma.pipelineJob.findMany({
     where: {
-      idempotencyKey: { in: keys },
+      AND: [
+        corpusPipelineJobWhere(corpusBookId),
+        {
+          OR: [{ lockedAt: null }, { lockExpiresAt: { lte: now } }]
+        }
+      ],
       status: {
         in: [
           PIPELINE_JOB_STATUS.QUEUED,
@@ -279,11 +312,6 @@ export async function findNextReadyCorpusJob(corpusBookId: string) {
         ]
       },
       OR: [{ readyAt: null }, { readyAt: { lte: now } }],
-      AND: [
-        {
-          OR: [{ lockedAt: null }, { lockExpiresAt: { lte: now } }]
-        }
-      ]
     },
     orderBy: [{ readyAt: "asc" }, { createdAt: "asc" }]
   });
@@ -328,12 +356,9 @@ export async function findNextReadyCorpusJob(corpusBookId: string) {
 }
 
 export async function unblockReadyCorpusJobs(corpusBookId: string) {
-  const keys = plannedCorpusPipelineJobs(corpusBookId).map(
-    (plan) => plan.idempotencyKey
-  );
   const candidates = await prisma.pipelineJob.findMany({
     where: {
-      idempotencyKey: { in: keys },
+      ...corpusPipelineJobWhere(corpusBookId),
       status: PIPELINE_JOB_STATUS.BLOCKED
     },
     orderBy: { createdAt: "asc" }
@@ -452,12 +477,19 @@ export async function releaseStaleCorpusJobLocks(
 }
 
 export async function queueCorpusBenchmarkReadinessCheck(corpusBookId: string) {
-  const idempotencyKey = corpusPipelineJobKey(
-    corpusBookId,
-    CORPUS_PIPELINE_JOB_TYPES.CORPUS_BENCHMARK_CHECK
-  );
-  const existing = await prisma.pipelineJob.findUnique({
-    where: { idempotencyKey }
+  const existing = await findExistingCorpusPipelineJob(corpusBookId, {
+    type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_BENCHMARK_CHECK,
+    idempotencyKey: corpusPipelineJobKey(
+      corpusBookId,
+      CORPUS_PIPELINE_JOB_TYPES.CORPUS_BENCHMARK_CHECK
+    ),
+    dependencyKeys: [],
+    metadata: {
+      corpusBookId,
+      step: CORPUS_PIPELINE_JOB_TYPES.CORPUS_BENCHMARK_CHECK,
+      order: CORPUS_PIPELINE_JOB_SEQUENCE.length,
+      pipeline: CORPUS_ANALYSIS_PIPELINE_NAME
+    }
   });
 
   await prisma.corpusBook.update({
@@ -489,6 +521,23 @@ export async function queueCorpusBenchmarkReadinessCheck(corpusBookId: string) {
   });
 
   return { queuedBenchmarkCheck: true };
+}
+
+async function findExistingCorpusPipelineJob(
+  corpusBookId: string,
+  plan: PlannedCorpusPipelineJob
+) {
+  return prisma.pipelineJob.findFirst({
+    where: {
+      OR: [
+        {
+          idempotencyKey: plan.idempotencyKey
+        },
+        corpusPipelineJobTypeWhere(corpusBookId, plan.type)
+      ]
+    },
+    orderBy: { createdAt: "asc" }
+  });
 }
 
 export async function runCorpusPipelineJobStep(job: PipelineJob) {

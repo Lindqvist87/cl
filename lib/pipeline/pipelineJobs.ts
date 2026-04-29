@@ -8,8 +8,8 @@ import {
 } from "@prisma/client";
 import {
   corpusBookIdFromPipelineJob,
+  corpusPipelineJobWhere,
   isCorpusPipelineJobType,
-  plannedCorpusPipelineJobs,
   runCorpusPipelineJobStep,
   unblockReadyCorpusJobs,
   updateCorpusPipelineStatus
@@ -424,7 +424,12 @@ export async function findNextReadyJob(scopeOrManuscriptId?: string | PipelineJo
   const now = new Date();
   const candidates = await prisma.pipelineJob.findMany({
     where: {
-      ...pipelineJobScopeWhere(scope),
+      AND: [
+        pipelineJobScopeWhere(scope),
+        {
+          OR: [{ lockedAt: null }, { lockExpiresAt: { lte: now } }]
+        }
+      ],
       status: {
         in: [
           PIPELINE_JOB_STATUS.QUEUED,
@@ -433,11 +438,6 @@ export async function findNextReadyJob(scopeOrManuscriptId?: string | PipelineJo
         ]
       },
       OR: [{ readyAt: null }, { readyAt: { lte: now } }],
-      AND: [
-        {
-          OR: [{ lockedAt: null }, { lockExpiresAt: { lte: now } }]
-        }
-      ]
     },
     orderBy: [{ readyAt: "asc" }, { createdAt: "asc" }],
     take: 50
@@ -903,13 +903,7 @@ export function pipelineJobScopeWhere(
   }
 
   if (scope.corpusBookId) {
-    return {
-      idempotencyKey: {
-        in: plannedCorpusPipelineJobs(scope.corpusBookId).map(
-          (job) => job.idempotencyKey
-        )
-      }
-    };
+    return corpusPipelineJobWhere(scope.corpusBookId);
   }
 
   return {};
