@@ -3,11 +3,13 @@ import {
   AnalysisRunStatus,
   AnalysisRunType,
   AnalysisStatus,
-  type PipelineJob
+  type PipelineJob,
+  type Prisma
 } from "@prisma/client";
 import {
   corpusBookIdFromPipelineJob,
   isCorpusPipelineJobType,
+  plannedCorpusPipelineJobs,
   runCorpusPipelineJobStep,
   unblockReadyCorpusJobs,
   updateCorpusPipelineStatus
@@ -60,14 +62,21 @@ export type RunPipelineJobOptions = {
 
 export type RunReadyJobsOptions = RunPipelineJobOptions & {
   manuscriptId?: string;
+  corpusBookId?: string;
   maxJobs?: number;
   maxSeconds?: number;
   workerType?: "INNGEST" | "VERCEL_CRON" | "MANUAL";
 };
 
+export type PipelineJobScope = {
+  manuscriptId?: string;
+  corpusBookId?: string;
+};
+
 export type RunPipelineJobResult = {
   jobId?: string;
   manuscriptId?: string | null;
+  corpusBookId?: string | null;
   type?: string;
   status:
     | "missing"
@@ -223,17 +232,19 @@ export async function runReadyPipelineJobs(options: RunReadyJobsOptions = {}) {
   const workerType = options.workerType ?? "MANUAL";
   const maxJobs = positiveInt(options.maxJobs, 1);
   const maxSeconds = positiveInt(options.maxSeconds, 25);
+  const scope = normalizePipelineJobScope(options);
   const startedAt = Date.now();
   const readyJobIds: string[] = [];
   const results: RunPipelineJobResult[] = [];
 
   await recordWorkerHeartbeat(workerType, "RUNNING", {
-    manuscriptId: options.manuscriptId ?? null
+    manuscriptId: scope.manuscriptId ?? null,
+    corpusBookId: scope.corpusBookId ?? null
   });
-  await releaseStaleLocks(options.manuscriptId);
+  await releaseStaleLocks(scope);
 
   while (results.length < maxJobs && Date.now() - startedAt < maxSeconds * 1000) {
-    const nextJob = await findNextReadyJob(options.manuscriptId);
+    const nextJob = await findNextReadyJob(scope);
     if (!nextJob) {
       break;
     }
@@ -247,9 +258,10 @@ export async function runReadyPipelineJobs(options: RunReadyJobsOptions = {}) {
     }
   }
 
-  const remainingReadyJobs = await countReadyJobs(options.manuscriptId);
+  const remainingReadyJobs = await countReadyJobs(scope);
   await recordWorkerHeartbeat(workerType, "IDLE", {
-    manuscriptId: options.manuscriptId ?? null,
+    manuscriptId: scope.manuscriptId ?? null,
+    corpusBookId: scope.corpusBookId ?? null,
     jobsRun: results.length,
     remainingReadyJobs
   });
@@ -261,7 +273,7 @@ export async function runReadyPipelineJobs(options: RunReadyJobsOptions = {}) {
     remainingReadyJobs,
     hasRemainingWork:
       remainingReadyJobs > 0 ||
-      (await hasUnfinishedPipelineJobs(options.manuscriptId))
+      (await hasUnfinishedPipelineJobs(scope))
   };
 }
 
@@ -407,11 +419,12 @@ export async function cancelPipelineJob(jobId: string) {
   return job;
 }
 
-export async function findNextReadyJob(manuscriptId?: string) {
+export async function findNextReadyJob(scopeOrManuscriptId?: string | PipelineJobScope) {
+  const scope = normalizePipelineJobScope(scopeOrManuscriptId);
   const now = new Date();
   const candidates = await prisma.pipelineJob.findMany({
     where: {
-      ...(manuscriptId ? { manuscriptId } : {}),
+      ...pipelineJobScopeWhere(scope),
       status: {
         in: [
           PIPELINE_JOB_STATUS.QUEUED,
@@ -469,11 +482,12 @@ export async function findNextReadyJob(manuscriptId?: string) {
   return null;
 }
 
-export async function releaseStaleLocks(manuscriptId?: string) {
+export async function releaseStaleLocks(scopeOrManuscriptId?: string | PipelineJobScope) {
+  const scope = normalizePipelineJobScope(scopeOrManuscriptId);
   const now = new Date();
   const staleJobs = await prisma.pipelineJob.findMany({
     where: {
-      ...(manuscriptId ? { manuscriptId } : {}),
+      ...pipelineJobScopeWhere(scope),
       status: PIPELINE_JOB_STATUS.RUNNING,
       lockExpiresAt: { lte: now }
     }
@@ -842,11 +856,12 @@ async function updateManuscriptPipelineStatus(manuscriptId: string) {
   });
 }
 
-async function countReadyJobs(manuscriptId?: string) {
+async function countReadyJobs(scopeOrManuscriptId?: string | PipelineJobScope) {
+  const scope = normalizePipelineJobScope(scopeOrManuscriptId);
   const now = new Date();
   return prisma.pipelineJob.count({
     where: {
-      ...(manuscriptId ? { manuscriptId } : {}),
+      ...pipelineJobScopeWhere(scope),
       status: {
         in: [PIPELINE_JOB_STATUS.QUEUED, PIPELINE_JOB_STATUS.RETRYING]
       },
@@ -855,10 +870,11 @@ async function countReadyJobs(manuscriptId?: string) {
   });
 }
 
-async function hasUnfinishedPipelineJobs(manuscriptId?: string) {
+async function hasUnfinishedPipelineJobs(scopeOrManuscriptId?: string | PipelineJobScope) {
+  const scope = normalizePipelineJobScope(scopeOrManuscriptId);
   const count = await prisma.pipelineJob.count({
     where: {
-      ...(manuscriptId ? { manuscriptId } : {}),
+      ...pipelineJobScopeWhere(scope),
       status: {
         in: [
           PIPELINE_JOB_STATUS.QUEUED,
@@ -873,6 +889,32 @@ async function hasUnfinishedPipelineJobs(manuscriptId?: string) {
   return count > 0;
 }
 
+export function pipelineJobScopeWhere(
+  scopeOrManuscriptId?: string | PipelineJobScope
+): Prisma.PipelineJobWhereInput {
+  const scope = normalizePipelineJobScope(scopeOrManuscriptId);
+
+  if (scope.manuscriptId && scope.corpusBookId) {
+    throw new Error("Pipeline job scope cannot include both manuscriptId and corpusBookId.");
+  }
+
+  if (scope.manuscriptId) {
+    return { manuscriptId: scope.manuscriptId };
+  }
+
+  if (scope.corpusBookId) {
+    return {
+      idempotencyKey: {
+        in: plannedCorpusPipelineJobs(scope.corpusBookId).map(
+          (job) => job.idempotencyKey
+        )
+      }
+    };
+  }
+
+  return {};
+}
+
 function jobResult(
   job: PipelineJob,
   status: RunPipelineJobResult["status"],
@@ -882,6 +924,9 @@ function jobResult(
   return {
     jobId: job.id,
     manuscriptId: job.manuscriptId,
+    corpusBookId: isCorpusPipelineJobType(job.type)
+      ? corpusBookIdFromPipelineJob(job)
+      : null,
     type: job.type,
     status,
     readyJobIds,
@@ -903,6 +948,19 @@ function retryDelayMs(attempts: number) {
 
 function maxAttemptsForJobType(type: string) {
   return type === "generateChapterRewriteDrafts" ? 2 : 3;
+}
+
+function normalizePipelineJobScope(
+  scopeOrManuscriptId?: string | PipelineJobScope
+): PipelineJobScope {
+  if (typeof scopeOrManuscriptId === "string") {
+    return { manuscriptId: scopeOrManuscriptId };
+  }
+
+  return {
+    manuscriptId: stringOrUndefined(scopeOrManuscriptId?.manuscriptId),
+    corpusBookId: stringOrUndefined(scopeOrManuscriptId?.corpusBookId)
+  };
 }
 
 function toJsonRecord(value: unknown): JsonRecord {

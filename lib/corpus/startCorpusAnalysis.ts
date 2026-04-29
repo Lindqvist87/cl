@@ -122,6 +122,8 @@ export async function runReadyCorpusAnalysisJobs(input: {
   }
 
   const remainingReadyJobs = await countRemainingReadyCorpusJobs(input.corpusBookId);
+  const hitRunLimit =
+    results.length >= maxJobs || Date.now() - startedAt >= maxSeconds * 1000;
   await recordWorkerHeartbeat(workerType, "IDLE", {
     task: "corpus-analysis",
     corpusBookId: input.corpusBookId,
@@ -134,7 +136,8 @@ export async function runReadyCorpusAnalysisJobs(input: {
     results,
     readyJobIds: Array.from(new Set(readyJobIds)),
     remainingReadyJobs,
-    hasRemainingWork: remainingReadyJobs > 0
+    hasRemainingWork:
+      remainingReadyJobs > 0 || (hitRunLimit && readyJobIds.length > 0)
   };
 }
 

@@ -18,7 +18,12 @@ import {
   staleWarningText,
   type CorpusProgressBuildInput
 } from "../lib/corpus/corpusProgressShared";
-import { PIPELINE_JOB_STATUS } from "../lib/pipeline/jobRules";
+import {
+  areDependenciesComplete,
+  canAttemptJob,
+  dependencyIdsFromJson,
+  PIPELINE_JOB_STATUS
+} from "../lib/pipeline/jobRules";
 
 test("importing a corpus book plans the full analysis job chain", () => {
   const jobs = plannedCorpusPipelineJobs("book-1");
@@ -133,6 +138,57 @@ test("status moves from not started to queued/running once jobs exist", () => {
   assert.equal(summary.steps.chapters.statusLabel, "Queued");
   assert.equal(summary.readyJobCount, 1);
   assert.equal(summary.unfinishedJobCount, 5);
+});
+
+test("after cleaning completes, corpus chapter detection becomes eligible", () => {
+  const now = new Date("2026-04-29T10:05:00Z");
+  const chaptersJob = {
+    status: PIPELINE_JOB_STATUS.BLOCKED,
+    dependencyIds: ["clean-job"],
+    readyAt: null,
+    lockedAt: null,
+    attempts: 0,
+    maxAttempts: 3
+  };
+
+  assert.equal(canAttemptJob(chaptersJob, now), true);
+  assert.equal(
+    areDependenciesComplete(dependencyIdsFromJson(chaptersJob.dependencyIds), [
+      { id: "clean-job", status: PIPELINE_JOB_STATUS.COMPLETED }
+    ]),
+    true
+  );
+  assert.equal(
+    areDependenciesComplete(dependencyIdsFromJson(chaptersJob.dependencyIds), [
+      { id: "clean-job", status: PIPELINE_JOB_STATUS.RUNNING }
+    ]),
+    false
+  );
+});
+
+test("corpus pipeline dependencies advance cleaning to chapters to chunks", () => {
+  const plans = plannedCorpusPipelineJobs("book-chain");
+
+  assert.deepEqual(plans[1].dependencyKeys, [plans[0].idempotencyKey]);
+  assert.deepEqual(plans[2].dependencyKeys, [plans[1].idempotencyKey]);
+  assert.equal(
+    areDependenciesComplete(["clean-job"], [
+      { id: "clean-job", status: PIPELINE_JOB_STATUS.COMPLETED }
+    ]),
+    true
+  );
+  assert.equal(
+    areDependenciesComplete(["chapters-job"], [
+      { id: "chapters-job", status: PIPELINE_JOB_STATUS.QUEUED }
+    ]),
+    false
+  );
+  assert.equal(
+    areDependenciesComplete(["chapters-job"], [
+      { id: "chapters-job", status: PIPELINE_JOB_STATUS.COMPLETED }
+    ]),
+    true
+  );
 });
 
 test("legacy imported corpus books with no jobs still show the analysis action", () => {

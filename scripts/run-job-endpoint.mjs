@@ -2,6 +2,7 @@ const endpoint = process.argv[2] ?? "run-next";
 const appUrl = process.env.APP_URL ?? "http://localhost:3000";
 const payload = {
   manuscriptId: process.env.MANUSCRIPT_ID,
+  corpusBookId: process.env.CORPUS_BOOK_ID,
   maxJobs: process.env.MAX_JOBS ? Number(process.env.MAX_JOBS) : undefined,
   maxSeconds: process.env.MAX_SECONDS ? Number(process.env.MAX_SECONDS) : undefined
 };

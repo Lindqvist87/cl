@@ -3,6 +3,10 @@ import assert from "node:assert/strict";
 import { pipelineStartHttpStatus } from "../lib/pipeline/startPipeline";
 import { plannedPipelineJobs } from "../lib/pipeline/jobPlanner";
 import {
+  corpusPipelineJobKey,
+  plannedCorpusPipelineJobs
+} from "../lib/corpus/corpusAnalysisJobs";
+import {
   areDependenciesComplete,
   canAttemptJob,
   dependencyIdsFromJson,
@@ -13,6 +17,7 @@ import {
   nextStatusAfterJobError,
   PIPELINE_JOB_STATUS
 } from "../lib/pipeline/jobRules";
+import { pipelineJobScopeWhere } from "../lib/pipeline/pipelineJobs";
 
 test("pipeline.started plans ordered jobs with dependencies", () => {
   const jobs = plannedPipelineJobs("m1", {
@@ -137,5 +142,44 @@ test("pipeline start responses only accept successful Inngest dispatches", () =>
   assert.equal(
     pipelineStartHttpStatus({ executionMode: "MANUAL", accepted: false }),
     200
+  );
+});
+
+test("ready runner can scope selection to corpus pipeline jobs", () => {
+  const where = pipelineJobScopeWhere({ corpusBookId: "book-1" });
+
+  assert.deepEqual(where, {
+    idempotencyKey: {
+      in: plannedCorpusPipelineJobs("book-1").map((job) => job.idempotencyKey)
+    }
+  });
+  assert.equal(
+    (where as { manuscriptId?: unknown }).manuscriptId,
+    undefined
+  );
+});
+
+test("corpusBookId scope does not match manuscript-only job filters", () => {
+  const manuscriptWhere = pipelineJobScopeWhere({ manuscriptId: "m1" });
+  const corpusWhere = pipelineJobScopeWhere({ corpusBookId: "book-2" });
+
+  assert.deepEqual(manuscriptWhere, { manuscriptId: "m1" });
+  assert.deepEqual(
+    (corpusWhere as { idempotencyKey: { in: string[] } }).idempotencyKey.in,
+    [
+      corpusPipelineJobKey("book-2", "CORPUS_CLEAN"),
+      corpusPipelineJobKey("book-2", "CORPUS_CHAPTERS"),
+      corpusPipelineJobKey("book-2", "CORPUS_CHUNK"),
+      corpusPipelineJobKey("book-2", "CORPUS_EMBED"),
+      corpusPipelineJobKey("book-2", "CORPUS_PROFILE"),
+      corpusPipelineJobKey("book-2", "CORPUS_BENCHMARK_CHECK")
+    ]
+  );
+});
+
+test("ambiguous ready runner scope is rejected", () => {
+  assert.throws(
+    () => pipelineJobScopeWhere({ manuscriptId: "m1", corpusBookId: "book-1" }),
+    /cannot include both manuscriptId and corpusBookId/
   );
 });

@@ -8,6 +8,7 @@ export async function POST(request: Request) {
   const body = await request.json().catch(() => ({}));
   const result = await runReadyPipelineJobs({
     manuscriptId: stringOrUndefined(body.manuscriptId),
+    corpusBookId: stringOrUndefined(body.corpusBookId),
     maxJobs: 1,
     maxSeconds: numberOrUndefined(body.maxSeconds),
     workerType: "MANUAL",
