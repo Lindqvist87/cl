@@ -53,17 +53,28 @@ OPENAI_API_KEY=""
 OPENAI_AUDIT_MODEL="gpt-5.4-mini"
 OPENAI_REWRITE_MODEL="gpt-5.5"
 OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
-NEXT_PUBLIC_APP_NAME="Manuscript Audit"
 ENABLE_INNGEST_WORKER="false"
-INNGEST_APP_ID="manuscript-intelligence-app"
 INNGEST_EVENT_KEY=""
 INNGEST_SIGNING_KEY=""
+NEXT_PUBLIC_APP_NAME="Manuscript Audit"
+INNGEST_APP_ID="manuscript-intelligence-app"
 INNGEST_SERVE_ORIGIN=""
 MAX_JOBS_PER_INNGEST_RUN="3"
 MAX_SECONDS_PER_INNGEST_RUN="25"
 ```
 
-`OPENAI_AUDIT_MODEL` drives v2 audit, corpus, trend, and planning calls. `OPENAI_REWRITE_MODEL` drives chapter rewrite calls. `OPENAI_EDITOR_MODEL` is still accepted as a legacy fallback, but new deployments should prefer the split audit/rewrite variables.
+`OPENAI_AUDIT_MODEL` drives v2 audit, corpus, trend, and planning calls. `OPENAI_REWRITE_MODEL` drives chapter rewrite calls. `OPENAI_EMBEDDING_MODEL` drives vector creation. `OPENAI_EDITOR_MODEL` is accepted only as a legacy audit-model fallback when `OPENAI_AUDIT_MODEL` is unset. `OPENAI_FAST_MODEL` is not read by this codebase.
+
+Optional variables read by the app or build scripts:
+
+- `NEXT_PUBLIC_APP_NAME` defaults to `Manuscript Audit`.
+- `INNGEST_APP_ID` defaults to `manuscript-intelligence-app`.
+- `INNGEST_SERVE_ORIGIN` is only needed when Inngest must be told the public origin explicitly.
+- `MAX_JOBS_PER_INNGEST_RUN` defaults to `3`.
+- `MAX_SECONDS_PER_INNGEST_RUN` defaults to `25`.
+- `OPENAI_INPUT_COST_PER_MILLION_TOKENS_USD` and `OPENAI_OUTPUT_COST_PER_MILLION_TOKENS_USD` enable cost estimates.
+- `SKIP_PRISMA_MIGRATE=1` skips the build-time `prisma migrate deploy` helper.
+- `INNGEST_DEV`, `APP_URL`, `MANUSCRIPT_ID`, `MAX_JOBS`, and `MAX_SECONDS` are local/dev-script helpers, not required Vercel variables.
 
 ## V2 Pipeline
 
@@ -105,7 +116,19 @@ Use `/trends` to add public metadata signals. Trend rows are metadata and snippe
 ## Deploy On Vercel
 
 1. Provision Neon Postgres with pgvector enabled.
-2. Set `DATABASE_URL`, `OPENAI_API_KEY`, `OPENAI_AUDIT_MODEL`, `OPENAI_REWRITE_MODEL`, and `OPENAI_EMBEDDING_MODEL` in Vercel project settings.
+2. Set the exact required Vercel variables:
+
+```bash
+DATABASE_URL="<Neon Postgres connection string>"
+OPENAI_API_KEY="<OpenAI API key>"
+OPENAI_AUDIT_MODEL="gpt-5.4-mini"
+OPENAI_REWRITE_MODEL="gpt-5.5"
+OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
+ENABLE_INNGEST_WORKER="true"
+INNGEST_EVENT_KEY="<Inngest event key>"
+INNGEST_SIGNING_KEY="<Inngest signing key>"
+```
+
 3. Run Prisma migrations against Neon during deployment or from a trusted local machine:
 
 ```bash

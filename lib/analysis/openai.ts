@@ -1,7 +1,8 @@
 import OpenAI from "openai";
 import { env } from "@/lib/env";
 
-const DEFAULT_AUDIT_MODEL = env.OPENAI_AUDIT_MODEL;
+const DEFAULT_AUDIT_MODEL =
+  env.OPENAI_AUDIT_MODEL || env.OPENAI_EDITOR_MODEL || "gpt-5.4-mini";
 
 let client: OpenAI | undefined;
 

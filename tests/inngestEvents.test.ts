@@ -4,6 +4,7 @@ import {
   getInngestRuntimeConfig,
   manuscriptPipelineStartedPayload
 } from "../src/inngest/events";
+import { getEnvVarChecks } from "../lib/system/envCheck";
 
 test("Inngest event payload creation is stable", () => {
   const payload = manuscriptPipelineStartedPayload({
@@ -47,6 +48,28 @@ test("missing Inngest env vars do not crash and keep fallback visible", () => {
   restore("INNGEST_EVENT_KEY", oldEventKey);
   restore("INNGEST_SIGNING_KEY", oldSigningKey);
   restore("INNGEST_DEV", oldDev);
+});
+
+test("system env check reports present and missing without values", () => {
+  const oldApiKey = process.env.OPENAI_API_KEY;
+  const oldDatabaseUrl = process.env.DATABASE_URL;
+
+  process.env.OPENAI_API_KEY = "secret-value-that-must-not-appear";
+  delete process.env.DATABASE_URL;
+
+  const checks = getEnvVarChecks(["OPENAI_API_KEY", "DATABASE_URL"]);
+
+  assert.deepEqual(checks, [
+    { name: "OPENAI_API_KEY", status: "Present" },
+    { name: "DATABASE_URL", status: "Missing" }
+  ]);
+  assert.equal(
+    JSON.stringify(checks).includes("secret-value-that-must-not-appear"),
+    false
+  );
+
+  restore("OPENAI_API_KEY", oldApiKey);
+  restore("DATABASE_URL", oldDatabaseUrl);
 });
 
 function restore(name: string, value: string | undefined) {

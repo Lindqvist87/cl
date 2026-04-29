@@ -2,11 +2,13 @@ import Link from "next/link";
 import { getInngestRuntimeConfig } from "@/src/inngest/events";
 import { PIPELINE_JOB_STATUS } from "@/lib/pipeline/jobRules";
 import { prisma } from "@/lib/prisma";
+import { getSystemEnvCheck, type EnvVarCheck } from "@/lib/system/envCheck";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminInngestPage() {
   const config = getInngestRuntimeConfig();
+  const envCheck = getSystemEnvCheck();
   const [lastEvent, lastCompletedJob, heartbeats] = await Promise.all([
     prisma.inngestEventLog.findFirst({ orderBy: { createdAt: "desc" } }),
     prisma.pipelineJob.findFirst({
@@ -30,11 +32,11 @@ export default async function AdminInngestPage() {
         <StatusCard label="Worker" value={config.enabled ? "Enabled" : "Disabled"} />
         <StatusCard
           label="Event key"
-          value={config.eventKeyPresent || config.devMode ? "Present" : "Missing"}
+          value={config.eventKeyPresent ? "Present" : "Missing"}
         />
         <StatusCard
           label="Signing key"
-          value={config.signingKeyPresent || config.devMode ? "Present" : "Missing"}
+          value={config.signingKeyPresent ? "Present" : "Missing"}
         />
       </section>
 
@@ -54,14 +56,15 @@ export default async function AdminInngestPage() {
       <section className="grid gap-4 lg:grid-cols-2">
         <div className="border border-line bg-white p-4 shadow-panel">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-            Configuration
+            System Check
           </h2>
-          <dl className="mt-3 space-y-2 text-sm">
-            <Row label="App ID" value={config.appId} />
-            <Row label="Serve origin" value={config.serveOrigin ?? "auto"} />
-            <Row label="Max jobs/run" value={String(config.maxJobsPerRun)} />
-            <Row label="Max seconds/run" value={String(config.maxSecondsPerRun)} />
-          </dl>
+          <div className="mt-3 grid gap-4 text-sm md:grid-cols-2 lg:grid-cols-1">
+            <EnvCheckGroup
+              title="Required Vercel Variables"
+              checks={envCheck.required}
+            />
+            <EnvCheckGroup title="Optional Variables" checks={envCheck.optional} />
+          </div>
         </div>
 
         <div className="border border-line bg-white p-4 shadow-panel">
@@ -133,6 +136,27 @@ function StatusCard({ label, value }: { label: string; value: string }) {
     <div className="border border-line bg-white p-4 shadow-panel">
       <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
       <div className="mt-2 text-lg font-semibold">{value}</div>
+    </div>
+  );
+}
+
+function EnvCheckGroup({
+  title,
+  checks
+}: {
+  title: string;
+  checks: EnvVarCheck[];
+}) {
+  return (
+    <div>
+      <h3 className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        {title}
+      </h3>
+      <dl className="mt-2 space-y-2">
+        {checks.map((check) => (
+          <Row key={check.name} label={check.name} value={check.status} />
+        ))}
+      </dl>
     </div>
   );
 }

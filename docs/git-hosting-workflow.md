@@ -42,9 +42,12 @@ Set these in the hosting provider:
 ```bash
 DATABASE_URL="postgresql://..."
 OPENAI_API_KEY="..."
-OPENAI_AUDIT_MODEL="gpt-4.1-mini"
-OPENAI_REWRITE_MODEL="gpt-4.1-mini"
-NEXT_PUBLIC_APP_NAME="Manuscript Audit"
+OPENAI_AUDIT_MODEL="gpt-5.4-mini"
+OPENAI_REWRITE_MODEL="gpt-5.5"
+OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
+ENABLE_INNGEST_WORKER="true"
+INNGEST_EVENT_KEY="<Inngest event key>"
+INNGEST_SIGNING_KEY="<Inngest signing key>"
 ```
 
 The production database needs Postgres with the `vector` extension available because the Prisma migration enables `pgvector`.
