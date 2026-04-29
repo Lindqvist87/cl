@@ -1,7 +1,8 @@
 import {
   ensureCorpusAnalysisJobs,
   findNextReadyCorpusJob,
-  getCorpusAnalysisSummary
+  getCorpusAnalysisSummary,
+  releaseStaleCorpusJobLocks
 } from "@/lib/corpus/corpusAnalysisJobs";
 import {
   recordWorkerHeartbeat,
@@ -101,6 +102,7 @@ export async function runReadyCorpusAnalysisJobs(input: {
     task: "corpus-analysis",
     corpusBookId: input.corpusBookId
   });
+  await releaseStaleCorpusJobLocks(input.corpusBookId);
 
   while (results.length < maxJobs && Date.now() - startedAt < maxSeconds * 1000) {
     const nextJob = await findNextReadyCorpusJob(input.corpusBookId);

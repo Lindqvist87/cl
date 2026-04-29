@@ -374,6 +374,11 @@ export async function retryPipelineJob(jobId: string) {
 
   if (job.manuscriptId) {
     await updateManuscriptPipelineStatus(job.manuscriptId);
+  } else if (isCorpusPipelineJobType(job.type)) {
+    const corpusBookId = corpusBookIdFromPipelineJob(job);
+    if (corpusBookId) {
+      await updateCorpusPipelineStatus(corpusBookId);
+    }
   }
 
   return job;
@@ -392,6 +397,11 @@ export async function cancelPipelineJob(jobId: string) {
 
   if (job.manuscriptId) {
     await updateManuscriptPipelineStatus(job.manuscriptId);
+  } else if (isCorpusPipelineJobType(job.type)) {
+    const corpusBookId = corpusBookIdFromPipelineJob(job);
+    if (corpusBookId) {
+      await updateCorpusPipelineStatus(corpusBookId);
+    }
   }
 
   return job;

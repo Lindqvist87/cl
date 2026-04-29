@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { BookOpen, Database } from "lucide-react";
-import { CorpusAnalysisProgress } from "@/components/CorpusAnalysisProgress";
+import {
+  CorpusAnalysisAction,
+  CorpusAnalysisProgress
+} from "@/components/CorpusAnalysisProgress";
 import { ManualCorpusImportForm } from "@/components/ManualCorpusImportForm";
-import { PipelineActionButton } from "@/components/PipelineActionButton";
-import { getCorpusAnalysisSummary } from "@/lib/corpus/corpusAnalysisJobs";
+import { getCorpusProgressStatus } from "@/lib/corpus/corpusProgress";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -23,11 +25,11 @@ export default async function CorpusPage() {
       }
     }
   });
-  const summaries = new Map(
+  const statuses = new Map(
     await Promise.all(
       books.map(async (book) => [
         book.id,
-        await getCorpusAnalysisSummary(book.id)
+        await getCorpusProgressStatus(book.id)
       ] as const)
     )
   );
@@ -61,8 +63,8 @@ export default async function CorpusPage() {
         ) : (
           <div className="divide-y divide-line">
             {books.map((book) => {
-              const summary = summaries.get(book.id);
-              if (!summary) return null;
+              const status = statuses.get(book.id);
+              if (!status) return null;
 
               return (
                 <div key={book.id} className="space-y-4 px-4 py-4">
@@ -107,25 +109,11 @@ export default async function CorpusPage() {
                     </div>
 
                     <div className="flex items-start xl:justify-end">
-                      {book.analysisStatus === "COMPLETED" && book.benchmarkReady ? (
-                        <Link
-                          href={`/admin/corpus/${book.id}/profile`}
-                          className="focus-ring inline-flex min-h-9 items-center justify-center border border-line bg-paper px-3 py-2 text-sm font-semibold text-ink hover:bg-white"
-                        >
-                          Open Book DNA
-                        </Link>
-                      ) : (
-                        <PipelineActionButton
-                          endpoint={`/api/corpus/${book.id}/run-analysis`}
-                          label="Start analysis"
-                          runningLabel="Starting..."
-                          variant="primary"
-                        />
-                      )}
+                      <CorpusAnalysisAction initialStatus={status} />
                     </div>
                   </div>
 
-                  <CorpusAnalysisProgress summary={summary} compact />
+                  <CorpusAnalysisProgress initialStatus={status} compact />
                 </div>
               );
             })}

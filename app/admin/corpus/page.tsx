@@ -4,7 +4,7 @@ import {
   CorpusAnalysisAction,
   CorpusAnalysisProgress
 } from "@/components/CorpusAnalysisProgress";
-import { getCorpusAnalysisSummary } from "@/lib/corpus/corpusAnalysisJobs";
+import { getCorpusProgressStatus } from "@/lib/corpus/corpusProgress";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -23,11 +23,11 @@ export default async function AdminCorpusPage() {
       }
     }
   });
-  const summaries = new Map(
+  const statuses = new Map(
     await Promise.all(
       books.map(async (book) => [
         book.id,
-        await getCorpusAnalysisSummary(book.id)
+        await getCorpusProgressStatus(book.id)
       ] as const)
     )
   );
@@ -68,8 +68,8 @@ export default async function AdminCorpusPage() {
         ) : (
           <div className="divide-y divide-line">
             {books.map((book) => {
-              const summary = summaries.get(book.id);
-              if (!summary) return null;
+              const status = statuses.get(book.id);
+              if (!status) return null;
 
               return (
                 <div key={book.id} className="space-y-4 px-4 py-4">
@@ -117,14 +117,12 @@ export default async function AdminCorpusPage() {
 
                     <div className="flex items-start xl:justify-end">
                       <CorpusAnalysisAction
-                        bookId={book.id}
-                        analysisStatus={book.analysisStatus}
-                        summary={summary}
+                        initialStatus={status}
                       />
                     </div>
                   </div>
 
-                  <CorpusAnalysisProgress summary={summary} compact />
+                  <CorpusAnalysisProgress initialStatus={status} compact />
                 </div>
               );
             })}

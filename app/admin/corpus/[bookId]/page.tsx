@@ -5,7 +5,7 @@ import {
   CorpusAnalysisAction,
   CorpusAnalysisProgress
 } from "@/components/CorpusAnalysisProgress";
-import { getCorpusAnalysisSummary } from "@/lib/corpus/corpusAnalysisJobs";
+import { getCorpusProgressStatus } from "@/lib/corpus/corpusProgress";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -39,7 +39,7 @@ export default async function CorpusBookDetailPage({
     notFound();
   }
 
-  const analysisSummary = await getCorpusAnalysisSummary(book.id);
+  const progressStatus = await getCorpusProgressStatus(book.id);
   const report = toRecord(book.text?.extractionReport);
   const detectedMetadata = toRecord(report.detectedMetadata);
   const warnings = stringArray(report.warnings);
@@ -68,9 +68,7 @@ export default async function CorpusBookDetailPage({
           </div>
           <div className="flex flex-wrap gap-2">
             <CorpusAnalysisAction
-              bookId={book.id}
-              analysisStatus={book.analysisStatus}
-              summary={analysisSummary}
+              initialStatus={progressStatus}
             />
             {book.profile ? (
               <Link
@@ -134,7 +132,7 @@ export default async function CorpusBookDetailPage({
               ["Benchmark", book.benchmarkReady ? "Ready" : book.benchmarkAllowed ? "Allowed" : "Off"],
               [
                 "Blocked reason",
-                book.benchmarkBlockedReason ?? analysisSummary.benchmarkBlockedReason ?? "None"
+                book.benchmarkBlockedReason ?? progressStatus.benchmarkBlockedReason ?? "None"
               ],
               ["Latest job", book.importJobs[0] ? formatStatus(book.importJobs[0].currentStep) : "None"]
             ]}
@@ -142,7 +140,7 @@ export default async function CorpusBookDetailPage({
         </DetailPanel>
 
         <DetailPanel title="Analysis Progress">
-          <CorpusAnalysisProgress summary={analysisSummary} />
+          <CorpusAnalysisProgress initialStatus={progressStatus} />
         </DetailPanel>
 
         <DetailPanel title="Warnings">

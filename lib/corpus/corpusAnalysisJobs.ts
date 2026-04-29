@@ -19,6 +19,7 @@ import {
   areDependenciesComplete,
   canAttemptJob,
   dependencyIdsFromJson,
+  nextStatusAfterJobError,
   PIPELINE_JOB_STATUS
 } from "@/lib/pipeline/jobRules";
 import { chunkParsedManuscript } from "@/lib/parsing/chunker";
@@ -384,6 +385,110 @@ export async function updateCorpusPipelineStatus(corpusBookId: string) {
     where: { id: corpusBookId },
     data: { analysisStatus: CorpusAnalysisStatus.RUNNING }
   });
+}
+
+export async function retryFailedCorpusPipelineJobs(corpusBookId: string) {
+  const jobs = await findCorpusPipelineJobs(corpusBookId);
+  const failedJobIds = jobs
+    .filter((job) => job.status === PIPELINE_JOB_STATUS.FAILED)
+    .map((job) => job.id);
+
+  if (failedJobIds.length === 0) {
+    return { retriedJobCount: 0 };
+  }
+
+  await prisma.pipelineJob.updateMany({
+    where: { id: { in: failedJobIds } },
+    data: {
+      status: PIPELINE_JOB_STATUS.RETRYING,
+      attempts: 0,
+      error: null,
+      readyAt: new Date(),
+      lockedAt: null,
+      lockedBy: null,
+      lockExpiresAt: null
+    }
+  });
+  await updateCorpusPipelineStatus(corpusBookId);
+
+  return { retriedJobCount: failedJobIds.length };
+}
+
+export async function releaseStaleCorpusJobLocks(
+  corpusBookId: string,
+  now: Date = new Date()
+) {
+  const jobs = await findCorpusPipelineJobs(corpusBookId);
+  const staleJobs = jobs.filter(
+    (job) =>
+      job.status === PIPELINE_JOB_STATUS.RUNNING &&
+      job.lockExpiresAt &&
+      job.lockExpiresAt.getTime() <= now.getTime()
+  );
+
+  for (const job of staleJobs) {
+    const status = nextStatusAfterJobError({
+      attempts: job.attempts,
+      maxAttempts: job.maxAttempts
+    });
+    await prisma.pipelineJob.update({
+      where: { id: job.id },
+      data: {
+        status,
+        error: job.error ?? "Job lock expired before completion.",
+        readyAt: status === PIPELINE_JOB_STATUS.RETRYING ? now : null,
+        lockedAt: null,
+        lockedBy: null,
+        lockExpiresAt: null
+      }
+    });
+  }
+
+  if (staleJobs.length > 0) {
+    await updateCorpusPipelineStatus(corpusBookId);
+  }
+
+  return { releasedJobCount: staleJobs.length };
+}
+
+export async function queueCorpusBenchmarkReadinessCheck(corpusBookId: string) {
+  const idempotencyKey = corpusPipelineJobKey(
+    corpusBookId,
+    CORPUS_PIPELINE_JOB_TYPES.CORPUS_BENCHMARK_CHECK
+  );
+  const existing = await prisma.pipelineJob.findUnique({
+    where: { idempotencyKey }
+  });
+
+  await prisma.corpusBook.update({
+    where: { id: corpusBookId },
+    data: {
+      analysisStatus: CorpusAnalysisStatus.RUNNING,
+      benchmarkReady: false,
+      benchmarkReadyAt: null,
+      benchmarkBlockedReason: null
+    }
+  });
+
+  if (!existing) {
+    return { queuedBenchmarkCheck: false };
+  }
+
+  await prisma.pipelineJob.update({
+    where: { id: existing.id },
+    data: {
+      status: PIPELINE_JOB_STATUS.RETRYING,
+      attempts: 0,
+      error: null,
+      readyAt: new Date(),
+      lockedAt: null,
+      lockedBy: null,
+      lockExpiresAt: null,
+      completedAt: null
+    }
+  });
+
+  return { queuedBenchmarkCheck: true };
 }
 
 export async function runCorpusPipelineJobStep(job: PipelineJob) {
