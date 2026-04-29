@@ -181,6 +181,10 @@ export async function draftChapterRewrite(
     },
     orderBy: { createdAt: "desc" }
   });
+  const corpusPatternNotes = await rewriteCorpusPatternNotes(
+    input.runId,
+    input.manuscriptId
+  );
 
   const rewrittenParts: string[] = [];
   const sectionResults: ChapterRewriteResult[] = [];
@@ -215,6 +219,7 @@ export async function draftChapterRewrite(
           previousChapterSummaries: previousContexts,
           previousSectionSummaries,
           continuityRules: continuityLedger,
+          corpusPatternNotes,
           rewriteScope: {
             type: "chunk",
             sectionIndex: section.sectionIndex,
@@ -241,7 +246,9 @@ export async function draftChapterRewrite(
           totalSections: section.totalSections,
           chunkIndex: section.chunkIndex,
           wordCount: section.wordCount,
-          previousCanonChapterCount: continuityLedger.acceptedCanonChapterCount
+          previousCanonChapterCount: continuityLedger.acceptedCanonChapterCount,
+          corpusPatternNoteCount: corpusPatternNotes.length,
+          corpusPayloadPolicy: "summarized_patterns_only_no_full_books"
         }
       });
     }
@@ -291,7 +298,9 @@ export async function draftChapterRewrite(
         source: sections.length > 1 ? "chunked" : "single-section",
         sectionCount: sections.length,
         originalWordCount: countWords(chapter.text),
-        previousCanonChapterCount: continuityLedger.acceptedCanonChapterCount
+        previousCanonChapterCount: continuityLedger.acceptedCanonChapterCount,
+        corpusPatternNoteCount: corpusPatternNotes.length,
+        corpusPayloadPolicy: "summarized_patterns_only_no_full_books"
       })
     }
   });
@@ -411,6 +420,28 @@ function finalRewriteJson(input: {
         continuityNotes: result.continuityNotes
       }))
     },
+    corpusInfluence: {
+      patternsUsed: uniqueStrings(
+        input.sectionResults.flatMap(
+          (result) => result.corpusInfluence?.patternsUsed ?? []
+        )
+      ),
+      changed: uniqueStrings(
+        input.sectionResults.flatMap(
+          (result) => result.corpusInfluence?.changed ?? []
+        )
+      ),
+      preserved: uniqueStrings(
+        input.sectionResults.flatMap(
+          (result) => result.corpusInfluence?.preserved ?? []
+        )
+      ),
+      risksIntroduced: uniqueStrings(
+        input.sectionResults.flatMap(
+          (result) => result.corpusInfluence?.risksIntroduced ?? []
+        )
+      )
+    },
     inventedFactsWarnings: input.sectionResults.flatMap(
       (result) => result.inventedFactsWarnings
     ),
@@ -510,9 +541,48 @@ function toChapterRewriteResult(value: unknown): ChapterRewriteResult {
       ? (record.changeLog as Array<Record<string, unknown>>)
       : [],
     continuityNotes: toJsonRecord(record.continuityNotes),
+    corpusInfluence: normalizeCorpusInfluence(record.corpusInfluence),
     inventedFactsWarnings: stringArray(record.inventedFactsWarnings),
     nextChapterImplications: stringArray(record.nextChapterImplications)
   };
+}
+
+async function rewriteCorpusPatternNotes(runId: string, manuscriptId: string) {
+  const corpusOutput = await prisma.analysisOutput.findUnique({
+    where: {
+      runId_passType_scopeType_scopeId: {
+        runId,
+        passType: AnalysisPassType.CORPUS_COMPARISON,
+        scopeType: "manuscript",
+        scopeId: manuscriptId
+      }
+    }
+  });
+  const output = toJsonRecord(corpusOutput?.output);
+  const notes = [
+    ...stringArray(output.rewritePatternNotes),
+    ...stringArray(output.patternSuggestions),
+    ...stringArray(output.riskyDivergences).map((note) => `Risk to watch: ${note}`),
+    ...stringArray(output.benchmarkNotes)
+  ];
+
+  return uniqueStrings(notes)
+    .slice(0, 8)
+    .map((note) => ({
+      pattern: truncatePatternNote(note),
+      source: "Corpus BookProfile comparison",
+      suggestedUse:
+        "Use as a craft pattern for structure, tempo, or emphasis; do not imitate source text."
+    }));
+}
+
+function truncatePatternNote(note: string) {
+  const words = note.split(/\s+/).filter(Boolean);
+  return words.length > 40 ? `${words.slice(0, 40).join(" ")}...` : note;
+}
+
+function uniqueStrings(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)));
 }
 
 function usageFromInputSummary(value: unknown) {
@@ -533,4 +603,14 @@ function toJsonRecord(value: unknown): JsonRecord {
 
 function stringArray(value: unknown) {
   return Array.isArray(value) ? value.map(String) : [];
+}
+
+function normalizeCorpusInfluence(value: unknown) {
+  const record = toJsonRecord(value);
+  return {
+    patternsUsed: stringArray(record.patternsUsed),
+    changed: stringArray(record.changed),
+    preserved: stringArray(record.preserved),
+    risksIntroduced: stringArray(record.risksIntroduced)
+  };
 }

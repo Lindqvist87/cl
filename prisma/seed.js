@@ -33,6 +33,9 @@ async function main() {
         genre: "romance / social novel",
         sourceUrl: "https://www.gutenberg.org/ebooks/1342",
         rightsStatus: "PUBLIC_DOMAIN",
+        benchmarkAllowed: true,
+        benchmarkReady: true,
+        benchmarkReadyAt: new Date(),
         allowedUses: {
           corpusBenchmarking: true,
           fullTextStorage: true,
@@ -40,7 +43,18 @@ async function main() {
         },
         fullTextAvailable: true,
         ingestionStatus: "PROFILED",
-        analysisStatus: "COMPLETED"
+        analysisStatus: "COMPLETED",
+        importProgress: {
+          uploaded: true,
+          textExtracted: true,
+          cleaned: true,
+          chaptersDetected: true,
+          chunksCreated: true,
+          embeddingsCreated: true,
+          embeddingStatus: "skipped: seed",
+          bookDnaExtracted: true,
+          benchmarkReady: true
+        }
       }
     });
 
@@ -52,17 +66,36 @@ async function main() {
         bookId: book.id,
         rawText: sample,
         cleanedText: sample,
-        wordCount: 52
+        wordCount: 52,
+        cleanedAt: new Date()
+      }
+    });
+
+    const chapter = await prisma.corpusChapter.create({
+      data: {
+        bookId: book.id,
+        order: 1,
+        chapterIndex: 1,
+        title: "Opening",
+        text: sample,
+        wordCount: 52,
+        metrics: {
+          wordCount: 52,
+          paragraphCount: 2
+        }
       }
     });
 
     await prisma.corpusChunk.create({
       data: {
         bookId: book.id,
+        corpusChapterId: chapter.id,
+        chapterIndex: 1,
         chunkIndex: 0,
         paragraphIndex: 0,
         text: sample,
         tokenCount: 70,
+        embeddingStatus: "SKIPPED",
         summary: "Public-domain opening hook example with social irony.",
         metrics: {
           dialogueRatio: 0,

@@ -1,15 +1,15 @@
-import mammoth from "mammoth";
 import {
   CorpusAnalysisStatus,
   CorpusIngestionStatus,
   RightsStatus,
   SourceType
 } from "@prisma/client";
-import { calculateProfileMetrics } from "@/lib/analysis/textMetrics";
+import { extractTextFromCorpusUpload } from "@/lib/corpus/extractText";
 import { jsonInput } from "@/lib/json";
 import { prisma } from "@/lib/prisma";
 import { countWords, normalizeWhitespace } from "@/lib/text/wordCount";
-import { chunkCorpusText, cleanGutenbergText } from "@/lib/corpus/textProcessing";
+import { cleanGutenbergText } from "@/lib/corpus/textProcessing";
+import { validateBenchmarkRights } from "@/lib/corpus/onboarding";
 
 export type ManualCorpusImportInput = {
   file?: File;
@@ -18,10 +18,12 @@ export type ManualCorpusImportInput = {
   language?: string;
   publicationYear?: number;
   genre?: string;
+  source?: string;
   sourceUrl?: string;
   sourceType?: SourceType;
   rightsStatus: RightsStatus;
   licenseType?: string;
+  benchmarkAllowed?: boolean;
   allowedUses?: Record<string, unknown>;
 };
 
@@ -34,6 +36,14 @@ const FULL_TEXT_RIGHTS = new Set<RightsStatus>([
 
 export async function importManualCorpusBook(input: ManualCorpusImportInput) {
   const sourceType = input.sourceType ?? SourceType.MANUAL;
+  const benchmarkAllowed =
+    input.benchmarkAllowed ??
+    input.allowedUses?.corpusBenchmarking === true;
+  validateBenchmarkRights({
+    benchmarkAllowed,
+    rightsStatus: input.rightsStatus
+  });
+
   const sourceId = sourceIdFor(sourceType);
   const source = await prisma.source.upsert({
     where: { id: sourceId },
@@ -52,7 +62,7 @@ export async function importManualCorpusBook(input: ManualCorpusImportInput) {
 
   const canStoreFullText = FULL_TEXT_RIGHTS.has(input.rightsStatus);
   const extracted = input.file && canStoreFullText
-    ? await extractCorpusUpload(input.file)
+    ? await extractTextFromCorpusUpload(input.file)
     : undefined;
   const cleanedText = extracted
     ? input.sourceType === SourceType.GUTENBERG
@@ -70,79 +80,48 @@ export async function importManualCorpusBook(input: ManualCorpusImportInput) {
         language: input.language,
         publicationYear: input.publicationYear,
         genre: input.genre,
+        sourceName: input.source,
         sourceUrl: input.sourceUrl,
+        fileName: input.file?.name,
+        fileMimeType: extracted?.mimeType ?? input.file?.type,
+        fileFormat: extracted?.format,
         rightsStatus: input.rightsStatus,
         licenseType: input.licenseType,
-        allowedUses: jsonInput(input.allowedUses ?? {}),
+        benchmarkAllowed,
+        allowedUses: jsonInput({
+          ...(input.allowedUses ?? {}),
+          corpusBenchmarking: benchmarkAllowed,
+          fullTextStorage: canStoreFullText
+        }),
         fullTextAvailable: Boolean(cleanedText),
         ingestionStatus: cleanedText
-          ? CorpusIngestionStatus.PROFILED
+          ? CorpusIngestionStatus.IMPORTED
           : CorpusIngestionStatus.METADATA_ONLY,
         analysisStatus: cleanedText
-          ? CorpusAnalysisStatus.COMPLETED
-          : CorpusAnalysisStatus.NOT_STARTED
+          ? CorpusAnalysisStatus.NOT_STARTED
+          : CorpusAnalysisStatus.NOT_STARTED,
+        importProgress: jsonInput(initialImportProgress(Boolean(cleanedText)))
       }
     });
 
-    if (!cleanedText) {
-      return book;
-    }
-
-    await tx.corpusBookText.create({
-      data: {
-        bookId: book.id,
-        rawText: extracted?.text ?? "",
-        cleanedText,
-        wordCount
-      }
-    });
-
-    const chunks = chunkCorpusText(cleanedText);
-    if (chunks.length > 0) {
-      await tx.corpusChunk.createMany({
-        data: chunks.map((chunk) => ({
+    if (cleanedText) {
+      await tx.corpusBookText.create({
+        data: {
           bookId: book.id,
-          paragraphIndex: chunk.paragraphIndex,
-          chunkIndex: chunk.chunkIndex,
-          text: chunk.text,
-          tokenCount: chunk.tokenCount,
-          metrics: jsonInput({
-            wordCount: countWords(chunk.text)
-          })
-        }))
+          rawText: extracted?.text ?? "",
+          cleanedText,
+          wordCount,
+          cleanedAt: new Date()
+        }
       });
     }
 
-    const profile = calculateProfileMetrics([
-      {
-        title: input.title,
-        text: cleanedText,
-        wordCount
-      }
-    ]);
-
-    await tx.bookProfile.create({
+    await tx.corpusImportJob.create({
       data: {
         bookId: book.id,
-        wordCount: profile.wordCount,
-        chapterCount: profile.chapterCount,
-        avgChapterWords: profile.avgChapterWords,
-        avgSentenceLength: profile.avgSentenceLength,
-        dialogueRatio: profile.dialogueRatio,
-        expositionRatio: profile.expositionRatio,
-        actionRatio: profile.actionRatio,
-        introspectionRatio: profile.introspectionRatio,
-        lexicalDensity: profile.lexicalDensity,
-        povEstimate: profile.povEstimate,
-        tenseEstimate: profile.tenseEstimate,
-        openingHookType: profile.openingHookType,
-        pacingCurve: jsonInput(profile.pacingCurve),
-        emotionalIntensityCurve: jsonInput(profile.emotionalIntensityCurve),
-        conflictDensityCurve: jsonInput(profile.conflictDensityCurve),
-        chapterEndingPatterns: jsonInput(profile.chapterEndingPatterns),
-        styleFingerprint: jsonInput(profile.styleFingerprint),
-        genreMarkers: jsonInput(profile.genreMarkers),
-        tropeMarkers: jsonInput(profile.tropeMarkers)
+        status: "QUEUED",
+        currentStep: cleanedText ? "uploaded" : "metadata_only",
+        progress: jsonInput(initialImportProgress(Boolean(cleanedText)))
       }
     });
 
@@ -160,28 +139,15 @@ function sourceName(sourceType: SourceType) {
     : `${sourceType.replace(/_/g, " ")} Import`;
 }
 
-async function extractCorpusUpload(file: File) {
-  const fileName = file.name.toLowerCase();
-  const buffer = Buffer.from(await file.arrayBuffer());
-
-  if (fileName.endsWith(".txt") || file.type === "text/plain") {
-    return {
-      text: new TextDecoder("utf-8").decode(buffer)
-    };
-  }
-
-  if (
-    fileName.endsWith(".docx") ||
-    file.type ===
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-  ) {
-    const result = await mammoth.extractRawText({ buffer });
-    return { text: result.value };
-  }
-
-  if (fileName.endsWith(".epub")) {
-    throw new Error("EPUB corpus extraction is stubbed. Convert to TXT for now.");
-  }
-
-  throw new Error("Unsupported corpus file type. Upload TXT or DOCX for full text.");
+function initialImportProgress(hasText: boolean) {
+  return {
+    uploaded: true,
+    textExtracted: hasText,
+    cleaned: hasText,
+    chaptersDetected: false,
+    chunksCreated: false,
+    embeddingsCreated: false,
+    bookDnaExtracted: false,
+    benchmarkReady: false
+  };
 }

@@ -61,7 +61,7 @@ export function ManualCorpusImportForm() {
           <option value="UNKNOWN">Unknown</option>
         </select>
         <input name="licenseType" placeholder="License type" className="focus-ring min-h-10 border border-line bg-paper px-3 text-sm" />
-        <input name="file" type="file" accept=".txt,.docx,.epub,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="focus-ring min-h-10 border border-line bg-paper px-3 py-2 text-sm" />
+        <input name="file" type="file" accept=".txt,.md,.xml,.tei,.epub,.docx,text/plain,text/markdown,application/xml,text/xml,application/epub+zip,application/vnd.openxmlformats-officedocument.wordprocessingml.document" className="focus-ring min-h-10 border border-line bg-paper px-3 py-2 text-sm" />
       </div>
       <label className="mt-3 flex items-center gap-2 text-sm text-slate-700">
         <input type="checkbox" name="corpusBenchmarking" className="h-4 w-4" defaultChecked />

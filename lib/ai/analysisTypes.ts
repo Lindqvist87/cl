@@ -67,6 +67,12 @@ export type CorpusComparisonResult = {
   ratioComparisons: Record<string, unknown>;
   openingPatternComparison: string;
   benchmarkNotes: string[];
+  resemblanceNotes?: string[];
+  usefulDivergences?: string[];
+  riskyDivergences?: string[];
+  patternSuggestions?: string[];
+  chapterLevelSuggestions?: Array<Record<string, unknown>>;
+  rewritePatternNotes?: string[];
   findings: FindingDraft[];
 };
 
@@ -98,6 +104,12 @@ export type ChapterRewriteResult = {
   rewrittenChapter: string;
   changeLog: Array<Record<string, unknown>>;
   continuityNotes: Record<string, unknown>;
+  corpusInfluence?: {
+    patternsUsed: string[];
+    changed: string[];
+    preserved: string[];
+    risksIntroduced: string[];
+  };
   inventedFactsWarnings: string[];
   nextChapterImplications: string[];
 };

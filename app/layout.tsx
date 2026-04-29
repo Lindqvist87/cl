@@ -23,6 +23,7 @@ export default function RootLayout({
             </Link>
             <nav className="flex items-center gap-4 text-sm text-slate-600">
               <Link href="/corpus" className="hover:text-ink">Corpus</Link>
+              <Link href="/admin/corpus/onboarding" className="hover:text-ink">Onboarding</Link>
               <Link href="/trends" className="hover:text-ink">Trends</Link>
               <Link href="/admin/jobs" className="hover:text-ink">Jobs</Link>
               <Link href="/admin/inngest" className="hover:text-ink">Inngest</Link>

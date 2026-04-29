@@ -42,6 +42,7 @@ export class DoabAdapter {
           ? RightsStatus.OPEN_LICENSE
           : RightsStatus.METADATA_ONLY,
         licenseType: input.licenseType,
+        benchmarkAllowed: Boolean(input.fullTextAllowed),
         allowedUses: jsonInput({
           metadata: input.metadata ?? {},
           corpusBenchmarking: true,

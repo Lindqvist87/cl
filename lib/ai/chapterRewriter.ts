@@ -27,6 +27,12 @@ type ChapterRewriteInput = {
     summary?: string;
   }>;
   continuityRules: unknown;
+  corpusPatternNotes?: Array<{
+    pattern: string;
+    source?: string;
+    evidence?: string;
+    suggestedUse?: string;
+  }>;
   rewriteScope?: {
     type: "chapter" | "chunk";
     sectionIndex?: number;
@@ -48,7 +54,8 @@ export async function rewriteChapter(input: ChapterRewriteInput) {
       "Return strict JSON only.",
       "Preserve continuity and authorial voice.",
       "Do not rewrite the whole manuscript.",
-      "Do not invent new facts unless unavoidable; warn when you do."
+      "Do not invent new facts unless unavoidable; warn when you do.",
+      "Use corpus notes as summarized craft patterns only; never copy source books or imitate a named author directly."
     ].join(" "),
     user: JSON.stringify(
       {
@@ -65,6 +72,12 @@ export async function rewriteChapter(input: ChapterRewriteInput) {
             }
           ],
           continuityNotes: "JSON object with carried-forward facts and dependencies",
+          corpusInfluence: {
+            patternsUsed: ["which summarized corpus patterns influenced the rewrite"],
+            changed: ["what changed because of those patterns"],
+            preserved: ["what original material or voice was preserved"],
+            risksIntroduced: ["risks introduced by applying the pattern"]
+          },
           inventedFactsWarnings: ["warnings"],
           nextChapterImplications: ["implications"]
         },
@@ -83,7 +96,13 @@ export async function rewriteChapter(input: ChapterRewriteInput) {
         globalRewritePlan: input.globalRewritePlan,
         previousChapterSummaries: input.previousChapterSummaries,
         previousSectionSummaries: input.previousSectionSummaries ?? [],
-        continuityRules: input.continuityRules
+        continuityRules: input.continuityRules,
+        corpusPatternNotes: input.corpusPatternNotes ?? [],
+        corpusPolicy: {
+          receivesFullCorpusBooks: false,
+          allowedContext:
+            "short summarized BookProfile patterns, corpus comparison notes, and brief evidence labels only"
+        }
       },
       null,
       2
@@ -103,6 +122,12 @@ function stubChapterRewrite(input: ChapterRewriteInput): ChapterRewriteResult {
     continuityNotes: {
       chapterIndex: input.chapterIndex,
       previousChapterCount: input.previousChapterSummaries.length
+    },
+    corpusInfluence: {
+      patternsUsed: (input.corpusPatternNotes ?? []).map((note) => note.pattern),
+      changed: [],
+      preserved: ["Original chapter text was preserved by the placeholder."],
+      risksIntroduced: []
     },
     inventedFactsWarnings: [
       "No new facts were invented by the deterministic placeholder."

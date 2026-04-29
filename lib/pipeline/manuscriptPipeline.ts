@@ -23,6 +23,7 @@ import type {
 } from "@/lib/ai/analysisTypes";
 import { withAiUsage, type AiUsageLog } from "@/lib/ai/usage";
 import { buildBoundedChapterContext } from "@/lib/analysis/chapterContext";
+import { profileDataFromMetrics } from "@/lib/corpus/bookDna";
 import { planRewrite } from "@/lib/ai/rewritePlanner";
 import { compareTrends } from "@/lib/ai/trendComparator";
 import { analyzeWholeBook } from "@/lib/ai/wholeBookAnalyzer";
@@ -545,20 +546,7 @@ async function createManuscriptProfile(manuscriptId: string) {
   const created = await prisma.manuscriptProfile.create({
     data: {
       manuscriptId,
-      wordCount: profile.wordCount,
-      chapterCount: profile.chapterCount,
-      avgChapterWords: profile.avgChapterWords,
-      avgSentenceLength: profile.avgSentenceLength,
-      dialogueRatio: profile.dialogueRatio,
-      expositionRatio: profile.expositionRatio,
-      actionRatio: profile.actionRatio,
-      introspectionRatio: profile.introspectionRatio,
-      pacingCurve: jsonInput(profile.pacingCurve),
-      emotionalIntensityCurve: jsonInput(profile.emotionalIntensityCurve),
-      conflictDensityCurve: jsonInput(profile.conflictDensityCurve),
-      styleFingerprint: jsonInput(profile.styleFingerprint),
-      genreMarkers: jsonInput(profile.genreMarkers),
-      tropeMarkers: jsonInput(profile.tropeMarkers)
+      ...profileDataFromMetrics(profile)
     }
   });
 
@@ -721,34 +709,68 @@ async function compareAgainstCorpus(manuscriptId: string, runId: string) {
     where: { id: manuscriptId },
     include: { profile: true }
   });
+  const manuscriptMetadata = toJsonRecord(manuscript.metadata);
+  const manuscriptLanguage = stringOrNull(manuscriptMetadata.language);
+  const selectedCorpusBookIds = stringArray(manuscriptMetadata.selectedCorpusBookIds);
   const profileCandidates = await prisma.bookProfile.findMany({
     take: 60,
     orderBy: { createdAt: "desc" },
     include: { book: true }
   });
   const profiles = profileCandidates
-    .filter((profile) => canUseForCorpusBenchmark(profile.book))
+    .filter((profile) => profile.book.benchmarkReady && canUseForCorpusBenchmark(profile.book))
     .slice(0, 20);
+  const promptProfiles = profiles.map((profile) => ({
+    bookId: profile.book.id,
+    title: profile.book.title,
+    author: profile.book.author,
+    rightsStatus: profile.book.rightsStatus,
+    genre: profile.book.genre,
+    language: profile.book.language,
+    profile: profileForPrompt(profile)
+  }));
+  const sameLanguageProfiles = promptProfiles.filter((profile) =>
+    sameNormalizedValue(profile.language, manuscriptLanguage)
+  );
+  const sameGenreProfiles = promptProfiles.filter((profile) =>
+    sameGenre(profile.genre, manuscript.targetGenre)
+  );
+  const selectedProfiles = promptProfiles.filter((profile) =>
+    selectedCorpusBookIds.includes(profilesKey(profile))
+  );
   const chunkCandidates = await prisma.corpusChunk.findMany({
     take: 60,
     orderBy: { createdAt: "desc" },
     include: { book: true }
   });
   const chunks = chunkCandidates
-    .filter((chunk) => canUseForChunkContext(chunk.book))
+    .filter((chunk) => chunk.book.benchmarkReady && canUseForChunkContext(chunk.book))
+    .sort((a, b) => corpusChunkRank(b.book, manuscriptLanguage, manuscript.targetGenre) - corpusChunkRank(a.book, manuscriptLanguage, manuscript.targetGenre))
     .slice(0, 12);
+  const storedCorpusEmbeddings = chunks.filter((chunk) => chunk.embeddingStatus === "STORED").length;
+  const manuscriptEmbeddingReady = await prisma.manuscriptChunk.count({
+    where: {
+      manuscriptId,
+      localMetrics: {
+        path: ["embeddingStatus"],
+        equals: "stored"
+      }
+    }
+  });
   const result = await compareCorpus({
     manuscriptTitle: manuscript.title,
     targetGenre: manuscript.targetGenre,
+    manuscriptLanguage,
     manuscriptProfile: toJsonRecord(manuscript.profile),
     rightsStatusCounts: rightsStatusCounts(profiles.map((profile) => profile.book)),
-    benchmarkProfiles: profiles.map((profile) => ({
-      title: profile.book.title,
-      author: profile.book.author,
-      rightsStatus: profile.book.rightsStatus,
-      genre: profile.book.genre,
-      profile: toJsonRecord(profile)
-    })),
+    benchmarkProfiles: promptProfiles,
+    sameLanguageProfiles,
+    sameGenreProfiles,
+    selectedProfiles,
+    chunkSimilarityBasis:
+      storedCorpusEmbeddings > 0 && manuscriptEmbeddingReady > 0
+        ? "embedding-ready chunks plus profile filters"
+        : "profile-filtered chunks; embeddings unavailable or incomplete",
     similarChunks: chunks.map((chunk) => ({
       bookTitle: chunk.book.title,
       author: chunk.book.author,
@@ -776,7 +798,14 @@ async function compareAgainstCorpus(manuscriptId: string, runId: string) {
     usage: result.usage,
     inputSummary: {
       benchmarkProfileCount: profiles.length,
+      sameLanguageProfileCount: sameLanguageProfiles.length,
+      sameGenreProfileCount: sameGenreProfiles.length,
+      selectedProfileCount: selectedProfiles.length,
       similarChunkCount: chunks.length,
+      chunkSimilarityBasis:
+        storedCorpusEmbeddings > 0 && manuscriptEmbeddingReady > 0
+          ? "embedding-ready chunks plus profile filters"
+          : "profile-filtered chunks; embeddings unavailable or incomplete",
       rightsStatusCounts: rightsStatusCounts(profiles.map((profile) => profile.book))
     }
   });
@@ -1265,6 +1294,58 @@ function trendContextOnly(value: unknown) {
     marketOpportunity: record.marketOpportunity,
     marketRisk: record.marketRisk
   };
+}
+
+function profileForPrompt(profile: unknown) {
+  const record = toJsonRecord(profile);
+  const {
+    id: _id,
+    bookId: _bookId,
+    book: _book,
+    manuscriptId: _manuscriptId,
+    manuscript: _manuscript,
+    createdAt: _createdAt,
+    ...metrics
+  } = record;
+
+  return metrics;
+}
+
+function sameNormalizedValue(a?: string | null, b?: string | null) {
+  if (!a || !b) return false;
+  return a.trim().toLowerCase() === b.trim().toLowerCase();
+}
+
+function sameGenre(a?: string | null, b?: string | null) {
+  if (!a || !b) return false;
+  const left = a.trim().toLowerCase();
+  const right = b.trim().toLowerCase();
+  return left === right || left.includes(right) || right.includes(left);
+}
+
+function profilesKey(profile: { bookId?: string }) {
+  return profile.bookId ?? "";
+}
+
+function corpusChunkRank(
+  book: { language?: string | null; genre?: string | null },
+  manuscriptLanguage?: string | null,
+  targetGenre?: string | null
+) {
+  let score = 0;
+  if (sameNormalizedValue(book.language, manuscriptLanguage)) score += 2;
+  if (sameGenre(book.genre, targetGenre)) score += 2;
+  return score;
+}
+
+function stringOrNull(value: unknown) {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+    : [];
 }
 
 function severityLabel(severity: number): IssueSeverity {

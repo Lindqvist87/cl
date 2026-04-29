@@ -118,9 +118,17 @@ model CorpusBook {
   publicationYear   Int?
   genre             String?
   sourceUrl         String?
+  sourceName        String?
+  fileName          String?
+  fileMimeType      String?
+  fileFormat        String?
   rightsStatus      RightsStatus           @default(UNKNOWN)
   licenseType       String?
   allowedUses       Json?
+  benchmarkAllowed  Boolean                @default(false)
+  benchmarkReady    Boolean                @default(false)
+  benchmarkReadyAt  DateTime?
+  importProgress    Json?
   fullTextAvailable Boolean                @default(false)
   ingestionStatus   CorpusIngestionStatus  @default(QUEUED)
   analysisStatus    CorpusAnalysisStatus   @default(NOT_STARTED)
@@ -129,11 +137,15 @@ model CorpusBook {
 
   source  Source           @relation(fields: [sourceId], references: [id], onDelete: Cascade)
   text    CorpusBookText?
+  chapters CorpusChapter[]
   chunks  CorpusChunk[]
   profile BookProfile?
+  importJobs CorpusImportJob[]
 
   @@index([sourceId])
   @@index([rightsStatus])
+  @@index([benchmarkAllowed])
+  @@index([benchmarkReady])
   @@index([ingestionStatus])
   @@index([analysisStatus])
   @@index([genre])
@@ -146,14 +158,38 @@ model CorpusBookText {
   rawText     String
   cleanedText String
   wordCount   Int      @default(0)
+  cleanedAt   DateTime?
   createdAt   DateTime @default(now())
 
   book CorpusBook @relation(fields: [bookId], references: [id], onDelete: Cascade)
 }
 
+model CorpusChapter {
+  id           String   @id @default(cuid())
+  bookId       String
+  order        Int
+  chapterIndex Int      @default(0)
+  title        String
+  heading      String?
+  text         String   @default("")
+  wordCount    Int      @default(0)
+  startOffset  Int?
+  endOffset    Int?
+  metrics      Json?
+  createdAt    DateTime @default(now())
+
+  book   CorpusBook    @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  chunks CorpusChunk[]
+
+  @@unique([bookId, order])
+  @@index([bookId])
+  @@index([bookId, chapterIndex])
+}
+
 model CorpusChunk {
   id             String                     @id @default(cuid())
   bookId         String
+  corpusChapterId String?
   chapterIndex   Int?
   sectionIndex   Int?
   paragraphIndex Int?
@@ -161,15 +197,19 @@ model CorpusChunk {
   text           String
   tokenCount     Int                        @default(0)
   embedding      Unsupported("vector(1536)")?
+  embeddingStatus String                     @default("PENDING")
   summary        String?
   metrics        Json?
   createdAt      DateTime                   @default(now())
 
   book CorpusBook @relation(fields: [bookId], references: [id], onDelete: Cascade)
+  chapter CorpusChapter? @relation(fields: [corpusChapterId], references: [id], onDelete: SetNull)
 
   @@unique([bookId, chunkIndex])
   @@index([bookId])
+  @@index([corpusChapterId])
   @@index([chapterIndex])
+  @@index([embeddingStatus])
 }
 
 model BookProfile {
@@ -178,12 +218,21 @@ model BookProfile {
   wordCount                Int      @default(0)
   chapterCount             Int      @default(0)
   avgChapterWords          Int      @default(0)
+  medianChapterWords       Int      @default(0)
+  minChapterWords          Int      @default(0)
+  maxChapterWords          Int      @default(0)
   avgSentenceLength        Float    @default(0)
   dialogueRatio            Float    @default(0)
+  questionRatio            Float    @default(0)
+  exclamationRatio         Float    @default(0)
   expositionRatio          Float    @default(0)
   actionRatio              Float    @default(0)
   introspectionRatio       Float    @default(0)
   lexicalDensity           Float    @default(0)
+  paragraphLengthDistribution Json?
+  sentenceLengthDistribution  Json?
+  repeatedTerms            Json?
+  chapterLengthCurve       Json?
   povEstimate              String?
   tenseEstimate            String?
   openingHookType          String?
@@ -191,12 +240,39 @@ model BookProfile {
   emotionalIntensityCurve  Json?
   conflictDensityCurve     Json?
   chapterEndingPatterns    Json?
+  dominantSceneModes       Json?
+  narrativeDistance        String?
   styleFingerprint         Json?
+  dialogueStyle            Json?
+  expositionStyle          Json?
   genreMarkers             Json?
   tropeMarkers             Json?
+  literaryCraftLessons     Json?
+  deterministicMetrics     Json?
+  aiMetrics                Json?
   createdAt                DateTime @default(now())
 
   book CorpusBook @relation(fields: [bookId], references: [id], onDelete: Cascade)
+}
+
+model CorpusImportJob {
+  id          String    @id @default(cuid())
+  bookId      String
+  status      String    @default("QUEUED")
+  currentStep String    @default("uploaded")
+  progress    Json?
+  error       String?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  book CorpusBook @relation(fields: [bookId], references: [id], onDelete: Cascade)
+
+  @@index([bookId])
+  @@index([status])
+  @@index([currentStep])
+  @@index([createdAt])
 }
 
 model TrendSignal {
@@ -386,17 +462,38 @@ model ManuscriptProfile {
   wordCount                Int      @default(0)
   chapterCount             Int      @default(0)
   avgChapterWords          Int      @default(0)
+  medianChapterWords       Int      @default(0)
+  minChapterWords          Int      @default(0)
+  maxChapterWords          Int      @default(0)
   avgSentenceLength        Float    @default(0)
   dialogueRatio            Float    @default(0)
+  questionRatio            Float    @default(0)
+  exclamationRatio         Float    @default(0)
   expositionRatio          Float    @default(0)
   actionRatio              Float    @default(0)
   introspectionRatio       Float    @default(0)
+  lexicalDensity           Float    @default(0)
+  paragraphLengthDistribution Json?
+  sentenceLengthDistribution  Json?
+  repeatedTerms            Json?
+  chapterLengthCurve       Json?
+  povEstimate              String?
+  tenseEstimate            String?
+  openingHookType          String?
   pacingCurve              Json?
   emotionalIntensityCurve  Json?
   conflictDensityCurve     Json?
+  chapterEndingPatterns    Json?
+  dominantSceneModes       Json?
+  narrativeDistance        String?
   styleFingerprint         Json?
+  dialogueStyle            Json?
+  expositionStyle          Json?
   genreMarkers             Json?
   tropeMarkers             Json?
+  literaryCraftLessons     Json?
+  deterministicMetrics     Json?
+  aiMetrics                Json?
   createdAt                DateTime @default(now())
 
   manuscript Manuscript @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
