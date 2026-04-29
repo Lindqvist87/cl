@@ -133,6 +133,12 @@ function ImportStatus({
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
                     <h3 className="font-semibold">{book.title}</h3>
+                    <Link
+                      href={`/admin/corpus/${book.id}`}
+                      className="text-sm text-accent hover:underline"
+                    >
+                      Details
+                    </Link>
                     {book.profile ? (
                       <Link
                         href={`/admin/corpus/${book.id}/profile`}

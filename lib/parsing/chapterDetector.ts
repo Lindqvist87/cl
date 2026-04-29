@@ -6,6 +6,8 @@ const CHAPTER_HEADING =
 const STANDALONE_NUMBER = /^([0-9]{1,3}|[ivxlcdm]{1,8})[.)]?$/i;
 const NAMED_FRONT_BACK = /^(prologue|prolog|epilogue|epilog)$/i;
 const SCENE_BREAK = /^(\*{3,}|#{1,3}|-{3,}|~{3,}|\u00a7)$/;
+const EPUB_SECTION_HEADING = /^#{1,3}\s+(.+)$/;
+const FALLBACK_CHAPTER_WORDS = 6000;
 
 type ParagraphBlock = {
   text: string;
@@ -33,9 +35,10 @@ export function parseManuscriptText(rawText: string, sourceFileName: string): Pa
     paragraphCount,
     chapters,
     metadata: {
-      parserVersion: "mvp-1",
+      parserVersion: "mvp-2",
       sourceFileName,
-      chapterDetection: "chapter/kapitel/numeric/roman/prologue/epilogue/short-break"
+      chapterDetection:
+        "chapter/kapitel/numeric/roman/prologue/epilogue/epub-section/fallback-length"
     }
   };
 }
@@ -51,7 +54,7 @@ function splitParagraphBlocks(text: string): ParagraphBlock[] {
     }
 
     blocks.push({
-      text: paragraph.replace(/\n+/g, " ").trim(),
+      text: normalizeParagraphBlockText(paragraph),
       offset: match.index ?? 0
     });
   }
@@ -61,6 +64,37 @@ function splitParagraphBlocks(text: string): ParagraphBlock[] {
   }
 
   return blocks;
+}
+
+function normalizeParagraphBlockText(paragraph: string) {
+  const trimmed = paragraph.trim();
+  if (looksLikeVerseBlock(trimmed)) {
+    return trimmed
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n[ \t]+/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+  }
+
+  return trimmed.replace(/\n+/g, " ").trim();
+}
+
+function looksLikeVerseBlock(text: string) {
+  const lines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  if (lines.length < 3) {
+    return false;
+  }
+
+  const wordCounts = lines.map((line) => countWords(line));
+  const shortLines = wordCounts.filter((words) => words > 0 && words <= 8).length;
+  const avgWords =
+    wordCounts.reduce((sum, words) => sum + words, 0) / Math.max(1, wordCounts.length);
+
+  return shortLines / lines.length >= 0.65 && avgWords <= 8;
 }
 
 function detectTitle(blocks: ParagraphBlock[], sourceFileName: string) {
@@ -77,6 +111,17 @@ function detectTitle(blocks: ParagraphBlock[], sourceFileName: string) {
 }
 
 function findChapterStarts(blocks: ParagraphBlock[]) {
+  const epubStarts = blocks
+    .map((block, index) => (EPUB_SECTION_HEADING.test(block.text.trim()) ? index : -1))
+    .filter((index) => index >= 0);
+
+  if (epubStarts.length > 0) {
+    if (epubStarts[0] > 0) {
+      epubStarts.unshift(0);
+    }
+    return epubStarts;
+  }
+
   const starts: number[] = [];
 
   blocks.forEach((block, index) => {
@@ -86,7 +131,7 @@ function findChapterStarts(blocks: ParagraphBlock[]) {
   });
 
   if (starts.length === 0) {
-    return [0];
+    return fallbackChapterStarts(blocks);
   }
 
   if (starts[0] > 0) {
@@ -105,6 +150,10 @@ function isChapterHeading(text: string, index = 0) {
   }
 
   if (CHAPTER_HEADING.test(trimmed) || NAMED_FRONT_BACK.test(trimmed)) {
+    return true;
+  }
+
+  if (EPUB_SECTION_HEADING.test(trimmed)) {
     return true;
   }
 
@@ -146,7 +195,7 @@ function buildChapters(blocks: ParagraphBlock[], starts: number[]): ParsedChapte
     const contentStart = hasExplicitHeading ? start + 1 : start;
     const chapterBlocks = blocks.slice(contentStart, end);
     const title = hasExplicitHeading
-      ? headingBlock.text
+      ? chapterTitleFromHeading(headingBlock.text)
       : starts.length === 1
         ? "Manuscript"
         : `Opening ${chapterIndex + 1}`;
@@ -169,6 +218,29 @@ function buildChapters(blocks: ParagraphBlock[], starts: number[]): ParsedChapte
       scenes
     };
   });
+}
+
+function fallbackChapterStarts(blocks: ParagraphBlock[]) {
+  if (blocks.length === 0) {
+    return [0];
+  }
+
+  const starts = [0];
+  let pendingWords = 0;
+
+  blocks.forEach((block, index) => {
+    pendingWords += countWords(block.text);
+    if (index > 0 && pendingWords >= FALLBACK_CHAPTER_WORDS) {
+      starts.push(index + 1);
+      pendingWords = 0;
+    }
+  });
+
+  return starts.filter((start) => start < blocks.length);
+}
+
+function chapterTitleFromHeading(text: string) {
+  return text.replace(EPUB_SECTION_HEADING, "$1").trim();
 }
 
 function buildScenes(

@@ -1,13 +1,28 @@
-import AdmZip from "adm-zip";
 import mammoth from "mammoth";
+import {
+  extractTextFromEpubBuffer,
+  type EpubExtractedChapter,
+  type EpubExtractionReport
+} from "@/lib/corpus/epub";
 import { normalizeWhitespace } from "@/lib/text/wordCount";
 
 export type CorpusTextFormat = "TXT" | "MD" | "XML" | "EPUB" | "DOCX";
 
 export type ExtractedCorpusText = {
   text: string;
+  rawText: string;
+  cleanedText: string;
   format: CorpusTextFormat;
   mimeType?: string;
+  chapters?: EpubExtractedChapter[];
+  extractionReport?: EpubExtractionReport;
+  detectedTitle?: string;
+  detectedAuthor?: string;
+  detectedLanguage?: string;
+  detectedPublisher?: string;
+  detectedPublicationDate?: string;
+  detectedIdentifier?: string;
+  extractionWarnings?: string[];
 };
 
 export async function extractTextFromCorpusUpload(
@@ -18,16 +33,24 @@ export async function extractTextFromCorpusUpload(
   const buffer = Buffer.from(await file.arrayBuffer());
 
   if (fileName.endsWith(".txt") || mimeType === "text/plain") {
+    const rawText = decodeUtf8(buffer);
+    const cleanedText = normalizeWhitespace(rawText);
     return {
-      text: normalizeWhitespace(decodeUtf8(buffer)),
+      text: cleanedText,
+      rawText,
+      cleanedText,
       format: "TXT",
       mimeType
     };
   }
 
   if (fileName.endsWith(".md") || mimeType === "text/markdown") {
+    const rawText = markdownToText(decodeUtf8(buffer));
+    const cleanedText = normalizeWhitespace(rawText);
     return {
-      text: normalizeWhitespace(markdownToText(decodeUtf8(buffer))),
+      text: cleanedText,
+      rawText,
+      cleanedText,
       format: "MD",
       mimeType
     };
@@ -39,18 +62,34 @@ export async function extractTextFromCorpusUpload(
     mimeType === "application/xml" ||
     mimeType === "text/xml"
   ) {
+    const rawText = markupToText(decodeUtf8(buffer));
+    const cleanedText = normalizeWhitespace(rawText);
     return {
-      text: normalizeWhitespace(markupToText(decodeUtf8(buffer))),
+      text: cleanedText,
+      rawText,
+      cleanedText,
       format: "XML",
       mimeType
     };
   }
 
   if (fileName.endsWith(".epub") || mimeType === "application/epub+zip") {
+    const epub = await extractTextFromEpubBuffer(buffer, file.name);
     return {
-      text: normalizeWhitespace(extractEpubText(buffer)),
+      text: epub.cleanedText,
+      rawText: epub.rawText,
+      cleanedText: epub.cleanedText,
       format: "EPUB",
-      mimeType
+      mimeType,
+      chapters: epub.chapters,
+      extractionReport: epub.extractionReport,
+      detectedTitle: epub.detectedTitle,
+      detectedAuthor: epub.detectedAuthor,
+      detectedLanguage: epub.detectedLanguage,
+      detectedPublisher: epub.detectedPublisher,
+      detectedPublicationDate: epub.detectedPublicationDate,
+      detectedIdentifier: epub.detectedIdentifier,
+      extractionWarnings: epub.extractionWarnings
     };
   }
 
@@ -60,8 +99,11 @@ export async function extractTextFromCorpusUpload(
       "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
   ) {
     const result = await mammoth.extractRawText({ buffer });
+    const cleanedText = normalizeWhitespace(result.value);
     return {
-      text: normalizeWhitespace(result.value),
+      text: cleanedText,
+      rawText: result.value,
+      cleanedText,
       format: "DOCX",
       mimeType
     };
@@ -83,27 +125,6 @@ function markdownToText(input: string) {
     .replace(/^#{1,6}\s+/gm, "")
     .replace(/^>\s?/gm, "")
     .replace(/[*_~]{1,3}/g, "");
-}
-
-function extractEpubText(buffer: Buffer) {
-  const zip = new AdmZip(buffer);
-  const entries = zip
-    .getEntries()
-    .filter((entry) => !entry.isDirectory)
-    .filter((entry) => /\.(xhtml|html|htm|xml)$/i.test(entry.entryName))
-    .filter((entry) => !/(^|\/)(toc|nav|content|container)\.(xhtml|html|htm|xml|opf)$/i.test(entry.entryName))
-    .sort((a, b) => a.entryName.localeCompare(b.entryName));
-
-  const text = entries
-    .map((entry) => markupToText(entry.getData().toString("utf8")))
-    .filter(Boolean)
-    .join("\n\n");
-
-  if (!text.trim()) {
-    throw new Error("No readable text files were found inside the EPUB.");
-  }
-
-  return text;
 }
 
 function markupToText(input: string) {

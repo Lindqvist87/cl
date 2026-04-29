@@ -157,6 +157,7 @@ model CorpusBookText {
   bookId      String   @unique
   rawText     String
   cleanedText String
+  extractionReport Json?
   wordCount   Int      @default(0)
   cleanedAt   DateTime?
   createdAt   DateTime @default(now())

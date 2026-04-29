@@ -64,12 +64,16 @@ export async function importManualCorpusBook(input: ManualCorpusImportInput) {
   const extracted = input.file && canStoreFullText
     ? await extractTextFromCorpusUpload(input.file)
     : undefined;
+  const extractedCleanText = extracted?.cleanedText ?? extracted?.text;
   const cleanedText = extracted
     ? input.sourceType === SourceType.GUTENBERG
-      ? cleanGutenbergText(extracted.text)
-      : normalizeWhitespace(extracted.text)
+      ? cleanGutenbergText(extractedCleanText ?? "")
+      : normalizeWhitespace(extractedCleanText ?? "")
     : "";
   const wordCount = cleanedText ? countWords(cleanedText) : 0;
+  const extractionReport = extracted
+    ? buildExtractionReport(extracted, input, cleanedText)
+    : undefined;
 
   return prisma.$transaction(async (tx) => {
     const book = await tx.corpusBook.create({
@@ -108,8 +112,9 @@ export async function importManualCorpusBook(input: ManualCorpusImportInput) {
       await tx.corpusBookText.create({
         data: {
           bookId: book.id,
-          rawText: extracted?.text ?? "",
+          rawText: extracted?.rawText ?? extracted?.text ?? "",
           cleanedText,
+          extractionReport: extractionReport ? jsonInput(extractionReport) : undefined,
           wordCount,
           cleanedAt: new Date()
         }
@@ -127,6 +132,40 @@ export async function importManualCorpusBook(input: ManualCorpusImportInput) {
 
     return book;
   });
+}
+
+function buildExtractionReport(
+  extracted: Awaited<ReturnType<typeof extractTextFromCorpusUpload>>,
+  input: ManualCorpusImportInput,
+  cleanedText: string
+) {
+  return {
+    ...(extracted.extractionReport ?? {
+      format: extracted.format,
+      sourceFormat: extracted.format,
+      warnings: extracted.extractionWarnings ?? []
+    }),
+    userMetadataPreserved: true,
+    canonicalMetadata: {
+      title: input.title,
+      author: input.author,
+      language: input.language,
+      publicationYear: input.publicationYear,
+      genre: input.genre,
+      source: input.source,
+      sourceUrl: input.sourceUrl,
+      rightsStatus: input.rightsStatus
+    },
+    detectedMetadata: {
+      title: extracted.detectedTitle,
+      author: extracted.detectedAuthor,
+      language: extracted.detectedLanguage,
+      publisher: extracted.detectedPublisher,
+      publicationDate: extracted.detectedPublicationDate,
+      identifier: extracted.detectedIdentifier
+    },
+    cleanedWordCount: countWords(cleanedText)
+  };
 }
 
 function sourceIdFor(sourceType: SourceType) {
