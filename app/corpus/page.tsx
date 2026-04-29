@@ -1,10 +1,8 @@
 import Link from "next/link";
 import { BookOpen, Database } from "lucide-react";
-import {
-  CorpusAnalysisAction,
-  CorpusAnalysisProgress
-} from "@/components/CorpusAnalysisProgress";
+import { CorpusAnalysisProgress } from "@/components/CorpusAnalysisProgress";
 import { ManualCorpusImportForm } from "@/components/ManualCorpusImportForm";
+import { PipelineActionButton } from "@/components/PipelineActionButton";
 import { getCorpusAnalysisSummary } from "@/lib/corpus/corpusAnalysisJobs";
 import { prisma } from "@/lib/prisma";
 
@@ -68,7 +66,7 @@ export default async function CorpusPage() {
 
               return (
                 <div key={book.id} className="space-y-4 px-4 py-4">
-                  <div className="grid gap-4 xl:grid-cols-[1fr_360px_auto]">
+                  <div className="grid gap-4 xl:grid-cols-[1fr_360px_180px]">
                     <div className="flex gap-3">
                       <BookOpen size={20} className="mt-1 text-accent" aria-hidden="true" />
                       <div>
@@ -109,11 +107,21 @@ export default async function CorpusPage() {
                     </div>
 
                     <div className="flex items-start xl:justify-end">
-                      <CorpusAnalysisAction
-                        bookId={book.id}
-                        analysisStatus={book.analysisStatus}
-                        summary={summary}
-                      />
+                      {book.analysisStatus === "COMPLETED" && book.benchmarkReady ? (
+                        <Link
+                          href={`/admin/corpus/${book.id}/profile`}
+                          className="focus-ring inline-flex min-h-9 items-center justify-center border border-line bg-paper px-3 py-2 text-sm font-semibold text-ink hover:bg-white"
+                        >
+                          Open Book DNA
+                        </Link>
+                      ) : (
+                        <PipelineActionButton
+                          endpoint={`/api/corpus/${book.id}/run-analysis`}
+                          label="Start analysis"
+                          runningLabel="Starting..."
+                          variant="primary"
+                        />
+                      )}
                     </div>
                   </div>
 
