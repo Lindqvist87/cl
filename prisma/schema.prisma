@@ -256,6 +256,7 @@ model Manuscript {
   outputs      AnalysisOutput[]
   findings     Finding[]
   rewritePlans RewritePlan[]
+  pipelineJobs PipelineJob[]
 
   @@index([createdAt])
   @@index([analysisStatus])
@@ -549,4 +550,69 @@ model ChapterRewrite {
   @@index([chapterId])
   @@index([rewritePlanId])
   @@index([status])
+}
+
+model PipelineJob {
+  id             String    @id @default(cuid())
+  manuscriptId   String?
+  chapterId      String?
+  type           String
+  status         String    @default("QUEUED")
+  idempotencyKey String    @unique
+  dependencyIds  Json?
+  readyAt        DateTime?
+  lockedAt       DateTime?
+  lockedBy       String?
+  lockExpiresAt  DateTime?
+  attempts       Int       @default(0)
+  maxAttempts    Int       @default(3)
+  error          String?
+  metadata       Json?
+  result         Json?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  manuscript Manuscript? @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+
+  @@index([manuscriptId])
+  @@index([chapterId])
+  @@index([type])
+  @@index([status])
+  @@index([readyAt])
+  @@index([lockedAt])
+  @@index([lockExpiresAt])
+  @@index([manuscriptId, status])
+}
+
+model InngestEventLog {
+  id           String   @id @default(cuid())
+  eventName    String
+  manuscriptId String?
+  jobId        String?
+  payload      Json
+  status       String   @default("SENT")
+  error        String?
+  createdAt    DateTime @default(now())
+
+  @@index([eventName])
+  @@index([manuscriptId])
+  @@index([jobId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model WorkerHeartbeat {
+  id         String   @id @default(cuid())
+  workerType String
+  status     String
+  lastSeenAt DateTime @default(now())
+  metadata   Json?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([workerType])
+  @@index([status])
+  @@index([lastSeenAt])
 }

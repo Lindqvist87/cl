@@ -1,5 +1,6 @@
 import { hasEditorModelKey, requestEditorJson } from "@/lib/ai/editorModel";
 import type { CorpusComparisonResult } from "@/lib/ai/analysisTypes";
+import { stubUsageLog } from "@/lib/ai/usage";
 
 type CorpusComparisonInput = {
   manuscriptTitle: string;
@@ -12,9 +13,11 @@ type CorpusComparisonInput = {
     genre?: string | null;
     profile: Record<string, unknown>;
   }>;
+  rightsStatusCounts: Record<string, number>;
   similarChunks: Array<{
     bookTitle: string;
     author?: string | null;
+    rightsStatus: string;
     summary?: string | null;
     metrics?: unknown;
   }>;
@@ -23,7 +26,7 @@ type CorpusComparisonInput = {
 export async function compareCorpus(input: CorpusComparisonInput) {
   if (!hasEditorModelKey()) {
     const json = stubCorpusComparison(input);
-    return { json, rawText: JSON.stringify(json), model: "stub" };
+    return { json, rawText: JSON.stringify(json), model: "stub", usage: stubUsageLog() };
   }
 
   return requestEditorJson<CorpusComparisonResult>({
@@ -65,6 +68,13 @@ export async function compareCorpus(input: CorpusComparisonInput) {
         manuscriptTitle: input.manuscriptTitle,
         targetGenre: input.targetGenre,
         manuscriptProfile: input.manuscriptProfile,
+        rightsPolicy: {
+          profileBenchmarks:
+            "Profiles are grouped by rights status and exclude UNKNOWN/METADATA_ONLY records.",
+          chunkContext:
+            "Chunk-level context is restricted to public-domain/open-license books."
+        },
+        rightsStatusCounts: input.rightsStatusCounts,
         benchmarkProfiles: input.benchmarkProfiles,
         similarChunks: input.similarChunks
       },
@@ -81,9 +91,9 @@ function stubCorpusComparison(input: CorpusComparisonInput): CorpusComparisonRes
         ? `Compared against ${input.benchmarkProfiles.length} stored corpus profiles using deterministic metrics.`
         : "No corpus profiles are available yet. Import public-domain, open-license, licensed, or private-reference texts to enable benchmarks.",
     similarBooks: input.benchmarkProfiles.slice(0, 5).map((book) => ({
-      title: book.title,
-      author: book.author ?? undefined,
-      rightsStatus: book.rightsStatus,
+        title: book.title,
+        author: book.author ?? undefined,
+        rightsStatus: book.rightsStatus,
       reason: "Closest available benchmark profile in the local corpus set."
     })),
     structuralDivergences: [],

@@ -73,7 +73,7 @@ export default async function ManuscriptChapterPage({
               <AcceptRewriteButton
                 manuscriptId={id}
                 chapterId={chapterId}
-                disabled={latestRewrite.status === "ACCEPTED"}
+                status={latestRewrite.status}
               />
             </>
           ) : null}

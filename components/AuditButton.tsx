@@ -19,7 +19,7 @@ export function AuditButton({
     setIsRunning(true);
     setError(null);
 
-    const response = await fetch(`/api/manuscripts/${manuscriptId}/pipeline`, {
+    const response = await fetch(`/api/manuscripts/${manuscriptId}/run-pipeline`, {
       method: "POST"
     });
     const payload = (await response.json()) as { error?: string };
@@ -43,7 +43,7 @@ export function AuditButton({
         className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 bg-ink px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
       >
         <PlayCircle size={18} aria-hidden="true" />
-        {isRunning ? "Running Pipeline..." : "Run Full Analysis"}
+        {isRunning ? "Starting..." : "Run Full Analysis"}
       </button>
       {error ? <p className="text-sm text-danger">{error}</p> : null}
     </div>

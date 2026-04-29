@@ -1,5 +1,6 @@
 import { env } from "@/lib/env";
 import { getOpenAIClient } from "@/lib/analysis/openai";
+import { usageLogFromOpenAIUsage, type AiUsageLog } from "@/lib/ai/usage";
 
 export const EDITOR_PROMPT_VERSION = "editor-v2-1";
 
@@ -9,6 +10,13 @@ type JsonRequest = {
   model?: string;
   temperature?: number;
   retries?: number;
+};
+
+export type EditorJsonResult<T> = {
+  json: T;
+  rawText: string;
+  model: string;
+  usage?: AiUsageLog;
 };
 
 export function getAuditModel() {
@@ -33,7 +41,7 @@ export async function requestEditorJson<T>({
   model = getAuditModel(),
   temperature,
   retries = 2
-}: JsonRequest): Promise<{ json: T; rawText: string; model: string }> {
+}: JsonRequest): Promise<EditorJsonResult<T>> {
   let attempt = 0;
   let lastError: unknown;
 
@@ -54,7 +62,8 @@ export async function requestEditorJson<T>({
       return {
         json: JSON.parse(rawText) as T,
         rawText,
-        model
+        model,
+        usage: usageLogFromOpenAIUsage(completion.usage, model)
       };
     } catch (error) {
       lastError = error;

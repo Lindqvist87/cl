@@ -1,5 +1,6 @@
 import { hasEditorModelKey, requestEditorJson } from "@/lib/ai/editorModel";
 import type { ChapterAnalysisResult } from "@/lib/ai/analysisTypes";
+import { stubUsageLog } from "@/lib/ai/usage";
 import { countWords } from "@/lib/text/wordCount";
 
 type ChapterInput = {
@@ -15,7 +16,7 @@ type ChapterInput = {
 export async function analyzeChapter(input: ChapterInput) {
   if (!hasEditorModelKey()) {
     const json = stubChapterAnalysis(input);
-    return { json, rawText: JSON.stringify(json), model: "stub" };
+    return { json, rawText: JSON.stringify(json), model: "stub", usage: stubUsageLog() };
   }
 
   return requestEditorJson<ChapterAnalysisResult>({

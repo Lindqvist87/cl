@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
 import { importManualTrendSignal } from "@/lib/trends/manualTrendImport";
+import {
+  getInngestRuntimeConfig,
+  INNGEST_EVENTS,
+  sendInngestEvent
+} from "@/src/inngest/events";
 
 export const runtime = "nodejs";
 
@@ -26,8 +31,16 @@ export async function POST(request: Request) {
       reviewSnippet: stringField(formData, "reviewSnippet"),
       externalUrl: stringField(formData, "externalUrl")
     });
+    const config = getInngestRuntimeConfig();
+    const event =
+      config.enabled && config.canSendEvents
+        ? await sendInngestEvent(INNGEST_EVENTS.TREND_IMPORT_REQUESTED, {
+            importId: signal.id,
+            source: signal.source
+          })
+        : null;
 
-    return NextResponse.json({ signalId: signal.id });
+    return NextResponse.json({ signalId: signal.id, eventSent: event?.sent ?? false });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Trend signal import failed.";

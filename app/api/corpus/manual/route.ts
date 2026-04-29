@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { RightsStatus, SourceType } from "@prisma/client";
 import { importManualCorpusBook } from "@/lib/corpus/manualCorpusImport";
+import {
+  getInngestRuntimeConfig,
+  INNGEST_EVENTS,
+  sendInngestEvent
+} from "@/src/inngest/events";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -39,8 +44,16 @@ export async function POST(request: Request) {
         privateReference: rightsStatus === RightsStatus.PRIVATE_REFERENCE
       }
     });
+    const config = getInngestRuntimeConfig();
+    const event =
+      config.enabled && config.canSendEvents
+        ? await sendInngestEvent(INNGEST_EVENTS.CORPUS_IMPORT_REQUESTED, {
+            corpusBookId: book.id,
+            source: book.sourceId
+          })
+        : null;
 
-    return NextResponse.json({ bookId: book.id });
+    return NextResponse.json({ bookId: book.id, eventSent: event?.sent ?? false });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Corpus import failed.";

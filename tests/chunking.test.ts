@@ -58,3 +58,46 @@ test("chunkParsedManuscript chunks by paragraph boundaries", () => {
   assert.equal(chunks[1].endParagraph, 2);
   assert.equal(chunks[1].chapterOrder, 1);
 });
+
+test("chunkParsedManuscript splits a single oversized paragraph", () => {
+  const longParagraph = Array.from({ length: 25 }, (_, index) => `word${index}`).join(" ");
+  const parsed: ParsedManuscript = {
+    title: "Long Paragraph",
+    normalizedText: "",
+    wordCount: 25,
+    paragraphCount: 1,
+    metadata: {},
+    chapters: [
+      {
+        order: 1,
+        title: "Chapter 1",
+        wordCount: 25,
+        scenes: [
+          {
+            order: 1,
+            title: "Scene 1",
+            wordCount: 25,
+            paragraphs: [
+              {
+                text: longParagraph,
+                wordCount: 25,
+                globalOrder: 0,
+                chapterOrder: 0,
+                sceneOrder: 0
+              }
+            ]
+          }
+        ]
+      }
+    ]
+  };
+
+  const chunks = chunkParsedManuscript(parsed, 10);
+
+  assert.equal(chunks.length, 3);
+  assert.deepEqual(
+    chunks.map((chunk) => chunk.wordCount),
+    [10, 10, 5]
+  );
+  assert.equal(chunks.every((chunk) => chunk.metadata.splitLongParagraph), true);
+});

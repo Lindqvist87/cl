@@ -3,8 +3,11 @@ import { notFound } from "next/navigation";
 import { BarChart3, Download, FileText } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { AuditButton } from "@/components/AuditButton";
+import { PipelineActionButton } from "@/components/PipelineActionButton";
+import { executionModeLabel, PIPELINE_JOB_STATUS } from "@/lib/pipeline/jobRules";
 import type { AuditReportJson } from "@/lib/types";
 import { pipelineProgress } from "@/lib/pipeline/steps";
+import { getInngestRuntimeConfig } from "@/src/inngest/events";
 
 export const dynamic = "force-dynamic";
 
@@ -21,7 +24,8 @@ export default async function ManuscriptPage({
       reports: { orderBy: { createdAt: "desc" }, take: 1 },
       runs: { orderBy: { createdAt: "desc" }, take: 1 },
       rewrites: { orderBy: { createdAt: "desc" }, take: 1 },
-      findings: { take: 1 }
+      findings: { take: 1 },
+      pipelineJobs: { orderBy: { createdAt: "asc" }, take: 60 }
     }
   });
 
@@ -34,6 +38,12 @@ export default async function ManuscriptPage({
   const latestRun = manuscript.runs[0];
   const latestRewrite = manuscript.rewrites[0];
   const progress = pipelineProgress(latestRun?.checkpoint ?? {});
+  const inngestConfig = getInngestRuntimeConfig();
+  const lastInngestEvent = await prisma.inngestEventLog.findFirst({
+    where: { manuscriptId: manuscript.id },
+    orderBy: { createdAt: "desc" }
+  });
+  const jobCounts = countJobsByStatus(manuscript.pipelineJobs);
 
   return (
     <div className="space-y-6">
@@ -63,6 +73,9 @@ export default async function ManuscriptPage({
             <a href={`/api/manuscripts/${manuscript.id}/rewritten/markdown`} className="text-accent hover:underline">
               Full rewritten Markdown
             </a>
+            <a href={`/api/manuscripts/${manuscript.id}/rewritten/json`} className="text-accent hover:underline">
+              Full rewritten JSON
+            </a>
             <Link href="/corpus" className="text-accent hover:underline">
               Corpus
             </Link>
@@ -76,6 +89,19 @@ export default async function ManuscriptPage({
             manuscriptId={manuscript.id}
             disabled={manuscript.analysisStatus === "RUNNING"}
           />
+          <PipelineActionButton
+            endpoint={`/api/manuscripts/${manuscript.id}/resume-pipeline`}
+            label="Resume via Inngest"
+            runningLabel="Kicking..."
+            variant="secondary"
+          />
+          <PipelineActionButton
+            endpoint="/api/jobs/run-until-idle"
+            payload={{ manuscriptId: manuscript.id, maxJobs: 3, maxSeconds: 45 }}
+            label="Run manual fallback batch"
+            runningLabel="Running..."
+            variant="secondary"
+          />
         </div>
       </div>
 
@@ -84,6 +110,39 @@ export default async function ManuscriptPage({
         <Stat label="Chapters" value={String(manuscript.chapterCount)} />
         <Stat label="Chunks" value={String(manuscript.chunkCount)} />
         <Stat label="Analysis" value={formatStatus(manuscript.analysisStatus)} />
+      </section>
+
+      <section className="grid gap-3 lg:grid-cols-[1.2fr_1fr]">
+        <div className="border border-line bg-white p-4 shadow-panel">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+            Execution Mode
+          </h2>
+          <p className="mt-2 text-sm font-semibold">
+            {executionModeLabel({
+              inngestEnabled: inngestConfig.enabled,
+              hasCronFallback: false
+            })}
+          </p>
+          <p className="mt-1 text-xs text-slate-500">
+            Last Inngest event:{" "}
+            {lastInngestEvent
+              ? `${lastInngestEvent.eventName} at ${lastInngestEvent.createdAt.toLocaleString()}`
+              : "none recorded"}
+          </p>
+          {inngestConfig.warnings.length > 0 ? (
+            <ul className="mt-2 space-y-1 text-xs text-danger">
+              {inngestConfig.warnings.map((warning) => (
+                <li key={warning}>{warning}</li>
+              ))}
+            </ul>
+          ) : null}
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <Stat label="Queued" value={String(jobCounts.queued)} />
+          <Stat label="Running" value={String(jobCounts.running)} />
+          <Stat label="Failed" value={String(jobCounts.failed)} />
+          <Stat label="Completed" value={String(jobCounts.completed)} />
+        </div>
       </section>
 
       <section className="border border-line bg-white p-4 shadow-panel">
@@ -105,6 +164,35 @@ export default async function ManuscriptPage({
           <div className="h-full bg-accent" style={{ width: `${progress.percent}%` }} />
         </div>
       </section>
+
+      {manuscript.pipelineJobs.length > 0 ? (
+        <section className="border border-line bg-white shadow-panel">
+          <div className="border-b border-line px-4 py-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+              Pipeline Jobs
+            </h2>
+          </div>
+          <div className="divide-y divide-line">
+            {manuscript.pipelineJobs.slice(0, 12).map((job) => (
+              <div
+                key={job.id}
+                className="grid gap-2 px-4 py-3 text-sm md:grid-cols-[1fr_120px_120px]"
+              >
+                <div>
+                  <div className="font-semibold">{job.type}</div>
+                  {job.error ? (
+                    <div className="mt-1 text-xs text-danger">{job.error}</div>
+                  ) : null}
+                </div>
+                <div>{formatStatus(job.status)}</div>
+                <div className="text-xs text-slate-500">
+                  Attempts {job.attempts}/{job.maxAttempts}
+                </div>
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
 
       <section className="grid gap-6 lg:grid-cols-[280px_1fr]">
         <div className="border border-line bg-white shadow-panel">
@@ -167,6 +255,21 @@ function Stat({ label, value }: { label: string; value: string }) {
       <div className="mt-2 text-xl font-semibold">{value}</div>
     </div>
   );
+}
+
+function countJobsByStatus(jobs: Array<{ status: string }>) {
+  const queuedStatuses = new Set<string>([
+    PIPELINE_JOB_STATUS.QUEUED,
+    PIPELINE_JOB_STATUS.RETRYING,
+    PIPELINE_JOB_STATUS.BLOCKED
+  ]);
+
+  return {
+    queued: jobs.filter((job) => queuedStatuses.has(job.status)).length,
+    running: jobs.filter((job) => job.status === PIPELINE_JOB_STATUS.RUNNING).length,
+    failed: jobs.filter((job) => job.status === PIPELINE_JOB_STATUS.FAILED).length,
+    completed: jobs.filter((job) => job.status === PIPELINE_JOB_STATUS.COMPLETED).length
+  };
 }
 
 function ReportPanel({

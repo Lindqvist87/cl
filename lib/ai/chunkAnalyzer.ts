@@ -1,5 +1,6 @@
 import { hasEditorModelKey, requestEditorJson } from "@/lib/ai/editorModel";
 import type { ChunkAnalysisResult } from "@/lib/ai/analysisTypes";
+import { stubUsageLog } from "@/lib/ai/usage";
 import { countWords } from "@/lib/text/wordCount";
 
 type ChunkInput = {
@@ -15,7 +16,7 @@ type ChunkInput = {
 export async function analyzeManuscriptChunk(input: ChunkInput) {
   if (!hasEditorModelKey()) {
     const json = stubChunkAnalysis(input);
-    return { json, rawText: JSON.stringify(json), model: "stub" };
+    return { json, rawText: JSON.stringify(json), model: "stub", usage: stubUsageLog() };
   }
 
   return requestEditorJson<ChunkAnalysisResult>({

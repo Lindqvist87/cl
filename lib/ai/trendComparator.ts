@@ -1,5 +1,6 @@
 import { hasEditorModelKey, requestEditorJson } from "@/lib/ai/editorModel";
 import type { TrendComparisonResult } from "@/lib/ai/analysisTypes";
+import { stubUsageLog } from "@/lib/ai/usage";
 
 type TrendComparisonInput = {
   manuscriptTitle: string;
@@ -24,7 +25,7 @@ type TrendComparisonInput = {
 export async function compareTrends(input: TrendComparisonInput) {
   if (!hasEditorModelKey()) {
     const json = stubTrendComparison(input);
-    return { json, rawText: JSON.stringify(json), model: "stub" };
+    return { json, rawText: JSON.stringify(json), model: "stub", usage: stubUsageLog() };
   }
 
   return requestEditorJson<TrendComparisonResult>({
@@ -32,6 +33,7 @@ export async function compareTrends(input: TrendComparisonInput) {
       "You are a careful publishing trend analyst.",
       "Return strict JSON only.",
       "Use metadata and public trend signals only, not copyrighted full text.",
+      "Trend signals are metadata/context only; do not derive prose, scene, or plot changes from trends alone.",
       "Never claim certainty where the supplied signals are weak."
     ].join(" "),
     user: JSON.stringify(
@@ -51,8 +53,8 @@ export async function compareTrends(input: TrendComparisonInput) {
               confidence: "0-1",
               problem: "specific market issue",
               evidence: "trend signal evidence",
-              recommendation: "concrete recommendation",
-              rewriteInstruction: "direct rewrite or positioning instruction"
+              recommendation: "positioning/category recommendation",
+              rewriteInstruction: "optional positioning-only context; no plot or prose command"
             }
           ]
         },

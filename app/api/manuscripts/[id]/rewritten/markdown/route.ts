@@ -1,12 +1,14 @@
 import { prisma } from "@/lib/prisma";
+import { buildRewrittenMarkdown } from "@/lib/export/rewriteExports";
 
 export const runtime = "nodejs";
 
 export async function GET(
-  _request: Request,
+  request: Request,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const includeDrafts = new URL(request.url).searchParams.get("includeDrafts") === "1";
   const manuscript = await prisma.manuscript.findUnique({
     where: { id },
     include: {
@@ -21,26 +23,7 @@ export async function GET(
     return new Response("Manuscript not found.", { status: 404 });
   }
 
-  const latestRewriteByChapter = new Map<string, string>();
-  for (const rewrite of manuscript.rewrites) {
-    if (!latestRewriteByChapter.has(rewrite.chapterId)) {
-      latestRewriteByChapter.set(
-        rewrite.chapterId,
-        rewrite.rewrittenText || rewrite.content
-      );
-    }
-  }
-
-  const markdown = [
-    `# ${manuscript.title} - Rewritten Draft`,
-    "",
-    ...manuscript.chapters.flatMap((chapter) => [
-      `## ${chapter.title}`,
-      "",
-      latestRewriteByChapter.get(chapter.id) || chapter.text,
-      ""
-    ])
-  ].join("\n");
+  const markdown = buildRewrittenMarkdown(manuscript, { includeDrafts });
 
   const fileName = `${safeFileName(manuscript.title)}-rewritten.md`;
 

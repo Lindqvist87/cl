@@ -1,5 +1,6 @@
 import { hasEditorModelKey, requestEditorJson } from "@/lib/ai/editorModel";
 import type { WholeBookAnalysisResult } from "@/lib/ai/analysisTypes";
+import { stubUsageLog } from "@/lib/ai/usage";
 
 type WholeBookInput = {
   manuscriptTitle: string;
@@ -18,7 +19,7 @@ type WholeBookInput = {
 export async function analyzeWholeBook(input: WholeBookInput) {
   if (!hasEditorModelKey()) {
     const json = stubWholeBookAnalysis(input);
-    return { json, rawText: JSON.stringify(json), model: "stub" };
+    return { json, rawText: JSON.stringify(json), model: "stub", usage: stubUsageLog() };
   }
 
   return requestEditorJson<WholeBookAnalysisResult>({

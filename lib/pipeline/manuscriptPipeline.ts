@@ -5,7 +5,6 @@ import {
   AnalysisStatus
 } from "@prisma/client";
 import { analyzeChapter } from "@/lib/ai/chapterAnalyzer";
-import { rewriteChapter } from "@/lib/ai/chapterRewriter";
 import { analyzeManuscriptChunk } from "@/lib/ai/chunkAnalyzer";
 import { compareCorpus } from "@/lib/ai/corpusComparator";
 import {
@@ -22,11 +21,18 @@ import type {
   TrendComparisonResult,
   WholeBookAnalysisResult
 } from "@/lib/ai/analysisTypes";
+import { withAiUsage, type AiUsageLog } from "@/lib/ai/usage";
+import { buildBoundedChapterContext } from "@/lib/analysis/chapterContext";
 import { planRewrite } from "@/lib/ai/rewritePlanner";
 import { compareTrends } from "@/lib/ai/trendComparator";
 import { analyzeWholeBook } from "@/lib/ai/wholeBookAnalyzer";
 import { auditReportToMarkdown } from "@/lib/analysis/report";
 import { calculateProfileMetrics } from "@/lib/analysis/textMetrics";
+import {
+  canUseForChunkContext,
+  canUseForCorpusBenchmark,
+  rightsStatusCounts
+} from "@/lib/corpus/rights";
 import { jsonInput } from "@/lib/json";
 import {
   FULL_MANUSCRIPT_PIPELINE_STEPS,
@@ -38,8 +44,18 @@ import {
   type PipelineCheckpoint
 } from "@/lib/pipeline/steps";
 import { prisma } from "@/lib/prisma";
+import { draftChapterRewrite } from "@/lib/rewrite/chapterRewrite";
 import { countWords, estimateTokensFromWords } from "@/lib/text/wordCount";
 import type { AuditReportJson, IssueSeverity, JsonRecord } from "@/lib/types";
+
+export type PipelineStepRunOptions = {
+  maxItems?: number;
+};
+
+export type PipelineStepRunResult = Record<string, unknown> & {
+  complete?: boolean;
+  remaining?: number;
+};
 
 export async function runFullManuscriptPipeline(manuscriptId: string) {
   const run = await findOrCreatePipelineRun(manuscriptId);
@@ -60,7 +76,7 @@ export async function runFullManuscriptPipeline(manuscriptId: string) {
       }
 
       checkpoint = await persistCheckpoint(run.id, markStepStarted(checkpoint, step));
-      const metadata = await runStep(step, manuscriptId, run.id);
+      const metadata = await runPipelineStep(step, manuscriptId, run.id);
       checkpoint = await persistCheckpoint(
         run.id,
         markStepComplete(checkpoint, step, metadata)
@@ -112,7 +128,7 @@ export async function runFullManuscriptPipeline(manuscriptId: string) {
   }
 }
 
-async function findOrCreatePipelineRun(manuscriptId: string) {
+export async function findOrCreatePipelineRun(manuscriptId: string) {
   const activeRun = await prisma.analysisRun.findFirst({
     where: {
       manuscriptId,
@@ -158,7 +174,10 @@ async function findOrCreatePipelineRun(manuscriptId: string) {
   });
 }
 
-async function persistCheckpoint(runId: string, checkpoint: PipelineCheckpoint) {
+export async function persistPipelineCheckpoint(
+  runId: string,
+  checkpoint: PipelineCheckpoint
+) {
   await prisma.analysisRun.update({
     where: { id: runId },
     data: {
@@ -170,10 +189,13 @@ async function persistCheckpoint(runId: string, checkpoint: PipelineCheckpoint) 
   return checkpoint;
 }
 
-async function runStep(
+const persistCheckpoint = persistPipelineCheckpoint;
+
+export async function runPipelineStep(
   step: ManuscriptPipelineStep,
   manuscriptId: string,
-  runId: string
+  runId: string,
+  options: PipelineStepRunOptions = {}
 ) {
   switch (step) {
     case "parseAndNormalizeManuscript":
@@ -183,15 +205,15 @@ async function runStep(
     case "splitIntoChunks":
       return splitIntoChunks(manuscriptId);
     case "createEmbeddingsForChunks":
-      return createEmbeddingsForChunks(manuscriptId);
+      return createEmbeddingsForChunks(manuscriptId, options);
     case "summarizeChunks":
-      return summarizeChunks(manuscriptId, runId);
+      return summarizeChunks(manuscriptId, runId, options);
     case "summarizeChapters":
       return summarizeChapters(manuscriptId);
     case "createManuscriptProfile":
       return createManuscriptProfile(manuscriptId);
     case "runChapterAudits":
-      return runChapterAudits(manuscriptId, runId);
+      return runChapterAudits(manuscriptId, runId, options);
     case "runWholeBookAudit":
       return runWholeBookAudit(manuscriptId, runId);
     case "compareAgainstCorpus":
@@ -201,8 +223,16 @@ async function runStep(
     case "createRewritePlan":
       return createRewritePlan(manuscriptId, runId);
     case "generateChapterRewriteDrafts":
-      return generateChapterRewriteDrafts(manuscriptId, runId);
+      return generateChapterRewriteDrafts(manuscriptId, runId, options);
   }
+}
+
+export function isPipelineStepRunComplete(result: PipelineStepRunResult) {
+  if (result.complete === false) {
+    return false;
+  }
+
+  return typeof result.remaining !== "number" || result.remaining <= 0;
 }
 
 async function parseAndNormalizeManuscript(manuscriptId: string) {
@@ -318,25 +348,31 @@ async function splitIntoChunks(manuscriptId: string) {
   return { chunkCount: chunks.length };
 }
 
-async function createEmbeddingsForChunks(manuscriptId: string) {
+async function createEmbeddingsForChunks(
+  manuscriptId: string,
+  options: PipelineStepRunOptions = {}
+) {
   const chunks = await prisma.manuscriptChunk.findMany({
     where: { manuscriptId },
     orderBy: { chunkIndex: "asc" }
   });
+  const candidates = chunks.filter((chunk) => {
+    const metrics = toJsonRecord(chunk.localMetrics);
+    return !(
+      metrics.embeddingStatus === "stored" ||
+      metrics.embeddingStatus === "empty" ||
+      (metrics.embeddingStatus === "skipped" && !hasEditorModelKey())
+    );
+  });
+  const maxItems = normalizeMaxItems(options.maxItems, candidates.length);
 
   let stored = 0;
   let skipped = 0;
+  let processed = 0;
 
-  for (const chunk of chunks) {
+  for (const chunk of candidates.slice(0, maxItems)) {
+    processed += 1;
     const metrics = toJsonRecord(chunk.localMetrics);
-    if (
-      metrics.embeddingStatus === "stored" ||
-      (metrics.embeddingStatus === "skipped" && !hasEditorModelKey())
-    ) {
-      skipped += 1;
-      continue;
-    }
-
     if (!hasEditorModelKey()) {
       await prisma.manuscriptChunk.update({
         where: { id: chunk.id },
@@ -370,19 +406,29 @@ async function createEmbeddingsForChunks(manuscriptId: string) {
     });
   }
 
-  return { stored, skipped };
+  const remaining = Math.max(candidates.length - processed, 0);
+  return { stored, skipped, remaining, complete: remaining === 0 };
 }
 
-async function summarizeChunks(manuscriptId: string, runId: string) {
+async function summarizeChunks(
+  manuscriptId: string,
+  runId: string,
+  options: PipelineStepRunOptions = {}
+) {
   const manuscript = await getPipelineManuscript(manuscriptId);
   let analyzed = 0;
+  const pendingChunks: typeof manuscript.chunks = [];
 
   for (const chunk of manuscript.chunks) {
     const existing = await findOutput(runId, AnalysisPassType.CHUNK_ANALYSIS, "chunk", chunk.id);
     if (existing) {
       continue;
     }
+    pendingChunks.push(chunk);
+  }
 
+  const maxItems = normalizeMaxItems(options.maxItems, pendingChunks.length);
+  for (const chunk of pendingChunks.slice(0, maxItems)) {
     const result = await analyzeManuscriptChunk({
       manuscriptTitle: manuscript.title,
       targetGenre: manuscript.targetGenre,
@@ -390,6 +436,25 @@ async function summarizeChunks(manuscriptId: string, runId: string) {
       chapterTitle: chunk.chapter.title,
       chunkIndex: chunk.chunkIndex,
       text: chunk.text
+    });
+
+    await saveFindings({
+      runId,
+      manuscriptId,
+      chapterId: chunk.chapterId,
+      chunkId: chunk.id,
+      findings: result.json.findings
+    });
+    await prisma.manuscriptChunk.update({
+      where: { id: chunk.id },
+      data: {
+        summary: result.json.summary,
+        localMetrics: jsonInput({
+          ...toJsonRecord(chunk.localMetrics),
+          ...(result.json.metrics ?? {}),
+          sceneFunction: result.json.sceneFunction
+        })
+      }
     });
 
     await saveOutput({
@@ -403,36 +468,18 @@ async function summarizeChunks(manuscriptId: string, runId: string) {
       model: result.model,
       output: result.json,
       rawText: result.rawText,
+      usage: result.usage,
       inputSummary: {
         chunkIndex: chunk.chunkIndex,
         chapterTitle: chunk.chapter.title,
         wordCount: chunk.wordCount
       }
     });
-
-    await prisma.manuscriptChunk.update({
-      where: { id: chunk.id },
-      data: {
-        summary: result.json.summary,
-        localMetrics: jsonInput({
-          ...toJsonRecord(chunk.localMetrics),
-          ...(result.json.metrics ?? {}),
-          sceneFunction: result.json.sceneFunction
-        })
-      }
-    });
-
-    await saveFindings({
-      runId,
-      manuscriptId,
-      chapterId: chunk.chapterId,
-      chunkId: chunk.id,
-      findings: result.json.findings
-    });
     analyzed += 1;
   }
 
-  return { analyzed };
+  const remaining = Math.max(pendingChunks.length - analyzed, 0);
+  return { analyzed, remaining, complete: remaining === 0 };
 }
 
 async function summarizeChapters(manuscriptId: string) {
@@ -518,28 +565,52 @@ async function createManuscriptProfile(manuscriptId: string) {
   return { profileId: created.id };
 }
 
-async function runChapterAudits(manuscriptId: string, runId: string) {
+async function runChapterAudits(
+  manuscriptId: string,
+  runId: string,
+  options: PipelineStepRunOptions = {}
+) {
   const manuscript = await getPipelineManuscript(manuscriptId);
   let audited = 0;
+  const pendingChapters: typeof manuscript.chapters = [];
 
   for (const chapter of manuscript.chapters) {
     const existing = await findOutput(runId, AnalysisPassType.CHAPTER_AUDIT, "chapter", chapter.id);
     if (existing) {
       continue;
     }
+    pendingChapters.push(chapter);
+  }
 
+  const maxItems = normalizeMaxItems(options.maxItems, pendingChapters.length);
+  for (const chapter of pendingChapters.slice(0, maxItems)) {
     const chunkSummaries = manuscript.chunks
       .filter((chunk) => chunk.chapterId === chapter.id)
       .map((chunk) => chunk.summary ?? "")
       .filter(Boolean);
+    const chapterContext = buildBoundedChapterContext(chapter.text);
     const result = await analyzeChapter({
       manuscriptTitle: manuscript.title,
       targetGenre: manuscript.targetGenre,
       targetAudience: manuscript.targetAudience,
       chapterTitle: chapter.title,
       chapterIndex: chapter.chapterIndex || chapter.order,
-      text: chapter.text,
+      text: chapterContext.text,
       chunkSummaries
+    });
+
+    await saveFindings({
+      runId,
+      manuscriptId,
+      chapterId: chapter.id,
+      findings: result.json.findings
+    });
+    await prisma.manuscriptChapter.update({
+      where: { id: chapter.id },
+      data: {
+        summary: result.json.summary,
+        status: "AUDITED"
+      }
     });
 
     await saveOutput({
@@ -552,31 +623,21 @@ async function runChapterAudits(manuscriptId: string, runId: string) {
       model: result.model,
       output: result.json,
       rawText: result.rawText,
+      usage: result.usage,
       inputSummary: {
         chapterTitle: chapter.title,
         wordCount: chapter.wordCount,
-        chunkSummaryCount: chunkSummaries.length
+        chunkSummaryCount: chunkSummaries.length,
+        contextStrategy: chapterContext.strategy,
+        contextWordCount: chapterContext.contextWordCount,
+        omittedWordCount: chapterContext.omittedWordCount
       }
-    });
-
-    await prisma.manuscriptChapter.update({
-      where: { id: chapter.id },
-      data: {
-        summary: result.json.summary,
-        status: "AUDITED"
-      }
-    });
-
-    await saveFindings({
-      runId,
-      manuscriptId,
-      chapterId: chapter.id,
-      findings: result.json.findings
     });
     audited += 1;
   }
 
-  return { audited };
+  const remaining = Math.max(pendingChapters.length - audited, 0);
+  return { audited, remaining, complete: remaining === 0 };
 }
 
 async function runWholeBookAudit(manuscriptId: string, runId: string) {
@@ -613,21 +674,6 @@ async function runWholeBookAudit(manuscriptId: string, runId: string) {
     profile
   });
 
-  await saveOutput({
-    runId,
-    manuscriptId,
-    passType: AnalysisPassType.WHOLE_BOOK_AUDIT,
-    scopeType: "manuscript",
-    scopeId: manuscriptId,
-    model: result.model,
-    output: result.json,
-    rawText: result.rawText,
-    inputSummary: {
-      chapterCount: manuscript.chapters.length,
-      profileId: manuscript.profile?.id
-    }
-  });
-
   await saveFindings({
     runId,
     manuscriptId,
@@ -639,6 +685,22 @@ async function runWholeBookAudit(manuscriptId: string, runId: string) {
     runId,
     title: manuscript.title,
     wholeBook: result.json
+  });
+
+  await saveOutput({
+    runId,
+    manuscriptId,
+    passType: AnalysisPassType.WHOLE_BOOK_AUDIT,
+    scopeType: "manuscript",
+    scopeId: manuscriptId,
+    model: result.model,
+    output: result.json,
+    rawText: result.rawText,
+    usage: result.usage,
+    inputSummary: {
+      chapterCount: manuscript.chapters.length,
+      profileId: manuscript.profile?.id
+    }
   });
 
   return { report: true };
@@ -659,20 +721,27 @@ async function compareAgainstCorpus(manuscriptId: string, runId: string) {
     where: { id: manuscriptId },
     include: { profile: true }
   });
-  const profiles = await prisma.bookProfile.findMany({
-    take: 20,
+  const profileCandidates = await prisma.bookProfile.findMany({
+    take: 60,
     orderBy: { createdAt: "desc" },
     include: { book: true }
   });
-  const chunks = await prisma.corpusChunk.findMany({
-    take: 12,
+  const profiles = profileCandidates
+    .filter((profile) => canUseForCorpusBenchmark(profile.book))
+    .slice(0, 20);
+  const chunkCandidates = await prisma.corpusChunk.findMany({
+    take: 60,
     orderBy: { createdAt: "desc" },
     include: { book: true }
   });
+  const chunks = chunkCandidates
+    .filter((chunk) => canUseForChunkContext(chunk.book))
+    .slice(0, 12);
   const result = await compareCorpus({
     manuscriptTitle: manuscript.title,
     targetGenre: manuscript.targetGenre,
     manuscriptProfile: toJsonRecord(manuscript.profile),
+    rightsStatusCounts: rightsStatusCounts(profiles.map((profile) => profile.book)),
     benchmarkProfiles: profiles.map((profile) => ({
       title: profile.book.title,
       author: profile.book.author,
@@ -683,9 +752,16 @@ async function compareAgainstCorpus(manuscriptId: string, runId: string) {
     similarChunks: chunks.map((chunk) => ({
       bookTitle: chunk.book.title,
       author: chunk.book.author,
+      rightsStatus: chunk.book.rightsStatus,
       summary: chunk.summary,
       metrics: chunk.metrics
     }))
+  });
+
+  await saveFindings({
+    runId,
+    manuscriptId,
+    findings: result.json.findings
   });
 
   await saveOutput({
@@ -697,16 +773,12 @@ async function compareAgainstCorpus(manuscriptId: string, runId: string) {
     model: result.model,
     output: result.json,
     rawText: result.rawText,
+    usage: result.usage,
     inputSummary: {
       benchmarkProfileCount: profiles.length,
-      similarChunkCount: chunks.length
+      similarChunkCount: chunks.length,
+      rightsStatusCounts: rightsStatusCounts(profiles.map((profile) => profile.book))
     }
-  });
-
-  await saveFindings({
-    runId,
-    manuscriptId,
-    findings: result.json.findings
   });
 
   return { benchmarkProfileCount: profiles.length };
@@ -754,6 +826,12 @@ async function compareAgainstTrendSignals(manuscriptId: string, runId: string) {
     trendSignals: signals
   });
 
+  await saveFindings({
+    runId,
+    manuscriptId,
+    findings: result.json.findings
+  });
+
   await saveOutput({
     runId,
     manuscriptId,
@@ -763,16 +841,12 @@ async function compareAgainstTrendSignals(manuscriptId: string, runId: string) {
     model: result.model,
     output: result.json,
     rawText: result.rawText,
+    usage: result.usage,
     inputSummary: {
       signalCount: signals.length,
-      targetGenre: manuscript.targetGenre
+      targetGenre: manuscript.targetGenre,
+      trendSignalsUse: "metadata_context_only"
     }
-  });
-
-  await saveFindings({
-    runId,
-    manuscriptId,
-    findings: result.json.findings
   });
 
   return { signalCount: signals.length };
@@ -798,6 +872,9 @@ async function createRewritePlan(manuscriptId: string, runId: string) {
     orderBy: [{ severity: "desc" }, { createdAt: "asc" }],
     take: 80
   });
+  const rewriteFindings = findings.filter(
+    (finding) => !isTrendContextFinding(finding.issueType)
+  );
   const wholeBook = await findOutput(
     runId,
     AnalysisPassType.WHOLE_BOOK_AUDIT,
@@ -822,8 +899,8 @@ async function createRewritePlan(manuscriptId: string, runId: string) {
     targetAudience: manuscript.targetAudience,
     wholeBookAudit: wholeBook?.output,
     corpusComparison: corpus?.output,
-    trendComparison: trends?.output,
-    findings: findings.map((finding) => ({
+    trendComparison: trendContextOnly(trends?.output),
+    findings: rewriteFindings.map((finding) => ({
       issueType: finding.issueType,
       severity: finding.severity,
       problem: finding.problem,
@@ -848,8 +925,10 @@ async function createRewritePlan(manuscriptId: string, runId: string) {
     model: result.model,
     output: result.json,
     rawText: result.rawText,
+    usage: result.usage,
     inputSummary: {
-      findingCount: findings.length,
+      findingCount: rewriteFindings.length,
+      trendFindingCountExcluded: findings.length - rewriteFindings.length,
       chapterCount: manuscript.chapters.length
     }
   });
@@ -878,7 +957,11 @@ async function createRewritePlan(manuscriptId: string, runId: string) {
   return { rewritePlanId: plan.id };
 }
 
-async function generateChapterRewriteDrafts(manuscriptId: string, runId: string) {
+async function generateChapterRewriteDrafts(
+  manuscriptId: string,
+  runId: string,
+  options: PipelineStepRunOptions = {}
+) {
   const manuscript = await prisma.manuscript.findUniqueOrThrow({
     where: { id: manuscriptId },
     include: {
@@ -894,90 +977,38 @@ async function generateChapterRewriteDrafts(manuscriptId: string, runId: string)
     throw new Error("Rewrite plan must exist before chapter rewrites.");
   }
 
-  let drafted = 0;
-  const previousSummaries: Array<{ title: string; summary?: string | null }> = [];
-
-  for (const chapter of manuscript.chapters) {
-    const existing = await prisma.chapterRewrite.findFirst({
-      where: {
-        manuscriptId,
-        chapterId: chapter.id,
-        rewritePlanId: rewritePlan.id,
-        status: { in: ["DRAFT", "ACCEPTED"] }
-      }
-    });
-    if (existing) {
-      previousSummaries.push({ title: chapter.title, summary: chapter.summary });
-      continue;
-    }
-
-    const chapterAudit = await findOutput(
-      runId,
-      AnalysisPassType.CHAPTER_AUDIT,
-      "chapter",
-      chapter.id
-    );
-    const result = await rewriteChapter({
-      manuscriptTitle: manuscript.title,
-      targetGenre: manuscript.targetGenre,
-      targetAudience: manuscript.targetAudience,
-      chapterTitle: chapter.title,
-      chapterIndex: chapter.chapterIndex || chapter.order,
-      originalChapter: chapter.text,
-      chapterAnalysis: chapterAudit?.output,
-      globalRewritePlan: {
-        globalStrategy: rewritePlan.globalStrategy,
-        chapterPlans: rewritePlan.chapterPlans,
-        styleRules: rewritePlan.styleRules,
-        marketPositioning: rewritePlan.marketPositioning
-      },
-      previousChapterSummaries: previousSummaries,
-      continuityRules: rewritePlan.continuityRules
-    });
-
-    await saveOutput({
-      runId,
+  const existingRewrites = await prisma.chapterRewrite.findMany({
+    where: {
       manuscriptId,
-      passType: AnalysisPassType.CHAPTER_REWRITE,
-      scopeType: "chapter",
-      scopeId: chapter.id,
+      rewritePlanId: rewritePlan.id,
+      status: { in: ["DRAFT", "ACCEPTED"] }
+    },
+    select: { chapterId: true }
+  });
+  const draftedChapterIds = new Set(
+    existingRewrites.map((rewrite) => rewrite.chapterId)
+  );
+  const pendingChapters = manuscript.chapters.filter(
+    (chapter) => !draftedChapterIds.has(chapter.id)
+  );
+  const maxItems = normalizeMaxItems(options.maxItems, pendingChapters.length);
+  let drafted = 0;
+
+  for (const chapter of pendingChapters.slice(0, maxItems)) {
+    const result = await draftChapterRewrite({
+      manuscriptId,
       chapterId: chapter.id,
-      model: result.model,
-      output: result.json,
-      rawText: result.rawText,
-      inputSummary: {
-        chapterTitle: chapter.title,
-        previousChapterSummaryCount: previousSummaries.length
-      }
+      runId,
+      rewritePlanId: rewritePlan.id
     });
 
-    await prisma.chapterRewrite.create({
-      data: {
-        manuscriptId,
-        chapterId: chapter.id,
-        runId,
-        rewritePlanId: rewritePlan.id,
-        version: 1,
-        originalText: chapter.text,
-        rewrittenText: result.json.rewrittenChapter,
-        content: result.json.rewrittenChapter,
-        changeLog: jsonInput(result.json.changeLog),
-        continuityNotes: jsonInput(result.json.continuityNotes),
-        rationale: jsonInput({
-          inventedFactsWarnings: result.json.inventedFactsWarnings,
-          nextChapterImplications: result.json.nextChapterImplications
-        }),
-        status: "DRAFT",
-        promptVersion: EDITOR_PROMPT_VERSION,
-        model: result.model
-      }
-    });
-
-    previousSummaries.push({ title: chapter.title, summary: chapter.summary });
-    drafted += 1;
+    if (result.created) {
+      drafted += 1;
+    }
   }
 
-  return { drafted };
+  const remaining = Math.max(pendingChapters.length - drafted, 0);
+  return { drafted, remaining, complete: remaining === 0 };
 }
 
 async function getPipelineManuscript(manuscriptId: string) {
@@ -1029,6 +1060,7 @@ async function saveOutput(input: {
     | JsonRecord
     | unknown;
   rawText: string;
+  usage?: AiUsageLog;
   inputSummary?: Record<string, unknown>;
   chunkId?: string;
   chapterId?: string;
@@ -1052,13 +1084,13 @@ async function saveOutput(input: {
       chapterId: input.chapterId,
       promptVersion: EDITOR_PROMPT_VERSION,
       model: input.model,
-      inputSummary: jsonInput(input.inputSummary ?? {}),
+      inputSummary: jsonInput(withAiUsage(input.inputSummary ?? {}, input.usage)),
       output: jsonInput(input.output),
       rawText: input.rawText
     },
     update: {
       model: input.model,
-      inputSummary: jsonInput(input.inputSummary ?? {}),
+      inputSummary: jsonInput(withAiUsage(input.inputSummary ?? {}, input.usage)),
       output: jsonInput(input.output),
       rawText: input.rawText
     }
@@ -1073,6 +1105,15 @@ async function saveFindings(input: {
   findings?: FindingDraft[];
 }) {
   const findings = input.findings ?? [];
+  await prisma.finding.deleteMany({
+    where: {
+      analysisRunId: input.runId,
+      manuscriptId: input.manuscriptId,
+      chapterId: input.chapterId ?? null,
+      chunkId: input.chunkId ?? null
+    }
+  });
+
   if (findings.length === 0) {
     return;
   }
@@ -1201,6 +1242,31 @@ function summarizeComparison(value: unknown) {
   };
 }
 
+const TREND_CONTEXT_ISSUE_TYPES = new Set([
+  "market-positioning",
+  "trope",
+  "category",
+  "audience",
+  "signal-quality"
+]);
+
+function isTrendContextFinding(issueType: string) {
+  return TREND_CONTEXT_ISSUE_TYPES.has(issueType);
+}
+
+function trendContextOnly(value: unknown) {
+  const record = toJsonRecord(value);
+  return {
+    metadataOnly: true,
+    summary: record.summary,
+    signalStrength: record.signalStrength,
+    dominantTropes: record.dominantTropes,
+    positioningNotes: record.positioningNotes,
+    marketOpportunity: record.marketOpportunity,
+    marketRisk: record.marketRisk
+  };
+}
+
 function severityLabel(severity: number): IssueSeverity {
   if (severity >= 5) return "critical";
   if (severity >= 4) return "high";
@@ -1252,4 +1318,12 @@ function clampInt(value: number, min: number, max: number) {
 function clampNumber(value: number, min: number, max: number) {
   const numeric = Number.isFinite(value) ? value : min;
   return Math.min(max, Math.max(min, numeric));
+}
+
+function normalizeMaxItems(value: number | undefined, fallback: number) {
+  if (value === undefined || !Number.isFinite(value)) {
+    return Math.max(1, fallback);
+  }
+
+  return Math.max(1, Math.floor(value));
 }

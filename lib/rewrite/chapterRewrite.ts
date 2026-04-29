@@ -1,176 +1,536 @@
-import { AnalysisPassType } from "@prisma/client";
-import { prisma } from "@/lib/prisma";
-import { hasOpenAIKey, requestStructuredJson } from "@/lib/analysis/openai";
-import { PROMPT_VERSION } from "@/lib/analysis/prompts";
-import type { JsonRecord } from "@/lib/types";
+import {
+  AnalysisPassType,
+  AnalysisRunStatus,
+  AnalysisRunType
+} from "@prisma/client";
+import type {
+  ChapterRewrite,
+  ManuscriptChapter,
+  ManuscriptChunk,
+  RewritePlan
+} from "@prisma/client";
+import { rewriteChapter } from "@/lib/ai/chapterRewriter";
+import type { ChapterRewriteResult } from "@/lib/ai/analysisTypes";
+import { EDITOR_PROMPT_VERSION } from "@/lib/ai/editorModel";
+import {
+  aggregateUsageLogs,
+  withAiUsage,
+  type AiUsageLog
+} from "@/lib/ai/usage";
 import { jsonInput } from "@/lib/json";
-import { env } from "@/lib/env";
+import { prisma } from "@/lib/prisma";
+import {
+  buildContinuityLedger,
+  latestAcceptedRewriteByChapter,
+  previousChapterContexts,
+  summarizeRewriteText,
+  type RewriteForContinuity
+} from "@/lib/rewrite/continuity";
+import { countWords } from "@/lib/text/wordCount";
+import type { JsonRecord } from "@/lib/types";
 
-const REWRITE_MODEL = env.OPENAI_REWRITE_MODEL;
-
-type RewriteChunkJson = {
-  rewrittenText: string;
-  rationale: string[];
+type DraftChapterRewriteInput = {
+  manuscriptId: string;
+  chapterId: string;
+  runId: string;
+  rewritePlanId: string;
+  forceNewVersion?: boolean;
 };
 
-export async function rewriteChapterOne(manuscriptId: string) {
-  const manuscript = await prisma.manuscript.findUnique({
-    where: { id: manuscriptId },
-    include: {
-      chapters: {
-        orderBy: { order: "asc" },
-        take: 1
-      },
-      runs: {
-        where: { status: "COMPLETED" },
-        orderBy: { completedAt: "desc" },
-        take: 1
-      }
-    }
+type DraftChapterRewriteResult = {
+  rewrite: ChapterRewrite;
+  created: boolean;
+};
+
+type RewriteSection = {
+  id: string;
+  scopeId: string;
+  chunkId?: string;
+  chunkIndex?: number;
+  sectionIndex: number;
+  totalSections: number;
+  text: string;
+  wordCount: number;
+};
+
+export async function regenerateChapterRewrite(
+  manuscriptId: string,
+  chapterId: string
+) {
+  const run = await prisma.analysisRun.findFirst({
+    where: {
+      manuscriptId,
+      type: AnalysisRunType.FULL_AUDIT,
+      status: AnalysisRunStatus.COMPLETED
+    },
+    orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }]
   });
 
-  if (!manuscript || manuscript.chapters.length === 0) {
+  if (!run) {
+    throw new Error("Run the full manuscript pipeline before regenerating a chapter.");
+  }
+
+  const rewritePlan = await prisma.rewritePlan.findFirst({
+    where: {
+      manuscriptId,
+      analysisRunId: run.id
+    },
+    orderBy: { createdAt: "desc" }
+  });
+
+  if (!rewritePlan) {
+    throw new Error("A rewrite plan is required before regenerating a chapter.");
+  }
+
+  await prisma.chapterRewrite.updateMany({
+    where: {
+      manuscriptId,
+      chapterId,
+      status: "DRAFT"
+    },
+    data: { status: "REJECTED" }
+  });
+
+  return draftChapterRewrite({
+    manuscriptId,
+    chapterId,
+    runId: run.id,
+    rewritePlanId: rewritePlan.id,
+    forceNewVersion: true
+  });
+}
+
+export async function rewriteFirstChapter(manuscriptId: string) {
+  const chapter = await prisma.manuscriptChapter.findFirst({
+    where: { manuscriptId },
+    orderBy: { order: "asc" }
+  });
+
+  if (!chapter) {
     throw new Error("No first chapter found.");
   }
 
-  const chapter = manuscript.chapters[0];
-  const latestRun = manuscript.runs[0];
-  const chunks = await prisma.manuscriptChunk.findMany({
-    where: {
-      manuscriptId,
-      chapterId: chapter.id
-    },
-    orderBy: { chunkIndex: "asc" }
-  });
+  return regenerateChapterRewrite(manuscriptId, chapter.id);
+}
 
-  if (chunks.length === 0) {
-    throw new Error("Chapter 1 has no chunks to rewrite.");
+export async function draftChapterRewrite(
+  input: DraftChapterRewriteInput
+): Promise<DraftChapterRewriteResult> {
+  const manuscript = await prisma.manuscript.findUniqueOrThrow({
+    where: { id: input.manuscriptId },
+    include: {
+      chapters: { orderBy: { order: "asc" } },
+      chunks: { orderBy: { chunkIndex: "asc" } }
+    }
+  });
+  const chapter = manuscript.chapters.find(
+    (candidate) => candidate.id === input.chapterId
+  );
+
+  if (!chapter) {
+    throw new Error("Chapter not found for this manuscript.");
   }
 
-  const memory = toJsonRecord(latestRun?.globalMemory);
-  const rewrittenParts: string[] = [];
-  const rationales: string[] = [];
+  const rewritePlan = await prisma.rewritePlan.findFirstOrThrow({
+    where: {
+      id: input.rewritePlanId,
+      manuscriptId: input.manuscriptId,
+      analysisRunId: input.runId
+    }
+  });
 
-  for (const chunk of chunks) {
-    const output = hasOpenAIKey()
-      ? await rewriteChunk({
-          manuscriptTitle: manuscript.title,
-          chapterTitle: chapter.title,
-          chunkIndex: chunk.chunkIndex,
-          text: chunk.text,
-          memory
-        })
-      : {
-          json: {
-            rewrittenText: `[Demo rewrite placeholder for chunk ${chunk.chunkIndex}]\n\n${chunk.text}`,
-            rationale: [
-              "OPENAI_API_KEY is not configured, so this demo preserves the source text."
-            ]
-          },
-          rawText: "",
-          model: "stub"
-        };
+  if (!input.forceNewVersion) {
+    const existing = await prisma.chapterRewrite.findFirst({
+      where: {
+        manuscriptId: input.manuscriptId,
+        chapterId: input.chapterId,
+        rewritePlanId: rewritePlan.id,
+        status: { in: ["DRAFT", "ACCEPTED"] }
+      },
+      orderBy: { createdAt: "desc" }
+    });
 
-    rewrittenParts.push(output.json.rewrittenText);
-    rationales.push(...output.json.rationale);
-
-    if (latestRun) {
-      await prisma.analysisOutput.upsert({
-        where: {
-          runId_passType_scopeType_scopeId: {
-            runId: latestRun.id,
-            passType: AnalysisPassType.REWRITE,
-            scopeType: "chunk",
-            scopeId: chunk.id
-          }
-        },
-        create: {
-          runId: latestRun.id,
-          manuscriptId,
-          passType: AnalysisPassType.REWRITE,
-          scopeType: "chunk",
-          scopeId: chunk.id,
-          chunkId: chunk.id,
-          chapterId: chapter.id,
-          promptVersion: PROMPT_VERSION,
-          model: output.model,
-          inputSummary: jsonInput({
-            chapterTitle: chapter.title,
-            chunkIndex: chunk.chunkIndex
-          }),
-          output: jsonInput(output.json),
-          rawText: output.rawText
-        },
-        update: {
-          model: output.model,
-          output: jsonInput(output.json),
-          rawText: output.rawText
-        }
-      });
+    if (existing) {
+      await ensureChapterRewriteOutput(existing, input.runId);
+      return { rewrite: existing, created: false };
     }
   }
 
-  return prisma.chapterRewrite.create({
-    data: {
-      manuscriptId,
+  const acceptedByChapter = await acceptedRewriteMapForManuscript(
+    input.manuscriptId
+  );
+  const previousContexts = previousChapterContexts(
+    manuscript.chapters,
+    chapter.order,
+    acceptedByChapter
+  );
+  const continuityLedger = buildContinuityLedger({
+    continuityRules: rewritePlan.continuityRules,
+    previousChapters: previousContexts
+  });
+  const sections = chapterRewriteSections(
+    chapter,
+    manuscript.chunks.filter((chunk) => chunk.chapterId === chapter.id)
+  );
+  const chapterAudit = await prisma.analysisOutput.findFirst({
+    where: {
+      manuscriptId: input.manuscriptId,
+      runId: input.runId,
       chapterId: chapter.id,
-      runId: latestRun?.id,
-      promptVersion: PROMPT_VERSION,
-      model: hasOpenAIKey() ? REWRITE_MODEL : "stub",
+      passType: AnalysisPassType.CHAPTER_AUDIT
+    },
+    orderBy: { createdAt: "desc" }
+  });
+
+  const rewrittenParts: string[] = [];
+  const sectionResults: ChapterRewriteResult[] = [];
+  const usageLogs: AiUsageLog[] = [];
+  const previousSectionSummaries: Array<{
+    sectionIndex: number;
+    summary?: string;
+  }> = [];
+
+  for (const section of sections) {
+    const existingOutput = await findRewriteOutput(
+      input.runId,
+      "chapter_chunk",
+      section.scopeId
+    );
+    const result = existingOutput
+      ? {
+          json: toChapterRewriteResult(existingOutput.output),
+          rawText: existingOutput.rawText ?? "",
+          model: existingOutput.model,
+          usage: usageFromInputSummary(existingOutput.inputSummary)
+        }
+      : await rewriteChapter({
+          manuscriptTitle: manuscript.title,
+          targetGenre: manuscript.targetGenre,
+          targetAudience: manuscript.targetAudience,
+          chapterTitle: chapter.title,
+          chapterIndex: chapter.chapterIndex || chapter.order,
+          originalChapter: section.text,
+          chapterAnalysis: chapterAudit?.output,
+          globalRewritePlan: globalRewritePlanForPrompt(rewritePlan),
+          previousChapterSummaries: previousContexts,
+          previousSectionSummaries,
+          continuityRules: continuityLedger,
+          rewriteScope: {
+            type: "chunk",
+            sectionIndex: section.sectionIndex,
+            totalSections: section.totalSections,
+            chunkIndex: section.chunkIndex
+          }
+        });
+
+    if (!existingOutput) {
+      await saveRewriteOutput({
+        runId: input.runId,
+        manuscriptId: input.manuscriptId,
+        scopeType: "chapter_chunk",
+        scopeId: section.scopeId,
+        chunkId: section.chunkId,
+        chapterId: chapter.id,
+        model: result.model,
+        output: result.json,
+        rawText: result.rawText,
+        usage: result.usage,
+        inputSummary: {
+          chapterTitle: chapter.title,
+          sectionIndex: section.sectionIndex,
+          totalSections: section.totalSections,
+          chunkIndex: section.chunkIndex,
+          wordCount: section.wordCount,
+          previousCanonChapterCount: continuityLedger.acceptedCanonChapterCount
+        }
+      });
+    }
+
+    rewrittenParts.push(result.json.rewrittenChapter);
+    sectionResults.push(result.json);
+    if (result.usage) {
+      usageLogs.push(result.usage);
+    }
+    previousSectionSummaries.push({
+      sectionIndex: section.sectionIndex,
+      summary: summarizeRewriteText(result.json.rewrittenChapter)
+    });
+  }
+
+  const rewrittenText = rewrittenParts.join("\n\n");
+  const outputModel = usageLogs[0]?.model ?? "stub";
+  const finalUsage = aggregateUsageLogs(outputModel, usageLogs);
+  const finalJson = finalRewriteJson({
+    rewrittenText,
+    sectionResults,
+    continuityLedger,
+    sections
+  });
+  const version = await nextRewriteVersion(input.manuscriptId, chapter.id);
+  const rewrite = await prisma.chapterRewrite.create({
+    data: {
+      manuscriptId: input.manuscriptId,
+      chapterId: chapter.id,
+      runId: input.runId,
+      rewritePlanId: rewritePlan.id,
+      version,
       originalText: chapter.text,
-      rewrittenText: rewrittenParts.join("\n\n"),
-      changeLog: jsonInput({
-        notes: rationales.slice(0, 30)
-      }),
-      continuityNotes: jsonInput({
-        basedOnAuditRun: latestRun?.id,
-        scope: "chapter-1-demo"
+      rewrittenText,
+      content: rewrittenText,
+      changeLog: jsonInput(finalJson.changeLog),
+      continuityNotes: jsonInput(finalJson.continuityNotes),
+      rationale: jsonInput({
+        inventedFactsWarnings: finalJson.inventedFactsWarnings,
+        nextChapterImplications: finalJson.nextChapterImplications,
+        usage: finalUsage
       }),
       status: "DRAFT",
+      promptVersion: EDITOR_PROMPT_VERSION,
+      model: outputModel,
       sourceSummary: jsonInput({
-        chunkCount: chunks.length,
-        basedOnAuditRun: latestRun?.id
-      }),
-      content: rewrittenParts.join("\n\n"),
-      rationale: jsonInput({
-        notes: rationales.slice(0, 30)
+        source: sections.length > 1 ? "chunked" : "single-section",
+        sectionCount: sections.length,
+        originalWordCount: countWords(chapter.text),
+        previousCanonChapterCount: continuityLedger.acceptedCanonChapterCount
       })
+    }
+  });
+
+  await saveRewriteOutput({
+    runId: input.runId,
+    manuscriptId: input.manuscriptId,
+    scopeType: "chapter",
+    scopeId: chapter.id,
+    chapterId: chapter.id,
+    model: rewrite.model,
+    output: finalJson,
+    rawText: JSON.stringify(finalJson),
+    usage: finalUsage,
+    inputSummary: {
+      chapterTitle: chapter.title,
+      sectionCount: sections.length,
+      originalWordCount: countWords(chapter.text),
+      previousCanonChapterCount: continuityLedger.acceptedCanonChapterCount
+    }
+  });
+
+  return { rewrite, created: true };
+}
+
+async function ensureChapterRewriteOutput(rewrite: ChapterRewrite, runId: string) {
+  const existing = await findRewriteOutput(runId, "chapter", rewrite.chapterId);
+  if (existing) {
+    return;
+  }
+
+  await saveRewriteOutput({
+    runId,
+    manuscriptId: rewrite.manuscriptId,
+    scopeType: "chapter",
+    scopeId: rewrite.chapterId,
+    chapterId: rewrite.chapterId,
+    model: rewrite.model,
+    output: {
+      rewrittenChapter: rewrite.rewrittenText || rewrite.content,
+      changeLog: rewrite.changeLog ?? [],
+      continuityNotes: rewrite.continuityNotes ?? {},
+      inventedFactsWarnings: [],
+      nextChapterImplications: []
+    },
+    rawText: rewrite.rewrittenText || rewrite.content,
+    inputSummary: {
+      chapterRewriteId: rewrite.id,
+      recoveredFromExistingRewrite: true
     }
   });
 }
 
-async function rewriteChunk(input: {
-  manuscriptTitle: string;
-  chapterTitle: string;
-  chunkIndex: number;
-  text: string;
-  memory: JsonRecord;
-}) {
-  return requestStructuredJson<RewriteChunkJson>({
-    model: REWRITE_MODEL,
-    system:
-      "You are a careful fiction rewrite assistant. Return strict JSON only. Rewrite only the supplied chunk, preserving core events and continuity. Do not use copyrighted books as examples.",
-    user: JSON.stringify(
-      {
-        task: "Rewrite this Chapter 1 chunk as a demo revision.",
-        requiredShape: {
-          rewrittenText: "rewritten prose for this chunk",
-          rationale: ["brief reason for major changes"]
-        },
-        manuscriptTitle: input.manuscriptTitle,
-        chapterTitle: input.chapterTitle,
-        chunkIndex: input.chunkIndex,
-        globalMemory: input.memory,
-        sourceChunk: input.text
-      },
-      null,
-      2
-    )
+async function acceptedRewriteMapForManuscript(manuscriptId: string) {
+  const accepted = await prisma.chapterRewrite.findMany({
+    where: {
+      manuscriptId,
+      status: "ACCEPTED"
+    },
+    orderBy: { createdAt: "desc" }
   });
+
+  return latestAcceptedRewriteByChapter(
+    accepted.map((rewrite) => rewrite as RewriteForContinuity)
+  );
+}
+
+function chapterRewriteSections(
+  chapter: ManuscriptChapter,
+  chunks: ManuscriptChunk[]
+): RewriteSection[] {
+  const sourceChunks = chunks.length > 0 ? chunks : undefined;
+
+  if (!sourceChunks) {
+    return [
+      {
+        id: chapter.id,
+        scopeId: `${chapter.id}:chapter`,
+        sectionIndex: 1,
+        totalSections: 1,
+        text: chapter.text,
+        wordCount: countWords(chapter.text)
+      }
+    ];
+  }
+
+  return sourceChunks.map((chunk, index) => ({
+    id: chunk.id,
+    scopeId: chunk.id,
+    chunkId: chunk.id,
+    chunkIndex: chunk.chunkIndex,
+    sectionIndex: index + 1,
+    totalSections: sourceChunks.length,
+    text: chunk.text,
+    wordCount: chunk.wordCount || countWords(chunk.text)
+  }));
+}
+
+function finalRewriteJson(input: {
+  rewrittenText: string;
+  sectionResults: ChapterRewriteResult[];
+  continuityLedger: ReturnType<typeof buildContinuityLedger>;
+  sections: RewriteSection[];
+}): ChapterRewriteResult & JsonRecord {
+  return {
+    rewrittenChapter: input.rewrittenText,
+    changeLog: input.sectionResults.flatMap((result, index) =>
+      result.changeLog.map((change) => ({
+        sectionIndex: input.sections[index]?.sectionIndex,
+        ...change
+      }))
+    ),
+    continuityNotes: {
+      ledger: input.continuityLedger,
+      sections: input.sectionResults.map((result, index) => ({
+        sectionIndex: input.sections[index]?.sectionIndex,
+        continuityNotes: result.continuityNotes
+      }))
+    },
+    inventedFactsWarnings: input.sectionResults.flatMap(
+      (result) => result.inventedFactsWarnings
+    ),
+    nextChapterImplications: input.sectionResults.flatMap(
+      (result) => result.nextChapterImplications
+    ),
+    sectionCount: input.sections.length
+  };
+}
+
+function globalRewritePlanForPrompt(rewritePlan: RewritePlan) {
+  return {
+    globalStrategy: rewritePlan.globalStrategy,
+    chapterPlans: rewritePlan.chapterPlans,
+    styleRules: rewritePlan.styleRules,
+    marketPositioning: rewritePlan.marketPositioning
+  };
+}
+
+async function nextRewriteVersion(manuscriptId: string, chapterId: string) {
+  const aggregate = await prisma.chapterRewrite.aggregate({
+    where: { manuscriptId, chapterId },
+    _max: { version: true }
+  });
+
+  return (aggregate._max.version ?? 0) + 1;
+}
+
+async function findRewriteOutput(
+  runId: string,
+  scopeType: string,
+  scopeId: string
+) {
+  return prisma.analysisOutput.findUnique({
+    where: {
+      runId_passType_scopeType_scopeId: {
+        runId,
+        passType: AnalysisPassType.CHAPTER_REWRITE,
+        scopeType,
+        scopeId
+      }
+    }
+  });
+}
+
+async function saveRewriteOutput(input: {
+  runId: string;
+  manuscriptId: string;
+  scopeType: string;
+  scopeId: string;
+  model: string;
+  output: unknown;
+  rawText: string;
+  inputSummary?: Record<string, unknown>;
+  usage?: AiUsageLog;
+  chunkId?: string;
+  chapterId?: string;
+}) {
+  await prisma.analysisOutput.upsert({
+    where: {
+      runId_passType_scopeType_scopeId: {
+        runId: input.runId,
+        passType: AnalysisPassType.CHAPTER_REWRITE,
+        scopeType: input.scopeType,
+        scopeId: input.scopeId
+      }
+    },
+    create: {
+      runId: input.runId,
+      manuscriptId: input.manuscriptId,
+      passType: AnalysisPassType.CHAPTER_REWRITE,
+      scopeType: input.scopeType,
+      scopeId: input.scopeId,
+      chunkId: input.chunkId,
+      chapterId: input.chapterId,
+      promptVersion: EDITOR_PROMPT_VERSION,
+      model: input.model,
+      inputSummary: jsonInput(withAiUsage(input.inputSummary ?? {}, input.usage)),
+      output: jsonInput(input.output),
+      rawText: input.rawText
+    },
+    update: {
+      model: input.model,
+      inputSummary: jsonInput(withAiUsage(input.inputSummary ?? {}, input.usage)),
+      output: jsonInput(input.output),
+      rawText: input.rawText
+    }
+  });
+}
+
+function toChapterRewriteResult(value: unknown): ChapterRewriteResult {
+  const record = toJsonRecord(value);
+
+  return {
+    rewrittenChapter: String(record.rewrittenChapter ?? ""),
+    changeLog: Array.isArray(record.changeLog)
+      ? (record.changeLog as Array<Record<string, unknown>>)
+      : [],
+    continuityNotes: toJsonRecord(record.continuityNotes),
+    inventedFactsWarnings: stringArray(record.inventedFactsWarnings),
+    nextChapterImplications: stringArray(record.nextChapterImplications)
+  };
+}
+
+function usageFromInputSummary(value: unknown) {
+  const record = toJsonRecord(value);
+  const usage = record.usage;
+  if (!usage || typeof usage !== "object" || Array.isArray(usage)) {
+    return undefined;
+  }
+
+  return usage as AiUsageLog;
 }
 
 function toJsonRecord(value: unknown): JsonRecord {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as JsonRecord)
     : {};
+}
+
+function stringArray(value: unknown) {
+  return Array.isArray(value) ? value.map(String) : [];
 }

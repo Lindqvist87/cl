@@ -1,5 +1,6 @@
 import { hasEditorModelKey, requestEditorJson } from "@/lib/ai/editorModel";
 import type { RewritePlanResult } from "@/lib/ai/analysisTypes";
+import { stubUsageLog } from "@/lib/ai/usage";
 
 type RewritePlannerInput = {
   manuscriptTitle: string;
@@ -27,7 +28,7 @@ type RewritePlannerInput = {
 export async function planRewrite(input: RewritePlannerInput) {
   if (!hasEditorModelKey()) {
     const json = stubRewritePlan(input);
-    return { json, rawText: JSON.stringify(json), model: "stub" };
+    return { json, rawText: JSON.stringify(json), model: "stub", usage: stubUsageLog() };
   }
 
   return requestEditorJson<RewritePlanResult>({
@@ -36,6 +37,7 @@ export async function planRewrite(input: RewritePlannerInput) {
       "Return strict JSON only.",
       "Separate findings from rewrite strategy.",
       "Preserve the author's voice and continuity.",
+      "Treat trend comparison as metadata/context only; do not turn trend signals into plot or prose instructions.",
       "Do not recommend copying or imitating copyrighted modern works."
     ].join(" "),
     user: JSON.stringify(
@@ -70,7 +72,7 @@ export async function planRewrite(input: RewritePlannerInput) {
         },
         wholeBookAudit: input.wholeBookAudit,
         corpusComparison: input.corpusComparison,
-        trendComparison: input.trendComparison,
+        trendComparisonMetadataOnly: input.trendComparison,
         findings: input.findings,
         chapters: input.chapters
       },

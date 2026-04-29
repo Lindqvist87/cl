@@ -54,6 +54,13 @@ OPENAI_AUDIT_MODEL="gpt-5.4-mini"
 OPENAI_REWRITE_MODEL="gpt-5.5"
 OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
 NEXT_PUBLIC_APP_NAME="Manuscript Audit"
+ENABLE_INNGEST_WORKER="false"
+INNGEST_APP_ID="manuscript-intelligence-app"
+INNGEST_EVENT_KEY=""
+INNGEST_SIGNING_KEY=""
+INNGEST_SERVE_ORIGIN=""
+MAX_JOBS_PER_INNGEST_RUN="3"
+MAX_SECONDS_PER_INNGEST_RUN="25"
 ```
 
 `OPENAI_AUDIT_MODEL` drives v2 audit, corpus, trend, and planning calls. `OPENAI_REWRITE_MODEL` drives chapter rewrite calls. `OPENAI_EDITOR_MODEL` is still accepted as a legacy fallback, but new deployments should prefer the split audit/rewrite variables.
@@ -107,7 +114,50 @@ npx prisma migrate deploy
 
 4. Deploy the Next.js app to Vercel.
 
-Long analysis jobs can exceed serverless duration for very large manuscripts. The v2 pipeline is resumable, so failed or timed-out jobs can be rerun and will skip completed steps and stored AI outputs.
+## Durable Background Execution With Inngest
+
+Inngest is the preferred production execution layer. The database `PipelineJob` table remains the source of truth for job state, locking, retries, idempotency, dependencies, and stored AI outputs. Inngest orchestrates jobs; it does not replace the job state machine.
+
+Install and run locally:
+
+```bash
+npm install
+npm run dev
+npm run inngest:dev
+```
+
+The Inngest dev server should sync `http://localhost:3000/api/inngest`. Its UI runs on `http://localhost:8288`.
+
+Required production env vars:
+
+- `ENABLE_INNGEST_WORKER=true`
+- `INNGEST_EVENT_KEY`
+- `INNGEST_SIGNING_KEY`
+- `INNGEST_APP_ID=manuscript-intelligence-app`
+- `INNGEST_SERVE_ORIGIN` if Vercel needs an explicit public origin
+- `MAX_JOBS_PER_INNGEST_RUN`
+- `MAX_SECONDS_PER_INNGEST_RUN`
+
+On Vercel, keep `/api/inngest` on the Node.js runtime for Prisma compatibility. The endpoint exports `GET`, `POST`, and `PUT`, and sets a long `maxDuration` for bounded background batches.
+
+When a manuscript pipeline starts, the app creates or resumes `PipelineJob` rows, sends `manuscript/pipeline.started`, and returns immediately when `ENABLE_INNGEST_WORKER=true`. Inngest then runs bounded batches and re-emits work until the manuscript is complete, failed, blocked, or cancelled.
+
+Fallback mode remains available. If `ENABLE_INNGEST_WORKER=false`, or Inngest keys are missing, the existing request runner still works, `/api/jobs/run-next` and `/api/jobs/run-until-idle` can process manual batches, and the manuscript page exposes a manual fallback button.
+
+To resume a stuck pipeline:
+
+```bash
+MANUSCRIPT_ID="<id>" npm run pipeline:resume
+MANUSCRIPT_ID="<id>" npm run jobs:run-until-idle
+```
+
+Inspect runs in the Inngest dashboard, `/admin/inngest`, and `/admin/jobs`. `/admin/jobs` includes filters for Inngest-managed, ready, blocked, locked, stale lock, and failed jobs, plus retry/cancel/kick controls.
+
+Limitations:
+
+- The corpus and trend import events currently orchestrate the existing metadata/profile/chunk services; uploads are still accepted by the existing API route first.
+- DB-controlled attempts are the retry source of truth, so Inngest functions avoid throwing after a `PipelineJob` records a retryable failure.
+- The full manuscript is never sent in one model call. Chunk, chapter, whole-book, corpus, trend, rewrite-plan, and chapter-rewrite outputs remain persisted in the database.
 
 ## Tests
 
@@ -115,4 +165,4 @@ Long analysis jobs can exceed serverless duration for very large manuscripts. Th
 npm test
 ```
 
-Tests cover chapter parsing, chunking, and pipeline checkpoint idempotency.
+Tests cover chapter parsing, chunking, pipeline checkpoint idempotency, Inngest event payloads, job dependency rules, retry decisions, stale lock detection, fallback mode, and rewrite continuity canon.

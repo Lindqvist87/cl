@@ -4,6 +4,7 @@ import {
   requestEditorJson
 } from "@/lib/ai/editorModel";
 import type { ChapterRewriteResult } from "@/lib/ai/analysisTypes";
+import { stubUsageLog } from "@/lib/ai/usage";
 
 type ChapterRewriteInput = {
   manuscriptTitle: string;
@@ -17,14 +18,27 @@ type ChapterRewriteInput = {
   previousChapterSummaries: Array<{
     title: string;
     summary?: string | null;
+    canonStatus?: string;
+    acceptedRewriteExcerpt?: string;
+    continuityNotes?: unknown;
+  }>;
+  previousSectionSummaries?: Array<{
+    sectionIndex: number;
+    summary?: string;
   }>;
   continuityRules: unknown;
+  rewriteScope?: {
+    type: "chapter" | "chunk";
+    sectionIndex?: number;
+    totalSections?: number;
+    chunkIndex?: number;
+  };
 };
 
 export async function rewriteChapter(input: ChapterRewriteInput) {
   if (!hasEditorModelKey()) {
     const json = stubChapterRewrite(input);
-    return { json, rawText: JSON.stringify(json), model: "stub" };
+    return { json, rawText: JSON.stringify(json), model: "stub", usage: stubUsageLog() };
   }
 
   return requestEditorJson<ChapterRewriteResult>({
@@ -38,7 +52,10 @@ export async function rewriteChapter(input: ChapterRewriteInput) {
     ].join(" "),
     user: JSON.stringify(
       {
-        task: "Rewrite this single chapter according to the analysis and rewrite plan.",
+        task:
+          input.rewriteScope?.type === "chunk"
+            ? "Rewrite this bounded chapter section according to the analysis, rewrite plan, and continuity ledger."
+            : "Rewrite this single chapter according to the analysis and rewrite plan.",
         requiredShape: {
           rewrittenChapter: "complete rewritten chapter text",
           changeLog: [
@@ -59,11 +76,13 @@ export async function rewriteChapter(input: ChapterRewriteInput) {
         chapter: {
           title: input.chapterTitle,
           chapterIndex: input.chapterIndex,
+          rewriteScope: input.rewriteScope ?? { type: "chapter" },
           originalChapter: input.originalChapter,
           chapterAnalysis: input.chapterAnalysis
         },
         globalRewritePlan: input.globalRewritePlan,
         previousChapterSummaries: input.previousChapterSummaries,
+        previousSectionSummaries: input.previousSectionSummaries ?? [],
         continuityRules: input.continuityRules
       },
       null,
