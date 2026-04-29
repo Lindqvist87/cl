@@ -1,11 +1,7 @@
 import { NextResponse } from "next/server";
 import { importManualCorpusBook } from "@/lib/corpus/manualCorpusImport";
 import { parseCorpusOnboardingFormData } from "@/lib/corpus/onboarding";
-import {
-  getInngestRuntimeConfig,
-  INNGEST_EVENTS,
-  sendInngestEvent
-} from "@/src/inngest/events";
+import { startCorpusAnalysis } from "@/lib/corpus/startCorpusAnalysis";
 
 export const runtime = "nodejs";
 export const maxDuration = 120;
@@ -26,7 +22,6 @@ export async function POST(request: Request) {
       );
     }
 
-    const config = getInngestRuntimeConfig();
     const results = [];
 
     for (const input of inputs) {
@@ -38,18 +33,17 @@ export async function POST(request: Request) {
           rewriteTraining: false
         }
       });
-      const event =
-        config.enabled && config.canSendEvents
-          ? await sendInngestEvent(INNGEST_EVENTS.CORPUS_IMPORT_REQUESTED, {
-              corpusBookId: book.id,
-              source: book.sourceId
-            })
-          : null;
+      const analysis = await startCorpusAnalysis({
+        corpusBookId: book.id,
+        source: book.sourceId,
+        runFallbackWhenDisabled: false
+      });
 
       results.push({
         bookId: book.id,
         title: book.title,
-        eventSent: event?.sent ?? false
+        eventSent: analysis.eventSent,
+        executionMode: analysis.executionMode
       });
     }
 

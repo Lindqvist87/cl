@@ -5,6 +5,13 @@ import {
   AnalysisStatus,
   type PipelineJob
 } from "@prisma/client";
+import {
+  corpusBookIdFromPipelineJob,
+  isCorpusPipelineJobType,
+  runCorpusPipelineJobStep,
+  unblockReadyCorpusJobs,
+  updateCorpusPipelineStatus
+} from "@/lib/corpus/corpusAnalysisJobs";
 import { jsonInput } from "@/lib/json";
 import {
   findOrCreatePipelineRun,
@@ -303,6 +310,8 @@ export async function runPipelineJob(
           locked,
           positiveInt(options.maxItemsPerStep, DEFAULT_MAX_ITEMS_PER_STEP)
         )
+      : isCorpusPipelineJobType(locked.type)
+        ? await runCorpusPipelineStepJob(locked)
       : locked.type === PIPELINE_JOB_TYPES.CHAPTER_REWRITE
         ? await runChapterRewriteJob(locked)
         : await failUnknownJobType(locked);
@@ -334,6 +343,11 @@ export async function runPipelineJob(
 
     if (updated.manuscriptId) {
       await updateManuscriptPipelineStatus(updated.manuscriptId);
+    } else if (isCorpusPipelineJobType(updated.type)) {
+      const corpusBookId = corpusBookIdFromPipelineJob(updated);
+      if (corpusBookId) {
+        await updateCorpusPipelineStatus(corpusBookId);
+      }
     }
 
     return jobResult(
@@ -559,6 +573,15 @@ async function runManuscriptPipelineStepJob(
   return jobResult(completed, "completed", readyJobIds);
 }
 
+async function runCorpusPipelineStepJob(
+  job: PipelineJob
+): Promise<RunPipelineJobResult> {
+  const metadata = await runCorpusPipelineJobStep(job);
+  const completed = await markJobCompleted(job, metadata);
+
+  return jobResult(completed, "completed", await afterJobCompleted(completed));
+}
+
 async function runChapterRewriteJob(
   job: PipelineJob
 ): Promise<RunPipelineJobResult> {
@@ -689,12 +712,19 @@ async function unblockReadyJobs(manuscriptId: string) {
 }
 
 async function afterJobCompleted(job: PipelineJob) {
+  const corpusBookId = isCorpusPipelineJobType(job.type)
+    ? corpusBookIdFromPipelineJob(job)
+    : null;
   const readyJobIds = job.manuscriptId
     ? await unblockReadyJobs(job.manuscriptId)
-    : [];
+    : corpusBookId
+      ? await unblockReadyCorpusJobs(corpusBookId)
+      : [];
 
   if (job.manuscriptId) {
     await updateManuscriptPipelineStatus(job.manuscriptId);
+  } else if (corpusBookId) {
+    await updateCorpusPipelineStatus(corpusBookId);
   }
 
   return readyJobIds;

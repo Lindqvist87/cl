@@ -78,13 +78,36 @@ export function corpusBenchmarkReady(input: {
   profileExists: boolean;
   chunkCount: number;
 }) {
-  return (
-    input.benchmarkAllowed &&
-    input.profileExists &&
-    input.chunkCount > 0 &&
-    canUseForCorpusBenchmark({
+  return corpusBenchmarkBlockedReason(input) === null;
+}
+
+export function corpusBenchmarkBlockedReason(input: {
+  rightsStatus: RightsStatus | string;
+  allowedUses?: unknown;
+  benchmarkAllowed: boolean;
+  profileExists: boolean;
+  chunkCount: number;
+}) {
+  if (!input.benchmarkAllowed) {
+    return "Benchmarking is not enabled for this book.";
+  }
+
+  if (
+    !canUseForCorpusBenchmark({
       rightsStatus: input.rightsStatus,
       allowedUses: input.allowedUses
     })
-  );
+  ) {
+    return "Rights or allowed uses do not permit corpus benchmarking.";
+  }
+
+  if (!input.profileExists) {
+    return "Book DNA profile has not been created.";
+  }
+
+  if (input.chunkCount <= 0) {
+    return "No corpus chunks are available.";
+  }
+
+  return null;
 }

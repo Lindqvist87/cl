@@ -5,6 +5,7 @@ import {
   SourceType
 } from "@prisma/client";
 import { extractTextFromCorpusUpload } from "@/lib/corpus/extractText";
+import { ensureCorpusAnalysisJobs } from "@/lib/corpus/corpusAnalysisJobs";
 import { jsonInput } from "@/lib/json";
 import { prisma } from "@/lib/prisma";
 import { countWords, normalizeWhitespace } from "@/lib/text/wordCount";
@@ -75,7 +76,7 @@ export async function importManualCorpusBook(input: ManualCorpusImportInput) {
     ? buildExtractionReport(extracted, input, cleanedText)
     : undefined;
 
-  return prisma.$transaction(async (tx) => {
+  const book = await prisma.$transaction(async (tx) => {
     const book = await tx.corpusBook.create({
       data: {
         sourceId: source.id,
@@ -104,6 +105,7 @@ export async function importManualCorpusBook(input: ManualCorpusImportInput) {
         analysisStatus: cleanedText
           ? CorpusAnalysisStatus.NOT_STARTED
           : CorpusAnalysisStatus.NOT_STARTED,
+        benchmarkBlockedReason: null,
         importProgress: jsonInput(initialImportProgress(Boolean(cleanedText)))
       }
     });
@@ -132,6 +134,9 @@ export async function importManualCorpusBook(input: ManualCorpusImportInput) {
 
     return book;
   });
+
+  await ensureCorpusAnalysisJobs(book.id);
+  return book;
 }
 
 function buildExtractionReport(
@@ -187,6 +192,7 @@ function initialImportProgress(hasText: boolean) {
     chunksCreated: false,
     embeddingsCreated: false,
     bookDnaExtracted: false,
-    benchmarkReady: false
+    benchmarkReady: false,
+    benchmarkBlockedReason: null
   };
 }

@@ -1,6 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { AlertTriangle, BookOpen, Database, FileText, ScrollText } from "lucide-react";
+import {
+  CorpusAnalysisAction,
+  CorpusAnalysisProgress
+} from "@/components/CorpusAnalysisProgress";
+import { getCorpusAnalysisSummary } from "@/lib/corpus/corpusAnalysisJobs";
 import { prisma } from "@/lib/prisma";
 
 export const dynamic = "force-dynamic";
@@ -34,6 +39,7 @@ export default async function CorpusBookDetailPage({
     notFound();
   }
 
+  const analysisSummary = await getCorpusAnalysisSummary(book.id);
   const report = toRecord(book.text?.extractionReport);
   const detectedMetadata = toRecord(report.detectedMetadata);
   const warnings = stringArray(report.warnings);
@@ -60,14 +66,21 @@ export default async function CorpusBookDetailPage({
               {book.sourceName || book.source.name}
             </p>
           </div>
-          {book.profile ? (
-            <Link
-              href={`/admin/corpus/${book.id}/profile`}
-              className="focus-ring inline-flex min-h-10 items-center justify-center border border-line bg-white px-4 text-sm font-semibold text-ink shadow-panel hover:bg-paper"
-            >
-              Book DNA
-            </Link>
-          ) : null}
+          <div className="flex flex-wrap gap-2">
+            <CorpusAnalysisAction
+              bookId={book.id}
+              analysisStatus={book.analysisStatus}
+              summary={analysisSummary}
+            />
+            {book.profile ? (
+              <Link
+                href={`/admin/corpus/${book.id}/profile`}
+                className="focus-ring inline-flex min-h-10 items-center justify-center border border-line bg-white px-4 text-sm font-semibold text-ink shadow-panel hover:bg-paper"
+              >
+                Book DNA
+              </Link>
+            ) : null}
+          </div>
         </div>
       </section>
 
@@ -119,9 +132,17 @@ export default async function CorpusBookDetailPage({
               ["Ingestion", formatStatus(book.ingestionStatus)],
               ["Analysis", formatStatus(book.analysisStatus)],
               ["Benchmark", book.benchmarkReady ? "Ready" : book.benchmarkAllowed ? "Allowed" : "Off"],
+              [
+                "Blocked reason",
+                book.benchmarkBlockedReason ?? analysisSummary.benchmarkBlockedReason ?? "None"
+              ],
               ["Latest job", book.importJobs[0] ? formatStatus(book.importJobs[0].currentStep) : "None"]
             ]}
           />
+        </DetailPanel>
+
+        <DetailPanel title="Analysis Progress">
+          <CorpusAnalysisProgress summary={analysisSummary} />
         </DetailPanel>
 
         <DetailPanel title="Warnings">

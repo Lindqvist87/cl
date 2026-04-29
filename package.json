@@ -7,7 +7,7 @@
     "build": "node scripts/apply-migrations-if-configured.mjs && next build",
     "start": "next start",
     "lint": "next lint",
-    "test": "tsx --test tests/parsing.test.ts tests/chunking.test.ts tests/chapterContext.test.ts tests/pipelineSteps.test.ts tests/pipelineJobs.test.ts tests/inngestEvents.test.ts tests/continuity.test.ts tests/exports.test.ts tests/rightsAndUsage.test.ts tests/corpusOnboarding.test.ts tests/corpusComparisonRewrite.test.ts",
+    "test": "tsx --test tests/parsing.test.ts tests/chunking.test.ts tests/chapterContext.test.ts tests/pipelineSteps.test.ts tests/pipelineJobs.test.ts tests/corpusAnalysisJobs.test.ts tests/inngestEvents.test.ts tests/continuity.test.ts tests/exports.test.ts tests/rightsAndUsage.test.ts tests/corpusOnboarding.test.ts tests/corpusComparisonRewrite.test.ts",
     "typecheck": "tsc --noEmit",
     "inngest:dev": "npx --ignore-scripts=false inngest-cli@latest dev -u http://localhost:3000/api/inngest",
     "jobs:run-next": "node scripts/run-job-endpoint.mjs run-next",

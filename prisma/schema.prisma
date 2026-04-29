@@ -128,6 +128,7 @@ model CorpusBook {
   benchmarkAllowed  Boolean                @default(false)
   benchmarkReady    Boolean                @default(false)
   benchmarkReadyAt  DateTime?
+  benchmarkBlockedReason String?
   importProgress    Json?
   fullTextAvailable Boolean                @default(false)
   ingestionStatus   CorpusIngestionStatus  @default(QUEUED)
