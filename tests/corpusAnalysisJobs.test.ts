@@ -4,6 +4,7 @@ import {
   CORPUS_PIPELINE_JOB_TYPES,
   corpusPipelineJobKey,
   plannedCorpusPipelineJobs,
+  shouldShowCorpusAnalysisAction,
   summarizeCorpusAnalysis
 } from "../lib/corpus/corpusAnalysisJobs";
 import {
@@ -125,4 +126,37 @@ test("status moves from not started to queued/running once jobs exist", () => {
   assert.equal(summary.steps.chapters.statusLabel, "Queued");
   assert.equal(summary.readyJobCount, 1);
   assert.equal(summary.unfinishedJobCount, 5);
+});
+
+test("legacy imported corpus books with no jobs still show the analysis action", () => {
+  const summary = summarizeCorpusAnalysis({
+    book: {
+      id: "legacy-book",
+      fullTextAvailable: true,
+      ingestionStatus: "IMPORTED",
+      analysisStatus: "NOT_STARTED",
+      benchmarkReady: false,
+      benchmarkBlockedReason: null,
+      importProgress: {
+        uploaded: true,
+        textExtracted: true,
+        cleaned: true
+      }
+    },
+    jobs: [],
+    profileExists: false,
+    chapterCount: 0,
+    chunkCount: 0,
+    embeddingStatuses: []
+  });
+
+  assert.equal(summary.steps.imported.statusLabel, "Imported");
+  assert.equal(summary.steps.bookDna.statusLabel, "Not started");
+  assert.equal(
+    shouldShowCorpusAnalysisAction({
+      analysisStatus: "NOT_STARTED",
+      summary
+    }),
+    true
+  );
 });

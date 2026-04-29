@@ -10,6 +10,7 @@ import type {
   CorpusAnalysisStepState,
   CorpusAnalysisSummary
 } from "@/lib/corpus/corpusAnalysisJobs";
+import { shouldShowCorpusAnalysisAction } from "@/lib/corpus/corpusAnalysisJobs";
 
 export function CorpusAnalysisProgress({
   summary,
@@ -67,12 +68,7 @@ export function CorpusAnalysisAction({
   analysisStatus: string;
   variant?: "primary" | "secondary";
 }) {
-  const shouldShow =
-    analysisStatus === "NOT_STARTED" ||
-    summary.unfinishedJobCount > 0 ||
-    summary.steps.bookDna.status !== "done";
-
-  if (!shouldShow) {
+  if (!shouldShowCorpusAnalysisAction({ analysisStatus, summary })) {
     return null;
   }
 

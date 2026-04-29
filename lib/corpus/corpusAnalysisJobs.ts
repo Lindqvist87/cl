@@ -595,6 +595,17 @@ export function summarizeCorpusAnalysis(input: {
   };
 }
 
+export function shouldShowCorpusAnalysisAction(input: {
+  analysisStatus: string;
+  summary: CorpusAnalysisSummary;
+}) {
+  return (
+    input.analysisStatus === CorpusAnalysisStatus.NOT_STARTED ||
+    input.summary.unfinishedJobCount > 0 ||
+    input.summary.steps.bookDna.status !== "done"
+  );
+}
+
 async function cleanCorpusBook(corpusBookId: string) {
   const importJob = await findOrCreateImportJob(corpusBookId);
   const book = await prisma.corpusBook.findUnique({
