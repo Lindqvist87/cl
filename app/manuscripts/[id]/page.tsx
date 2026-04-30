@@ -70,6 +70,9 @@ export default async function ManuscriptPage({
             <Link href={`/manuscripts/${manuscript.id}/audit`} className="text-accent hover:underline">
               Audit
             </Link>
+            <Link href={`/manuscripts/${manuscript.id}/workspace`} className="text-accent hover:underline">
+              Editorial Workspace
+            </Link>
             <a href={`/api/manuscripts/${manuscript.id}/rewritten/markdown`} className="text-accent hover:underline">
               Full rewritten Markdown
             </a>
@@ -203,7 +206,7 @@ export default async function ManuscriptPage({
             {manuscript.chapters.map((chapter) => (
               <Link
                 key={chapter.id}
-                href={`/manuscripts/${manuscript.id}/chapters/${chapter.id}`}
+                href={`/manuscripts/${manuscript.id}/chapters/${chapter.id}/workspace`}
                 className="block border-b border-line px-4 py-3 last:border-b-0 hover:bg-paper"
               >
                 <div className="text-sm font-semibold">{chapter.title}</div>

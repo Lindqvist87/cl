@@ -96,6 +96,20 @@ enum CorpusAnalysisStatus {
   FAILED
 }
 
+enum EditorialDecisionStatus {
+  ACCEPTED
+  REJECTED
+  DEFERRED
+  NEEDS_REVIEW
+}
+
+enum EditorialDecisionScope {
+  MANUSCRIPT
+  CHAPTER
+  SCENE
+  PARAGRAPH
+}
+
 model Source {
   id          String     @id @default(cuid())
   name        String
@@ -335,6 +349,7 @@ model Manuscript {
   findings     Finding[]
   rewritePlans RewritePlan[]
   pipelineJobs PipelineJob[]
+  decisions    EditorialDecision[]
 
   @@index([createdAt])
   @@index([analysisStatus])
@@ -378,6 +393,7 @@ model ManuscriptChapter {
   chunks     ManuscriptChunk[]
   rewrites   ChapterRewrite[]
   findings   Finding[]
+  decisions  EditorialDecision[]
 
   @@map("Chapter")
   @@unique([manuscriptId, order])
@@ -593,6 +609,7 @@ model Finding {
   manuscript  Manuscript         @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
   chapter     ManuscriptChapter? @relation(fields: [chapterId], references: [id], onDelete: SetNull)
   chunk       ManuscriptChunk?   @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+  decisions   EditorialDecision[]
 
   @@index([analysisRunId])
   @@index([manuscriptId])
@@ -616,9 +633,37 @@ model RewritePlan {
   manuscript      Manuscript       @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
   analysisRun     AnalysisRun      @relation(fields: [analysisRunId], references: [id], onDelete: Cascade)
   chapterRewrites ChapterRewrite[]
+  decisions        EditorialDecision[]
 
   @@index([manuscriptId])
   @@index([analysisRunId])
+}
+
+model EditorialDecision {
+  id            String                  @id @default(cuid())
+  manuscriptId  String
+  chapterId     String?
+  findingId     String?
+  rewritePlanId String?
+  title         String
+  rationale     String?
+  status        EditorialDecisionStatus @default(NEEDS_REVIEW)
+  scope         EditorialDecisionScope  @default(CHAPTER)
+  metadata      Json?
+  createdAt     DateTime                @default(now())
+  updatedAt     DateTime                @updatedAt
+
+  manuscript  Manuscript         @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  chapter     ManuscriptChapter? @relation(fields: [chapterId], references: [id], onDelete: SetNull)
+  finding     Finding?           @relation(fields: [findingId], references: [id], onDelete: SetNull)
+  rewritePlan RewritePlan?       @relation(fields: [rewritePlanId], references: [id], onDelete: SetNull)
+
+  @@index([manuscriptId])
+  @@index([chapterId])
+  @@index([findingId])
+  @@index([rewritePlanId])
+  @@index([status])
+  @@index([scope])
 }
 
 model ChapterRewrite {

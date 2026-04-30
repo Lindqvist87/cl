@@ -56,6 +56,14 @@ export default async function ManuscriptChapterPage({
           <Link href={`/manuscripts/${id}`} className="text-sm text-accent hover:underline">
             Back to manuscript
           </Link>
+          <div className="mt-2">
+            <Link
+              href={`/manuscripts/${id}/chapters/${chapterId}/workspace`}
+              className="text-sm text-accent hover:underline"
+            >
+              Open editorial workspace
+            </Link>
+          </div>
           <h1 className="mt-2 text-2xl font-semibold tracking-normal">
             {chapter.title}
           </h1>
