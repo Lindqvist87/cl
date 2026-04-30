@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { ensureCorpusAnalysisJobs } from "@/lib/corpus/corpusAnalysisJobs";
 import { ensureManuscriptPipelineJobs } from "@/lib/pipeline/pipelineJobs";
 import { prisma } from "@/lib/prisma";
+import { requireAdminJobToken } from "@/lib/server/adminJobAuth";
 import {
   INNGEST_EVENTS,
   manuscriptPipelineStartedPayload,
@@ -11,6 +12,11 @@ import {
 export const runtime = "nodejs";
 
 export async function POST(request: Request) {
+  const unauthorized = requireAdminJobToken(request);
+  if (unauthorized) {
+    return unauthorized;
+  }
+
   const body = await request.json().catch(() => ({}));
   const corpusBookId = stringOrUndefined(body.corpusBookId);
   const manuscriptId = stringOrUndefined(body.manuscriptId);

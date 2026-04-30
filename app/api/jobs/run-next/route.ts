@@ -1,10 +1,16 @@
 import { NextResponse } from "next/server";
 import { runReadyPipelineJobs } from "@/lib/pipeline/pipelineJobs";
+import { requireAdminJobToken } from "@/lib/server/adminJobAuth";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
 
 export async function POST(request: Request) {
+  const unauthorized = requireAdminJobToken(request);
+  if (unauthorized) {
+    return unauthorized;
+  }
+
   const body = await request.json().catch(() => ({}));
   const result = await runReadyPipelineJobs({
     manuscriptId: stringOrUndefined(body.manuscriptId),

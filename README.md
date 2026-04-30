@@ -53,6 +53,7 @@ OPENAI_API_KEY=""
 OPENAI_AUDIT_MODEL="gpt-5.4-mini"
 OPENAI_REWRITE_MODEL="gpt-5.5"
 OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
+ADMIN_JOB_TOKEN=""
 ENABLE_INNGEST_WORKER="false"
 INNGEST_EVENT_KEY=""
 INNGEST_SIGNING_KEY=""
@@ -65,6 +66,8 @@ MAX_SECONDS_PER_INNGEST_RUN="25"
 
 `OPENAI_AUDIT_MODEL` drives v2 audit, corpus, trend, and planning calls. `OPENAI_REWRITE_MODEL` drives chapter rewrite calls. `OPENAI_EMBEDDING_MODEL` drives vector creation. `OPENAI_EDITOR_MODEL` is accepted only as a legacy audit-model fallback when `OPENAI_AUDIT_MODEL` is unset. `OPENAI_FAST_MODEL` is not read by this codebase.
 
+`ADMIN_JOB_TOKEN` protects manual job-control routes under `/api/jobs/*`. Send it as `Authorization: Bearer <token>` or `x-admin-job-token` when using the fallback runner scripts.
+
 Optional variables read by the app or build scripts:
 
 - `NEXT_PUBLIC_APP_NAME` defaults to `Manuscript Audit`.
@@ -73,7 +76,8 @@ Optional variables read by the app or build scripts:
 - `MAX_JOBS_PER_INNGEST_RUN` defaults to `3`.
 - `MAX_SECONDS_PER_INNGEST_RUN` defaults to `25`.
 - `OPENAI_INPUT_COST_PER_MILLION_TOKENS_USD` and `OPENAI_OUTPUT_COST_PER_MILLION_TOKENS_USD` enable cost estimates.
-- `SKIP_PRISMA_MIGRATE=1` skips the build-time `prisma migrate deploy` helper.
+- `DATABASE_URL_UNPOOLED` is used by the build-time `prisma migrate deploy` helper when present.
+- `SKIP_PRISMA_MIGRATE=1` temporarily skips the build-time `prisma migrate deploy` helper.
 - `INNGEST_DEV`, `APP_URL`, `MANUSCRIPT_ID`, `MAX_JOBS`, and `MAX_SECONDS` are local/dev-script helpers, not required Vercel variables.
 
 ## V2 Pipeline
@@ -124,6 +128,7 @@ OPENAI_API_KEY="<OpenAI API key>"
 OPENAI_AUDIT_MODEL="gpt-5.4-mini"
 OPENAI_REWRITE_MODEL="gpt-5.5"
 OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
+ADMIN_JOB_TOKEN="<strong random token for manual job routes>"
 ENABLE_INNGEST_WORKER="true"
 INNGEST_EVENT_KEY="<Inngest event key>"
 INNGEST_SIGNING_KEY="<Inngest signing key>"
@@ -134,6 +139,8 @@ INNGEST_SIGNING_KEY="<Inngest signing key>"
 ```bash
 npx prisma migrate deploy
 ```
+
+`DATABASE_URL_UNPOOLED` is preferred for deployment migrations when set. `SKIP_PRISMA_MIGRATE=1` is a temporary deployment escape hatch only; use it when migrations are intentionally managed outside the Vercel build.
 
 4. Deploy the Next.js app to Vercel.
 
@@ -153,6 +160,7 @@ The Inngest dev server should sync `http://localhost:3000/api/inngest`. Its UI r
 
 Required production env vars:
 
+- `ADMIN_JOB_TOKEN`
 - `ENABLE_INNGEST_WORKER=true`
 - `INNGEST_EVENT_KEY`
 - `INNGEST_SIGNING_KEY`
@@ -165,13 +173,13 @@ On Vercel, keep `/api/inngest` on the Node.js runtime for Prisma compatibility. 
 
 When a manuscript pipeline starts, the app creates or resumes `PipelineJob` rows, sends `manuscript/pipeline.started`, and returns immediately when `ENABLE_INNGEST_WORKER=true`. Inngest then runs bounded batches and re-emits work until the manuscript is complete, failed, blocked, or cancelled.
 
-Fallback mode remains available. If `ENABLE_INNGEST_WORKER=false`, or Inngest keys are missing, the existing request runner still works, `/api/jobs/run-next` and `/api/jobs/run-until-idle` can process manual batches, and the manuscript page exposes a manual fallback button.
+Fallback mode remains available. If `ENABLE_INNGEST_WORKER=false`, or Inngest keys are missing, the existing request runner still works, `/api/jobs/run-next` and `/api/jobs/run-until-idle` can process manual batches with `ADMIN_JOB_TOKEN`, and the manuscript page exposes a manual fallback button.
 
 To resume a stuck pipeline:
 
 ```bash
-MANUSCRIPT_ID="<id>" npm run pipeline:resume
-MANUSCRIPT_ID="<id>" npm run jobs:run-until-idle
+ADMIN_JOB_TOKEN="<token>" MANUSCRIPT_ID="<id>" npm run pipeline:resume
+ADMIN_JOB_TOKEN="<token>" MANUSCRIPT_ID="<id>" npm run jobs:run-until-idle
 ```
 
 Inspect runs in the Inngest dashboard, `/admin/inngest`, and `/admin/jobs`. `/admin/jobs` includes filters for Inngest-managed, ready, blocked, locked, stale lock, and failed jobs, plus retry/cancel/kick controls.
