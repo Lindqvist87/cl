@@ -73,6 +73,7 @@ export type CorpusProgressStatus = {
     error?: string | null;
   };
   nextEligibleJob?: CorpusProgressNextEligibleJob;
+  nextEligibleJobReason?: string;
   lastUpdatedAt: string;
 };
 
@@ -117,9 +118,11 @@ export type CorpusProgressJobSnapshot = {
   id: string;
   type: string;
   status: string;
+  createdAt?: Date | string;
   updatedAt: Date | string;
   error?: string | null;
   dependencyIds?: unknown;
+  metadata?: unknown;
   readyAt?: Date | string | null;
   lockedAt?: Date | string | null;
   lockExpiresAt?: Date | string | null;
@@ -189,6 +192,16 @@ const NEXT_JOB_CANDIDATE_STATUSES = new Set<string>([
   PIPELINE_JOB_STATUS.BLOCKED
 ]);
 const ACTIVE_ANALYSIS_STATUSES = new Set(["QUEUED", "RUNNING", "RETRYING"]);
+const CORPUS_JOB_TYPE_ORDER = new Map(
+  [
+    "CORPUS_CLEAN",
+    "CORPUS_CHAPTERS",
+    "CORPUS_CHUNK",
+    "CORPUS_EMBED",
+    "CORPUS_PROFILE",
+    "CORPUS_BENCHMARK_CHECK"
+  ].map((type, index) => [type, index + 1])
+);
 
 export function buildCorpusProgressStatus(
   input: CorpusProgressBuildInput
@@ -308,7 +321,7 @@ export function buildCorpusProgressStatus(
 
   const counts = jobCounts(input.jobs, input.counts);
   const latestJob = latestUpdatedJob(input.jobs);
-  const nextEligibleJob = describeNextEligibleCorpusJob(input.jobs);
+  const nextEligibleJobSelection = describeNextEligibleCorpusJobSelection(input.jobs);
   const progressState = calculateCorpusProgress({
     analysisStatus: input.book.analysisStatus,
     benchmarkReady: input.book.benchmarkReady,
@@ -342,7 +355,8 @@ export function buildCorpusProgressStatus(
           error: latestJob.error ?? null
         }
       : undefined,
-    nextEligibleJob,
+    nextEligibleJob: nextEligibleJobSelection.job,
+    nextEligibleJobReason: nextEligibleJobSelection.reason,
     lastUpdatedAt
   };
 }
@@ -351,11 +365,23 @@ export function describeNextEligibleCorpusJob(
   jobs: CorpusProgressJobSnapshot[],
   now: Date = new Date()
 ): CorpusProgressNextEligibleJob | undefined {
+  return describeNextEligibleCorpusJobSelection(jobs, now).job;
+}
+
+export function describeNextEligibleCorpusJobSelection(
+  jobs: CorpusProgressJobSnapshot[],
+  now: Date = new Date()
+): {
+  job?: CorpusProgressNextEligibleJob;
+  reason: string;
+  inspectedJobCount: number;
+} {
   const candidates = jobs.filter((job) =>
     NEXT_JOB_CANDIDATE_STATUSES.has(job.status)
   );
+  const skipped: string[] = [];
 
-  for (const job of candidates) {
+  for (const job of sortCorpusProgressJobs(candidates)) {
     const dependencyIds = dependencyIdsFromJson(job.dependencyIds);
     const dependencies = dependencyIds.map((id) => ({
       id,
@@ -376,7 +402,7 @@ export function describeNextEligibleCorpusJob(
         job.status === PIPELINE_JOB_STATUS.RETRYING ||
         job.status === PIPELINE_JOB_STATUS.BLOCKED);
 
-    return {
+    const described = {
       id: job.id,
       type: job.type,
       status: job.status,
@@ -392,9 +418,25 @@ export function describeNextEligibleCorpusJob(
         now
       })
     };
+
+    if (eligible) {
+      return {
+        job: described,
+        reason: described.reason,
+        inspectedJobCount: candidates.length
+      };
+    }
+
+    skipped.push(`${job.type}:${job.id} ${described.reason}`);
   }
 
-  return undefined;
+  return {
+    reason:
+      skipped.length > 0
+        ? `No eligible corpus job selected. ${skipped.join("; ")}`
+        : "No queued, retrying, or blocked corpus jobs are currently eligible.",
+    inspectedJobCount: candidates.length
+  };
 }
 
 export function calculateCorpusProgress(input: {
@@ -437,6 +479,26 @@ export function calculateCorpusProgress(input: {
     isFailed,
     isComplete
   };
+}
+
+function sortCorpusProgressJobs(jobs: CorpusProgressJobSnapshot[]) {
+  return [...jobs].sort((a, b) => {
+    const orderDelta = corpusProgressJobOrder(a) - corpusProgressJobOrder(b);
+    if (orderDelta !== 0) {
+      return orderDelta;
+    }
+
+    return dateMillis(a.createdAt ?? a.updatedAt) - dateMillis(b.createdAt ?? b.updatedAt);
+  });
+}
+
+function corpusProgressJobOrder(job: CorpusProgressJobSnapshot) {
+  const metadataOrder = Number(toJsonRecord(job.metadata).order);
+  if (Number.isFinite(metadataOrder)) {
+    return metadataOrder;
+  }
+
+  return CORPUS_JOB_TYPE_ORDER.get(job.type) ?? Number.MAX_SAFE_INTEGER;
 }
 
 function summarizeDependencyStatus(
@@ -749,6 +811,11 @@ function latestIso(values: Array<Date | string | null | undefined>) {
   return new Date(Math.max(...times)).toISOString();
 }
 
+function dateMillis(value: Date | string | null | undefined) {
+  const time = value ? new Date(value).getTime() : Number.NaN;
+  return Number.isFinite(time) ? time : 0;
+}
+
 function dateToIso(value: Date | string | null | undefined) {
   if (!value) {
     return undefined;
@@ -777,4 +844,10 @@ function normalizeImportProgress(value: unknown): ImportProgress {
     benchmarkBlockedReason: record.benchmarkBlockedReason ?? null,
     error: record.error
   };
+}
+
+function toJsonRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }

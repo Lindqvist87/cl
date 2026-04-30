@@ -130,6 +130,12 @@ export type PlannedCorpusPipelineJob = {
   };
 };
 
+export type NextEligibleCorpusJobSelection = {
+  job: PipelineJob | null;
+  reason: string;
+  inspectedJobCount: number;
+};
+
 export function corpusPipelineJobKey(
   corpusBookId: string,
   type: CorpusPipelineJobType
@@ -244,22 +250,7 @@ export async function ensureCorpusAnalysisJobs(corpusBookId: string) {
     };
 
     const job = existing
-      ? await prisma.pipelineJob.update({
-          where: { id: existing.id },
-          data: {
-            ...baseData,
-            ...(completed
-              ? {
-                  status: PIPELINE_JOB_STATUS.COMPLETED,
-                  completedAt: existing.completedAt ?? new Date(),
-                  error: null,
-                  lockedAt: null,
-                  lockedBy: null,
-                  lockExpiresAt: null
-                }
-              : {})
-          }
-        })
+      ? await updateExistingCorpusPipelineJobIfNeeded(existing, baseData, completed)
       : await prisma.pipelineJob.create({
           data: {
             ...baseData,
@@ -294,7 +285,14 @@ export async function findCorpusPipelineJobs(corpusBookId: string) {
   });
 }
 
-export async function findNextReadyCorpusJob(corpusBookId: string) {
+export async function getNextEligibleCorpusJob(corpusBookId: string) {
+  const selection = await getNextEligibleCorpusJobSelection(corpusBookId);
+  return selection.job;
+}
+
+export async function getNextEligibleCorpusJobSelection(
+  corpusBookId: string
+): Promise<NextEligibleCorpusJobSelection> {
   const now = new Date();
   const candidates = await prisma.pipelineJob.findMany({
     where: {
@@ -313,11 +311,13 @@ export async function findNextReadyCorpusJob(corpusBookId: string) {
       },
       OR: [{ readyAt: null }, { readyAt: { lte: now } }],
     },
-    orderBy: [{ readyAt: "asc" }, { createdAt: "asc" }]
+    orderBy: { createdAt: "asc" }
   });
+  const skipped: string[] = [];
 
-  for (const candidate of candidates) {
+  for (const candidate of sortCorpusPipelineJobs(candidates)) {
     if (!canAttemptJob(candidate, now)) {
+      skipped.push(`${candidate.type}:${candidate.id} is not ready or is locked`);
       continue;
     }
 
@@ -329,6 +329,7 @@ export async function findNextReadyCorpusJob(corpusBookId: string) {
         where: { id: candidate.id },
         data: { status: PIPELINE_JOB_STATUS.FAILED }
       });
+      skipped.push(`${candidate.type}:${candidate.id} exhausted retry attempts`);
       continue;
     }
 
@@ -339,20 +340,41 @@ export async function findNextReadyCorpusJob(corpusBookId: string) {
           data: { status: PIPELINE_JOB_STATUS.BLOCKED }
         });
       }
+      skipped.push(`${candidate.type}:${candidate.id} is waiting on dependencies`);
       continue;
     }
 
     if (candidate.status === PIPELINE_JOB_STATUS.BLOCKED) {
-      return prisma.pipelineJob.update({
+      const job = await prisma.pipelineJob.update({
         where: { id: candidate.id },
         data: { status: PIPELINE_JOB_STATUS.QUEUED }
       });
+      return {
+        job,
+        inspectedJobCount: candidates.length,
+        reason: `Selected ${job.type}:${job.id} after unblocking completed dependencies.`
+      };
     }
 
-    return candidate;
+    return {
+      job: candidate,
+      inspectedJobCount: candidates.length,
+      reason: `Selected ${candidate.type}:${candidate.id} as the next eligible corpus job.`
+    };
   }
 
-  return null;
+  return {
+    job: null,
+    inspectedJobCount: candidates.length,
+    reason:
+      skipped.length > 0
+        ? `No eligible corpus job selected. ${skipped.join("; ")}.`
+        : "No queued, retrying, or dependency-ready blocked corpus jobs were found."
+  };
+}
+
+export async function findNextReadyCorpusJob(corpusBookId: string) {
+  return getNextEligibleCorpusJob(corpusBookId);
 }
 
 export async function unblockReadyCorpusJobs(corpusBookId: string) {
@@ -365,7 +387,7 @@ export async function unblockReadyCorpusJobs(corpusBookId: string) {
   });
   const readyJobIds: string[] = [];
 
-  for (const candidate of candidates) {
+  for (const candidate of sortCorpusPipelineJobs(candidates)) {
     if (await corpusJobDependenciesComplete(candidate)) {
       const updated = await prisma.pipelineJob.update({
         where: { id: candidate.id },
@@ -538,6 +560,85 @@ async function findExistingCorpusPipelineJob(
     },
     orderBy: { createdAt: "asc" }
   });
+}
+
+async function updateExistingCorpusPipelineJobIfNeeded(
+  existing: PipelineJob,
+  baseData: {
+    type: CorpusPipelineJobType;
+    manuscriptId: null;
+    chapterId: null;
+    dependencyIds: Prisma.InputJsonValue;
+    metadata: Prisma.InputJsonValue;
+    maxAttempts: number;
+  },
+  completedFromState: boolean
+) {
+  const completedData = completedFromState
+    ? {
+        status: PIPELINE_JOB_STATUS.COMPLETED,
+        completedAt: existing.completedAt ?? new Date(),
+        error: null,
+        lockedAt: null,
+        lockedBy: null,
+        lockExpiresAt: null
+      }
+    : {};
+  const updateData = {
+    ...baseData,
+    ...completedData
+  };
+
+  if (!shouldUpdateExistingCorpusPipelineJob(existing, updateData)) {
+    return existing;
+  }
+
+  return prisma.pipelineJob.update({
+    where: { id: existing.id },
+    data: updateData
+  });
+}
+
+function shouldUpdateExistingCorpusPipelineJob(
+  existing: PipelineJob,
+  next: {
+    type: CorpusPipelineJobType;
+    manuscriptId: null;
+    chapterId: null;
+    dependencyIds: Prisma.InputJsonValue;
+    metadata: Prisma.InputJsonValue;
+    maxAttempts: number;
+    status?: string;
+    completedAt?: Date;
+    error?: null;
+    lockedAt?: null;
+    lockedBy?: null;
+    lockExpiresAt?: null;
+  }
+) {
+  if (
+    existing.type !== next.type ||
+    existing.manuscriptId !== next.manuscriptId ||
+    existing.chapterId !== next.chapterId ||
+    existing.maxAttempts !== next.maxAttempts ||
+    !jsonValuesEqual(existing.dependencyIds, next.dependencyIds) ||
+    !jsonValuesEqual(existing.metadata, next.metadata)
+  ) {
+    return true;
+  }
+
+  if (!next.status) {
+    return false;
+  }
+
+  return (
+    existing.status !== next.status ||
+    !existing.completedAt ||
+    existing.error !== next.error ||
+    existing.lockedAt !== next.lockedAt ||
+    existing.lockedBy !== next.lockedBy ||
+    existing.lockExpiresAt !== next.lockExpiresAt
+  );
 }
 
 export async function runCorpusPipelineJobStep(job: PipelineJob) {
@@ -1408,6 +1509,56 @@ function parseCorpusBook(
 
 function maxAttemptsForCorpusJob(type: CorpusPipelineJobType) {
   return type === CORPUS_PIPELINE_JOB_TYPES.CORPUS_EMBED ? 2 : 3;
+}
+
+function sortCorpusPipelineJobs<T extends Pick<PipelineJob, "createdAt" | "metadata" | "type">>(
+  jobs: T[]
+) {
+  return [...jobs].sort((a, b) => {
+    const orderDelta = corpusJobOrder(a) - corpusJobOrder(b);
+    if (orderDelta !== 0) {
+      return orderDelta;
+    }
+
+    return a.createdAt.getTime() - b.createdAt.getTime();
+  });
+}
+
+function corpusJobOrder(job: Pick<PipelineJob, "metadata" | "type">) {
+  const metadataOrder = Number(toJsonRecord(job.metadata).order);
+  if (Number.isFinite(metadataOrder)) {
+    return metadataOrder;
+  }
+
+  const sequenceIndex = CORPUS_PIPELINE_JOB_SEQUENCE.indexOf(
+    job.type as CorpusPipelineJobType
+  );
+  return sequenceIndex >= 0 ? sequenceIndex + 1 : Number.MAX_SAFE_INTEGER;
+}
+
+function jsonValuesEqual(left: unknown, right: unknown): boolean {
+  return JSON.stringify(normalizeJsonComparable(left)) ===
+    JSON.stringify(normalizeJsonComparable(right));
+}
+
+function normalizeJsonComparable(value: unknown): unknown {
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  if (Array.isArray(value)) {
+    return value.map(normalizeJsonComparable);
+  }
+
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([leftKey], [rightKey]) => leftKey.localeCompare(rightKey))
+        .map(([key, item]) => [key, normalizeJsonComparable(item)])
+    );
+  }
+
+  return value ?? null;
 }
 
 function toJsonRecord(value: unknown): JsonRecord {

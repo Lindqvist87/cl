@@ -1,19 +1,26 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import type { PipelineJob } from "@prisma/client";
 import {
   CORPUS_PIPELINE_JOB_TYPES,
   corpusPipelineJobKey,
+  ensureCorpusAnalysisJobs,
+  getNextEligibleCorpusJob,
+  getNextEligibleCorpusJobSelection,
   plannedCorpusPipelineJobs,
   shouldShowCorpusAnalysisAction,
-  summarizeCorpusAnalysis
+  summarizeCorpusAnalysis,
+  type CorpusPipelineJobType
 } from "../lib/corpus/corpusAnalysisJobs";
 import {
   corpusAnalysisExecutionMode,
-  corpusAnalysisHttpStatus
+  corpusAnalysisHttpStatus,
+  runNextEligibleCorpusJob
 } from "../lib/corpus/startCorpusAnalysis";
 import {
   buildCorpusProgressStatus,
   describeNextEligibleCorpusJob,
+  describeNextEligibleCorpusJobSelection,
   getCorpusProgressAction,
   shouldPollCorpusStatus,
   staleWarningText,
@@ -25,6 +32,7 @@ import {
   dependencyIdsFromJson,
   PIPELINE_JOB_STATUS
 } from "../lib/pipeline/jobRules";
+import { prisma } from "../lib/prisma";
 
 test("importing a corpus book plans the full analysis job chain", () => {
   const jobs = plannedCorpusPipelineJobs("book-1");
@@ -288,6 +296,221 @@ test("completed corpus jobs are not selected to rerun", () => {
   assert.equal(next?.id, "chapters-job");
 });
 
+test("getNextEligibleCorpusJob returns chapters for the live stuck corpus state", async () => {
+  const jobs = liveStuckCorpusJobs("book-live");
+  const updates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
+
+  await withPatchedPrisma(
+    [
+      [
+        prisma.pipelineJob,
+        {
+          findMany: async (args: { where?: { id?: { in?: string[] } } }) => {
+            const ids = args.where?.id?.in;
+            return ids ? jobs.filter((job) => ids.includes(job.id)) : jobs;
+          },
+          update: async (args: {
+            where: { id: string };
+            data: Record<string, unknown>;
+          }) => {
+            updates.push(args);
+            const job = jobs.find((candidate) => candidate.id === args.where.id);
+            assert.ok(job, `Expected job ${args.where.id} to exist`);
+            Object.assign(job, args.data, { updatedAt: new Date() });
+            return job;
+          }
+        }
+      ]
+    ],
+    async () => {
+      const next = await getNextEligibleCorpusJob("book-live");
+
+      assert.equal(next?.id, "chapters-job");
+      assert.equal(next?.type, CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHAPTERS);
+      assert.equal(next?.status, PIPELINE_JOB_STATUS.QUEUED);
+      assert.equal(
+        updates.some((update) => update.where.id === "clean-job"),
+        false
+      );
+    }
+  );
+});
+
+test("resume analysis does not touch clean and kicks chapters", async () => {
+  const jobs = liveStuckCorpusJobs("book-resume");
+  const runJobIds: string[] = [];
+  const updates: Array<{ where: { id: string }; data: Record<string, unknown> }> = [];
+
+  await withPatchedPrisma(
+    [
+      [
+        prisma.pipelineJob,
+        {
+          findMany: async (args: { where?: { id?: { in?: string[] } } }) => {
+            const ids = args.where?.id?.in;
+            return ids ? jobs.filter((job) => ids.includes(job.id)) : jobs;
+          },
+          update: async (args: {
+            where: { id: string };
+            data: Record<string, unknown>;
+          }) => {
+            updates.push(args);
+            const job = jobs.find((candidate) => candidate.id === args.where.id);
+            assert.ok(job, `Expected job ${args.where.id} to exist`);
+            Object.assign(job, args.data, { updatedAt: new Date() });
+            return job;
+          }
+        }
+      ]
+    ],
+    async () => {
+      const result = await runNextEligibleCorpusJob({
+        corpusBookId: "book-resume",
+        recordHeartbeat: false,
+        releaseStaleLocks: false,
+        runJob: async (jobId) => {
+          runJobIds.push(jobId);
+          const chapters = jobs.find((job) => job.id === "chapters-job");
+          const chunk = jobs.find((job) => job.id === "chunk-job");
+          assert.ok(chapters);
+          assert.ok(chunk);
+          chapters.status = PIPELINE_JOB_STATUS.COMPLETED;
+          chunk.status = PIPELINE_JOB_STATUS.QUEUED;
+          return {
+            jobId,
+            corpusBookId: "book-resume",
+            type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHAPTERS,
+            status: "completed",
+            readyJobIds: ["chunk-job"]
+          };
+        }
+      });
+
+      assert.deepEqual(runJobIds, ["chapters-job"]);
+      assert.equal(
+        result.nextEligibleJob?.type,
+        CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHAPTERS
+      );
+      assert.equal(result.results[0]?.status, "completed");
+      assert.equal(
+        updates.some((update) => update.where.id === "clean-job"),
+        false
+      );
+    }
+  );
+});
+
+test("completed jobs are never selected as next eligible corpus jobs", async () => {
+  const completedJobs = [
+    corpusPipelineJobForTest("book-done", CORPUS_PIPELINE_JOB_TYPES.CORPUS_CLEAN, {
+      id: "clean-job",
+      status: PIPELINE_JOB_STATUS.COMPLETED
+    }),
+    corpusPipelineJobForTest(
+      "book-done",
+      CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHAPTERS,
+      {
+        id: "chapters-job",
+        status: PIPELINE_JOB_STATUS.COMPLETED,
+        dependencyIds: ["clean-job"]
+      }
+    )
+  ];
+
+  await withPatchedPrisma(
+    [
+      [
+        prisma.pipelineJob,
+        {
+          findMany: async (args: { where?: { id?: { in?: string[] } } }) => {
+            const ids = args.where?.id?.in;
+            return ids
+              ? completedJobs.filter((job) => ids.includes(job.id))
+              : completedJobs;
+          },
+          update: async () => {
+            throw new Error("Completed jobs should not be updated or selected.");
+          }
+        }
+      ]
+    ],
+    async () => {
+      const selection = await getNextEligibleCorpusJobSelection("book-done");
+
+      assert.equal(selection.job, null);
+      assert.match(selection.reason, /No eligible corpus job selected|No queued/);
+    }
+  );
+});
+
+test("ensuring corpus jobs does not touch completed clean when chapters is queued", async () => {
+  const jobs = liveStuckCorpusJobs("book-ensure");
+  const jobsByKey = new Map(jobs.map((job) => [job.idempotencyKey, job]));
+  const pipelineUpdates: Array<{
+    where: { id: string };
+    data: Record<string, unknown>;
+  }> = [];
+
+  await withPatchedPrisma(
+    [
+      [
+        prisma.corpusBook,
+        {
+          findUnique: async () => corpusBookForEnsure("book-ensure"),
+          update: async (args: unknown) => args
+        }
+      ],
+      [
+        prisma.pipelineJob,
+        {
+          findFirst: async (args: {
+            where?: { OR?: Array<{ idempotencyKey?: string }> };
+          }) => {
+            const key = args.where?.OR?.[0]?.idempotencyKey;
+            return key ? jobsByKey.get(key) ?? null : null;
+          },
+          findMany: async (args: {
+            where?: { id?: { in?: string[] }; status?: string };
+          }) => {
+            const ids = args.where?.id?.in;
+            if (ids) {
+              return jobs.filter((job) => ids.includes(job.id));
+            }
+
+            if (args.where?.status) {
+              return jobs.filter((job) => job.status === args.where?.status);
+            }
+
+            return jobs;
+          },
+          update: async (args: {
+            where: { id: string };
+            data: Record<string, unknown>;
+          }) => {
+            pipelineUpdates.push(args);
+            const job = jobs.find((candidate) => candidate.id === args.where.id);
+            assert.ok(job, `Expected job ${args.where.id} to exist`);
+            Object.assign(job, args.data, { updatedAt: new Date() });
+            return job;
+          },
+          create: async () => {
+            throw new Error("All live stuck jobs should already exist.");
+          }
+        }
+      ]
+    ],
+    async () => {
+      await ensureCorpusAnalysisJobs("book-ensure");
+
+      assert.equal(
+        pipelineUpdates.some((update) => update.where.id === "clean-job"),
+        false
+      );
+      assert.equal(jobs.find((job) => job.id === "chapters-job")?.status, "QUEUED");
+    }
+  );
+});
+
 test("blocked corpus jobs remain blocked until dependencies complete", () => {
   const next = describeNextEligibleCorpusJob(
     [
@@ -311,7 +534,7 @@ test("blocked corpus jobs remain blocked until dependencies complete", () => {
   assert.equal(next?.id, "chapters-job");
   assert.equal(next?.eligible, true);
 
-  const blocked = describeNextEligibleCorpusJob(
+  const blocked = describeNextEligibleCorpusJobSelection(
     [
       {
         id: "chunk-job",
@@ -323,17 +546,15 @@ test("blocked corpus jobs remain blocked until dependencies complete", () => {
       {
         id: "chapters-job",
         type: CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHAPTERS,
-        status: PIPELINE_JOB_STATUS.QUEUED,
+        status: PIPELINE_JOB_STATUS.RUNNING,
         updatedAt: "2026-04-29T10:02:00Z"
       }
     ],
     new Date("2026-04-29T10:05:00Z")
   );
 
-  assert.equal(blocked?.id, "chunk-job");
-  assert.equal(blocked?.eligible, false);
-  assert.equal(blocked?.dependencyStatus, "waiting");
-  assert.match(blocked?.reason ?? "", /Blocked until dependencies complete/);
+  assert.equal(blocked.job, undefined);
+  assert.match(blocked.reason, /Blocked until dependencies complete/);
 });
 
 test("legacy imported corpus books with no jobs still show the analysis action", () => {
@@ -633,6 +854,189 @@ test("corpus retry and resume button state is derived from progress", () => {
   );
   assert.equal(getCorpusProgressAction(notStarted, now).kind, "start");
 });
+
+function liveStuckCorpusJobs(corpusBookId: string) {
+  const clean = corpusPipelineJobForTest(
+    corpusBookId,
+    CORPUS_PIPELINE_JOB_TYPES.CORPUS_CLEAN,
+    {
+      id: "clean-job",
+      status: PIPELINE_JOB_STATUS.COMPLETED,
+      completedAt: new Date("2026-04-29T10:01:00Z"),
+      updatedAt: new Date("2026-04-29T10:01:00Z")
+    }
+  );
+  const chapters = corpusPipelineJobForTest(
+    corpusBookId,
+    CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHAPTERS,
+    {
+      id: "chapters-job",
+      status: PIPELINE_JOB_STATUS.QUEUED,
+      dependencyIds: [clean.id],
+      updatedAt: new Date("2026-04-29T10:02:00Z")
+    }
+  );
+  const chunk = corpusPipelineJobForTest(
+    corpusBookId,
+    CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHUNK,
+    {
+      id: "chunk-job",
+      status: PIPELINE_JOB_STATUS.BLOCKED,
+      dependencyIds: [chapters.id],
+      updatedAt: new Date("2026-04-29T10:03:00Z")
+    }
+  );
+  const embed = corpusPipelineJobForTest(
+    corpusBookId,
+    CORPUS_PIPELINE_JOB_TYPES.CORPUS_EMBED,
+    {
+      id: "embed-job",
+      status: PIPELINE_JOB_STATUS.BLOCKED,
+      dependencyIds: [chunk.id],
+      updatedAt: new Date("2026-04-29T10:04:00Z")
+    }
+  );
+  const profile = corpusPipelineJobForTest(
+    corpusBookId,
+    CORPUS_PIPELINE_JOB_TYPES.CORPUS_PROFILE,
+    {
+      id: "profile-job",
+      status: PIPELINE_JOB_STATUS.BLOCKED,
+      dependencyIds: [embed.id],
+      updatedAt: new Date("2026-04-29T10:05:00Z")
+    }
+  );
+  const benchmark = corpusPipelineJobForTest(
+    corpusBookId,
+    CORPUS_PIPELINE_JOB_TYPES.CORPUS_BENCHMARK_CHECK,
+    {
+      id: "benchmark-job",
+      status: PIPELINE_JOB_STATUS.BLOCKED,
+      dependencyIds: [profile.id],
+      updatedAt: new Date("2026-04-29T10:06:00Z")
+    }
+  );
+
+  return [clean, chapters, chunk, embed, profile, benchmark];
+}
+
+function corpusPipelineJobForTest(
+  corpusBookId: string,
+  type: string,
+  overrides: Partial<PipelineJob> = {}
+): PipelineJob {
+  const order = corpusJobOrderForTest(type);
+  const createdAt = new Date(`2026-04-29T10:0${order}:00Z`);
+
+  return {
+    id: `${type.toLowerCase()}-job`,
+    manuscriptId: null,
+    chapterId: null,
+    type,
+    status: PIPELINE_JOB_STATUS.QUEUED,
+    idempotencyKey: corpusPipelineJobKey(
+      corpusBookId,
+      type as CorpusPipelineJobType
+    ),
+    dependencyIds: [],
+    readyAt: null,
+    lockedAt: null,
+    lockedBy: null,
+    lockExpiresAt: null,
+    attempts: 0,
+    maxAttempts: type === CORPUS_PIPELINE_JOB_TYPES.CORPUS_EMBED ? 2 : 3,
+    error: null,
+    metadata: {
+      corpusBookId,
+      step: type,
+      order,
+      pipeline: "CORPUS_ANALYSIS"
+    },
+    result: null,
+    startedAt: null,
+    completedAt: null,
+    createdAt,
+    updatedAt: createdAt,
+    ...overrides
+  };
+}
+
+function corpusJobOrderForTest(type: string) {
+  return [
+    CORPUS_PIPELINE_JOB_TYPES.CORPUS_CLEAN,
+    CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHAPTERS,
+    CORPUS_PIPELINE_JOB_TYPES.CORPUS_CHUNK,
+    CORPUS_PIPELINE_JOB_TYPES.CORPUS_EMBED,
+    CORPUS_PIPELINE_JOB_TYPES.CORPUS_PROFILE,
+    CORPUS_PIPELINE_JOB_TYPES.CORPUS_BENCHMARK_CHECK
+  ].indexOf(type as CorpusPipelineJobType) + 1;
+}
+
+function corpusBookForEnsure(corpusBookId: string) {
+  return {
+    id: corpusBookId,
+    fullTextAvailable: true,
+    ingestionStatus: "IMPORTED",
+    analysisStatus: "RUNNING",
+    benchmarkReady: false,
+    benchmarkReadyAt: null,
+    benchmarkBlockedReason: null,
+    importProgress: {
+      uploaded: true,
+      textExtracted: true,
+      cleaned: true
+    },
+    text: {
+      cleanedText: "Cleaned corpus text.",
+      cleanedAt: new Date("2026-04-29T10:01:00Z")
+    },
+    profile: null,
+    chunks: [],
+    importJobs: [],
+    _count: {
+      chapters: 0,
+      chunks: 0
+    }
+  };
+}
+
+async function withPatchedPrisma<T>(
+  patches: Array<[object, Record<string, unknown>]>,
+  callback: () => Promise<T>
+) {
+  const originals: Array<{
+    target: object;
+    key: string;
+    descriptor: PropertyDescriptor | undefined;
+  }> = [];
+
+  for (const [target, patch] of patches) {
+    for (const [key, value] of Object.entries(patch)) {
+      originals.push({
+        target,
+        key,
+        descriptor: Object.getOwnPropertyDescriptor(target, key)
+      });
+      Object.defineProperty(target, key, {
+        configurable: true,
+        writable: true,
+        value
+      });
+    }
+  }
+
+  try {
+    return await callback();
+  } finally {
+    for (const original of originals.reverse()) {
+      if (original.descriptor) {
+        Object.defineProperty(original.target, original.key, original.descriptor);
+      } else {
+        delete (original.target as Record<string, unknown>)[original.key];
+      }
+    }
+  }
+}
 
 function progressInput(
   overrides: Partial<

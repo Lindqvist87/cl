@@ -1,8 +1,10 @@
 import {
   ensureCorpusAnalysisJobs,
-  findNextReadyCorpusJob,
+  getNextEligibleCorpusJob,
+  getNextEligibleCorpusJobSelection,
   getCorpusAnalysisSummary,
-  releaseStaleCorpusJobLocks
+  releaseStaleCorpusJobLocks,
+  type NextEligibleCorpusJobSelection
 } from "@/lib/corpus/corpusAnalysisJobs";
 import {
   recordWorkerHeartbeat,
@@ -105,14 +107,18 @@ export async function runReadyCorpusAnalysisJobs(input: {
   await releaseStaleCorpusJobLocks(input.corpusBookId);
 
   while (results.length < maxJobs && Date.now() - startedAt < maxSeconds * 1000) {
-    const nextJob = await findNextReadyCorpusJob(input.corpusBookId);
-    if (!nextJob) {
+    const nextRun = await runNextEligibleCorpusJob({
+      corpusBookId: input.corpusBookId,
+      workerType,
+      workerId: input.workerId,
+      recordHeartbeat: false,
+      releaseStaleLocks: false
+    });
+    const result = nextRun.results[0];
+    if (!result) {
       break;
     }
 
-    const result = await runPipelineJob(nextJob.id, {
-      workerId: input.workerId ?? `${workerType.toLowerCase()}-corpus:${Date.now()}`
-    });
     results.push(result);
     readyJobIds.push(...result.readyJobIds);
 
@@ -141,6 +147,90 @@ export async function runReadyCorpusAnalysisJobs(input: {
   };
 }
 
+export async function runNextEligibleCorpusJob(input: {
+  corpusBookId: string;
+  workerType?: "INNGEST" | "MANUAL";
+  workerId?: string;
+  recordHeartbeat?: boolean;
+  releaseStaleLocks?: boolean;
+  runJob?: typeof runPipelineJob;
+}) {
+  const workerType = input.workerType ?? "MANUAL";
+  const shouldRecordHeartbeat = input.recordHeartbeat ?? true;
+
+  if (shouldRecordHeartbeat) {
+    await recordWorkerHeartbeat(workerType, "RUNNING", {
+      task: "corpus-analysis",
+      corpusBookId: input.corpusBookId
+    });
+  }
+
+  if (input.releaseStaleLocks ?? true) {
+    await releaseStaleCorpusJobLocks(input.corpusBookId);
+  }
+
+  const selection = await getNextEligibleCorpusJobSelection(input.corpusBookId);
+  logNextEligibleCorpusJobSelection(input.corpusBookId, selection);
+
+  if (!selection.job) {
+    if (shouldRecordHeartbeat) {
+      await recordWorkerHeartbeat(workerType, "IDLE", {
+        task: "corpus-analysis",
+        corpusBookId: input.corpusBookId,
+        jobsRun: 0,
+        remainingReadyJobs: 0,
+        nextEligibleJobReason: selection.reason
+      });
+    }
+
+    return {
+      jobsRun: 0,
+      results: [] as RunPipelineJobResult[],
+      readyJobIds: [] as string[],
+      remainingReadyJobs: 0,
+      hasRemainingWork: false,
+      nextEligibleJob: null,
+      nextEligibleJobReason: selection.reason
+    };
+  }
+
+  const runJob = input.runJob ?? runPipelineJob;
+  const result = await runJob(selection.job.id, {
+    workerId: input.workerId ?? `${workerType.toLowerCase()}-corpus:${Date.now()}`
+  });
+  const remainingReadyJobs = await countRemainingReadyCorpusJobs(input.corpusBookId);
+  const readyJobIds = Array.from(new Set(result.readyJobIds));
+
+  if (shouldRecordHeartbeat) {
+    await recordWorkerHeartbeat(workerType, "IDLE", {
+      task: "corpus-analysis",
+      corpusBookId: input.corpusBookId,
+      jobsRun: 1,
+      remainingReadyJobs,
+      nextEligibleJob: {
+        id: selection.job.id,
+        type: selection.job.type,
+        status: selection.job.status
+      },
+      nextEligibleJobReason: selection.reason
+    });
+  }
+
+  return {
+    jobsRun: 1,
+    results: [result],
+    readyJobIds,
+    remainingReadyJobs,
+    hasRemainingWork: remainingReadyJobs > 0 || readyJobIds.length > 0,
+    nextEligibleJob: {
+      id: selection.job.id,
+      type: selection.job.type,
+      status: selection.job.status
+    },
+    nextEligibleJobReason: selection.reason
+  };
+}
+
 export function corpusAnalysisExecutionMode(input: {
   inngestEnabled: boolean;
   runFallbackWhenDisabled: boolean;
@@ -165,11 +255,29 @@ export function corpusAnalysisHttpStatus(result: {
 
 async function countRemainingReadyCorpusJobs(corpusBookId: string) {
   let count = 0;
-  while (await findNextReadyCorpusJob(corpusBookId)) {
+  while (await getNextEligibleCorpusJob(corpusBookId)) {
     count += 1;
     break;
   }
   return count;
+}
+
+function logNextEligibleCorpusJobSelection(
+  corpusBookId: string,
+  selection: NextEligibleCorpusJobSelection
+) {
+  console.info("Corpus pipeline next eligible job selection", {
+    corpusBookId,
+    nextEligibleJob: selection.job
+      ? {
+          id: selection.job.id,
+          type: selection.job.type,
+          status: selection.job.status
+        }
+      : null,
+    reason: selection.reason,
+    inspectedJobCount: selection.inspectedJobCount
+  });
 }
 
 function positiveInt(value: number | undefined, fallback: number) {

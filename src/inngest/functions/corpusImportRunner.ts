@@ -1,6 +1,6 @@
 import { NonRetriableError } from "inngest";
 import { ensureCorpusAnalysisJobs } from "@/lib/corpus/corpusAnalysisJobs";
-import { runReadyCorpusAnalysisJobs } from "@/lib/corpus/startCorpusAnalysis";
+import { runNextEligibleCorpusJob } from "@/lib/corpus/startCorpusAnalysis";
 import { prisma } from "@/lib/prisma";
 import { inngest } from "@/src/inngest/client";
 import {
@@ -31,11 +31,9 @@ export const corpusImportRunner = inngest.createFunction(
     );
 
     const config = getInngestRuntimeConfig();
-    const batch = await step.run("run bounded corpus pipeline batch", () =>
-      runReadyCorpusAnalysisJobs({
+    const batch = await step.run("run next eligible corpus pipeline job", () =>
+      runNextEligibleCorpusJob({
         corpusBookId: event.data.corpusBookId,
-        maxJobs: config.maxJobsPerRun,
-        maxSeconds: config.maxSecondsPerRun,
         workerType: "INNGEST",
         workerId: `inngest-corpus:${event.id ?? Date.now()}`
       })
