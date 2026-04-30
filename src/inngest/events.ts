@@ -77,16 +77,19 @@ export function getInngestRuntimeConfig() {
   const warnings: string[] = [];
 
   if (enabled && !eventKeyPresent && !devMode) {
-    warnings.push("INNGEST_EVENT_KEY is missing; event sends will use fallback mode.");
+    warnings.push("INNGEST_EVENT_KEY is missing; Inngest events cannot be sent.");
   }
 
   if (enabled && !signingKeyPresent && !devMode) {
-    warnings.push("INNGEST_SIGNING_KEY is missing; production invokes may fail.");
+    warnings.push("INNGEST_SIGNING_KEY is missing; Inngest functions cannot be invoked safely.");
   }
+
+  const configured = enabled && (devMode || (eventKeyPresent && signingKeyPresent));
 
   return {
     appId: process.env.INNGEST_APP_ID || INNGEST_DEFAULT_APP_ID,
     enabled,
+    configured,
     canSendEvents: enabled && (eventKeyPresent || devMode),
     devMode,
     eventKeyPresent,

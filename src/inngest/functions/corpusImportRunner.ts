@@ -39,7 +39,7 @@ export const corpusImportRunner = inngest.createFunction(
       })
     );
 
-    if (config.enabled && batch.hasRemainingWork) {
+    if (config.configured && batch.hasRemainingWork) {
       const payload = {
         corpusBookId: event.data.corpusBookId,
         source: event.data.source || book.sourceId

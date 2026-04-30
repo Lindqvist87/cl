@@ -15,6 +15,7 @@ import {
 import {
   corpusAnalysisExecutionMode,
   corpusAnalysisHttpStatus,
+  startCorpusAnalysis,
   runNextEligibleCorpusJob
 } from "../lib/corpus/startCorpusAnalysis";
 import {
@@ -81,6 +82,7 @@ test("Inngest event mode is selected when enabled", () => {
   assert.equal(
     corpusAnalysisExecutionMode({
       inngestEnabled: true,
+      inngestConfigured: true,
       runFallbackWhenDisabled: true
     }),
     "INNGEST"
@@ -88,6 +90,25 @@ test("Inngest event mode is selected when enabled", () => {
   assert.equal(
     corpusAnalysisHttpStatus({ executionMode: "INNGEST", accepted: true }),
     202
+  );
+});
+
+test("Inngest mode requires a configured worker", () => {
+  assert.equal(
+    corpusAnalysisExecutionMode({
+      inngestEnabled: true,
+      inngestConfigured: false,
+      runFallbackWhenDisabled: true
+    }),
+    "MANUAL"
+  );
+  assert.equal(
+    corpusAnalysisExecutionMode({
+      inngestEnabled: true,
+      inngestConfigured: false,
+      runFallbackWhenDisabled: false
+    }),
+    "QUEUED"
   );
 });
 
@@ -106,6 +127,108 @@ test("fallback mode remains available when Inngest is disabled", () => {
     }),
     "QUEUED"
   );
+});
+
+test("disabled Inngest explicit corpus resume runs the manual fallback", async () => {
+  const oldEnabled = process.env.ENABLE_INNGEST_WORKER;
+  const oldEventKey = process.env.INNGEST_EVENT_KEY;
+  const oldSigningKey = process.env.INNGEST_SIGNING_KEY;
+  const oldDev = process.env.INNGEST_DEV;
+  const jobs = completedCorpusJobs("book-disabled-resume");
+  const jobsByKey = new Map(jobs.map((job) => [job.idempotencyKey, job]));
+  const pipelineUpdates: Array<{
+    where: { id: string };
+    data: Record<string, unknown>;
+  }> = [];
+  const heartbeats: Array<{
+    where: { workerType: string };
+    create: Record<string, unknown>;
+    update: Record<string, unknown>;
+  }> = [];
+
+  process.env.ENABLE_INNGEST_WORKER = "false";
+  delete process.env.INNGEST_EVENT_KEY;
+  delete process.env.INNGEST_SIGNING_KEY;
+  delete process.env.INNGEST_DEV;
+
+  try {
+    await withPatchedPrisma(
+      [
+        [
+          prisma.corpusBook,
+          {
+            findUnique: async () => corpusBookForEnsure("book-disabled-resume"),
+            update: async (args: unknown) => args
+          }
+        ],
+        [
+          prisma.pipelineJob,
+          {
+            findFirst: async (args: {
+              where?: { OR?: Array<{ idempotencyKey?: string }> };
+            }) => {
+              const key = args.where?.OR?.[0]?.idempotencyKey;
+              return key ? jobsByKey.get(key) ?? null : null;
+            },
+            findMany: async (args: {
+              where?: { id?: { in?: string[] }; status?: string | { in?: string[] } };
+            }) => filterCorpusJobsForTest(jobs, args.where),
+            update: async (args: {
+              where: { id: string };
+              data: Record<string, unknown>;
+            }) => {
+              pipelineUpdates.push(args);
+              const job = jobs.find((candidate) => candidate.id === args.where.id);
+              assert.ok(job, `Expected job ${args.where.id} to exist`);
+              Object.assign(job, args.data, { updatedAt: new Date() });
+              return job;
+            },
+            create: async () => {
+              throw new Error("Completed corpus jobs should already exist.");
+            }
+          }
+        ],
+        [
+          prisma.workerHeartbeat,
+          {
+            upsert: async (args: {
+              where: { workerType: string };
+              create: Record<string, unknown>;
+              update: Record<string, unknown>;
+            }) => {
+              heartbeats.push(args);
+              return args.update;
+            }
+          }
+        ]
+      ],
+      async () => {
+        const result = await startCorpusAnalysis({
+          corpusBookId: "book-disabled-resume",
+          source: "manual-test",
+          runFallbackWhenDisabled: true,
+          maxJobs: 1,
+          maxSeconds: 1
+        });
+
+        assert.equal(result.executionMode, "MANUAL");
+        assert.equal(result.eventSent, false);
+        assert.ok("batch" in result);
+        assert.equal(result.batch.jobsRun, 0);
+        assert.match(result.nextEligibleJobReason ?? "", /No queued/);
+        assert.equal(
+          heartbeats.some((heartbeat) => heartbeat.where.workerType === "MANUAL"),
+          true
+        );
+        assert.equal(pipelineUpdates.length, 0);
+      }
+    );
+  } finally {
+    restoreEnv("ENABLE_INNGEST_WORKER", oldEnabled);
+    restoreEnv("INNGEST_EVENT_KEY", oldEventKey);
+    restoreEnv("INNGEST_SIGNING_KEY", oldSigningKey);
+    restoreEnv("INNGEST_DEV", oldDev);
+  }
 });
 
 test("status moves from not started to queued/running once jobs exist", () => {
@@ -920,6 +1043,22 @@ function liveStuckCorpusJobs(corpusBookId: string) {
   return [clean, chapters, chunk, embed, profile, benchmark];
 }
 
+function completedCorpusJobs(corpusBookId: string) {
+  const plans = plannedCorpusPipelineJobs(corpusBookId);
+  const jobIds = plans.map((plan) => `${plan.type.toLowerCase()}-completed-job`);
+
+  const jobs = plans.map((plan, index) =>
+    corpusPipelineJobForTest(corpusBookId, plan.type, {
+      id: jobIds[index],
+      status: PIPELINE_JOB_STATUS.COMPLETED,
+      dependencyIds: index === 0 ? [] : [jobIds[index - 1]],
+      completedAt: new Date(`2026-04-29T10:0${index + 1}:30Z`)
+    })
+  );
+
+  return jobs;
+}
+
 function corpusPipelineJobForTest(
   corpusBookId: string,
   type: string,
@@ -959,6 +1098,27 @@ function corpusPipelineJobForTest(
     updatedAt: createdAt,
     ...overrides
   };
+}
+
+function filterCorpusJobsForTest(
+  jobs: PipelineJob[],
+  where?: { id?: { in?: string[] }; status?: string | { in?: string[] } }
+) {
+  const ids = where?.id?.in;
+  if (ids) {
+    return jobs.filter((job) => ids.includes(job.id));
+  }
+
+  const status = where?.status;
+  if (typeof status === "string") {
+    return jobs.filter((job) => job.status === status);
+  }
+
+  if (status?.in) {
+    return jobs.filter((job) => status.in?.includes(job.status));
+  }
+
+  return jobs;
 }
 
 function corpusJobOrderForTest(type: string) {
@@ -1035,6 +1195,14 @@ async function withPatchedPrisma<T>(
         delete (original.target as Record<string, unknown>)[original.key];
       }
     }
+  }
+}
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
   }
 }
 
