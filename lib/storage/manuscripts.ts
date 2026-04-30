@@ -1,5 +1,5 @@
 import type { Prisma } from "@prisma/client";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import type { ParsedChunk, ParsedManuscript } from "@/lib/types";
 import { jsonInput } from "@/lib/json";
@@ -14,6 +14,12 @@ type CreateManuscriptInput = {
   targetGenre?: string;
   targetAudience?: string;
 };
+
+const CREATE_MANY_BATCH_SIZE = 500;
+const MANUSCRIPT_UPLOAD_TRANSACTION = {
+  maxWait: 10_000,
+  timeout: 120_000
+} as const;
 
 export async function createStoredManuscript(input: CreateManuscriptInput) {
   return prisma.$transaction(async (tx) => {
@@ -47,96 +53,121 @@ export async function createStoredManuscript(input: CreateManuscriptInput) {
       }
     });
 
+    const chapterRows: Prisma.ManuscriptChapterCreateManyInput[] = [];
+    const sceneRows: Prisma.SceneCreateManyInput[] = [];
+    const paragraphRows: Prisma.ParagraphCreateManyInput[] = [];
+    const chunkRows: Prisma.ManuscriptChunkCreateManyInput[] = [];
     const chapterIdByOrder = new Map<number, string>();
     const sceneIdByKey = new Map<string, string>();
 
     for (const chapter of input.parsed.chapters) {
+      const chapterId = randomUUID();
       const chapterText = chapter.scenes
         .flatMap((scene) => scene.paragraphs.map((paragraph) => paragraph.text))
         .join("\n\n");
 
-      const storedChapter = await tx.manuscriptChapter.create({
-        data: {
-          manuscriptId: manuscript.id,
-          order: chapter.order,
-          chapterIndex: chapter.order,
-          title: chapter.title,
-          heading: chapter.heading,
-          text: chapterText,
-          wordCount: chapter.wordCount,
-          startOffset: chapter.startOffset,
-          endOffset: chapter.endOffset
-        }
+      chapterRows.push({
+        id: chapterId,
+        manuscriptId: manuscript.id,
+        order: chapter.order,
+        chapterIndex: chapter.order,
+        title: chapter.title,
+        heading: chapter.heading,
+        text: chapterText,
+        wordCount: chapter.wordCount,
+        startOffset: chapter.startOffset,
+        endOffset: chapter.endOffset
       });
 
-      chapterIdByOrder.set(chapter.order, storedChapter.id);
+      chapterIdByOrder.set(chapter.order, chapterId);
 
       for (const scene of chapter.scenes) {
-        const storedScene = await tx.scene.create({
-          data: {
-            manuscriptId: manuscript.id,
-            chapterId: storedChapter.id,
-            order: scene.order,
-            title: scene.title,
-            wordCount: scene.wordCount,
-            marker: scene.marker
-          }
+        const sceneId = randomUUID();
+
+        sceneRows.push({
+          id: sceneId,
+          manuscriptId: manuscript.id,
+          chapterId,
+          order: scene.order,
+          title: scene.title,
+          wordCount: scene.wordCount,
+          marker: scene.marker
         });
 
-        sceneIdByKey.set(sceneKey(chapter.order, scene.order), storedScene.id);
+        sceneIdByKey.set(sceneKey(chapter.order, scene.order), sceneId);
 
-        if (scene.paragraphs.length > 0) {
-          await tx.paragraph.createMany({
-            data: scene.paragraphs.map((paragraph) => ({
-              manuscriptId: manuscript.id,
-              chapterId: storedChapter.id,
-              sceneId: storedScene.id,
-              globalOrder: paragraph.globalOrder,
-              chapterOrder: paragraph.chapterOrder,
-              sceneOrder: paragraph.sceneOrder,
-              text: paragraph.text,
-              wordCount: paragraph.wordCount,
-              approximateOffset: paragraph.approximateOffset
-            }))
+        for (const paragraph of scene.paragraphs) {
+          paragraphRows.push({
+            manuscriptId: manuscript.id,
+            chapterId,
+            sceneId,
+            globalOrder: paragraph.globalOrder,
+            chapterOrder: paragraph.chapterOrder,
+            sceneOrder: paragraph.sceneOrder,
+            text: paragraph.text,
+            wordCount: paragraph.wordCount,
+            approximateOffset: paragraph.approximateOffset
           });
         }
       }
     }
 
-    if (input.chunks.length > 0) {
-      await tx.manuscriptChunk.createMany({
-        data: input.chunks.map((chunk) => {
-          const chapterId = chapterIdByOrder.get(chunk.chapterOrder);
-          if (!chapterId) {
-            throw new Error(`Missing chapter for chunk ${chunk.chunkIndex}`);
-          }
+    for (const chunk of input.chunks) {
+      const chapterId = chapterIdByOrder.get(chunk.chapterOrder);
+      if (!chapterId) {
+        throw new Error(`Missing chapter for chunk ${chunk.chunkIndex}`);
+      }
 
-          return {
-            manuscriptId: manuscript.id,
-            chapterId,
-            sceneId:
-              chunk.sceneOrder === undefined
-                ? undefined
-                : sceneIdByKey.get(sceneKey(chunk.chapterOrder, chunk.sceneOrder)),
-            chunkIndex: chunk.chunkIndex,
-            text: chunk.text,
-            wordCount: chunk.wordCount,
-            startParagraph: chunk.startParagraph,
-            endParagraph: chunk.endParagraph,
-            paragraphStart: chunk.startParagraph,
-            paragraphEnd: chunk.endParagraph,
-            tokenEstimate: chunk.tokenEstimate,
-            tokenCount: chunk.tokenEstimate,
-            metadata: jsonInput(chunk.metadata)
-          };
-        })
+      const sceneId =
+        chunk.sceneOrder === undefined
+          ? null
+          : sceneIdByKey.get(sceneKey(chunk.chapterOrder, chunk.sceneOrder));
+
+      if (chunk.sceneOrder !== undefined && !sceneId) {
+        throw new Error(`Missing scene for chunk ${chunk.chunkIndex}`);
+      }
+
+      chunkRows.push({
+        manuscriptId: manuscript.id,
+        chapterId,
+        sceneId,
+        chunkIndex: chunk.chunkIndex,
+        text: chunk.text,
+        wordCount: chunk.wordCount,
+        startParagraph: chunk.startParagraph,
+        endParagraph: chunk.endParagraph,
+        paragraphStart: chunk.startParagraph,
+        paragraphEnd: chunk.endParagraph,
+        tokenEstimate: chunk.tokenEstimate,
+        tokenCount: chunk.tokenEstimate,
+        metadata: jsonInput(chunk.metadata)
       });
     }
 
+    await createManyInBatches(chapterRows, (data) =>
+      tx.manuscriptChapter.createMany({ data })
+    );
+    await createManyInBatches(sceneRows, (data) => tx.scene.createMany({ data }));
+    await createManyInBatches(paragraphRows, (data) =>
+      tx.paragraph.createMany({ data })
+    );
+    await createManyInBatches(chunkRows, (data) =>
+      tx.manuscriptChunk.createMany({ data })
+    );
+
     return manuscript;
-  });
+  }, MANUSCRIPT_UPLOAD_TRANSACTION);
 }
 
 function sceneKey(chapterOrder: number, sceneOrder: number) {
   return `${chapterOrder}:${sceneOrder}`;
+}
+
+async function createManyInBatches<T>(
+  rows: T[],
+  createMany: (data: T[]) => Prisma.PrismaPromise<unknown>
+) {
+  for (let index = 0; index < rows.length; index += CREATE_MANY_BATCH_SIZE) {
+    await createMany(rows.slice(index, index + CREATE_MANY_BATCH_SIZE));
+  }
 }
