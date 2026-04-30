@@ -48,7 +48,8 @@ export async function POST(
     const result = await startCorpusAnalysis({
       corpusBookId: book.id,
       source: book.sourceId,
-      runFallbackWhenDisabled: true
+      runFallbackWhenDisabled: true,
+      runManualFallbackAfterDispatch: action === "resume" || action === "start"
     });
 
     return NextResponse.json({

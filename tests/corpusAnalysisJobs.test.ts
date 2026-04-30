@@ -27,6 +27,7 @@ import {
   staleWarningText,
   type CorpusProgressBuildInput
 } from "../lib/corpus/corpusProgressShared";
+import { inngest } from "../src/inngest/client";
 import {
   areDependenciesComplete,
   canAttemptJob,
@@ -213,6 +214,7 @@ test("disabled Inngest explicit corpus resume runs the manual fallback", async (
 
         assert.equal(result.executionMode, "MANUAL");
         assert.equal(result.eventSent, false);
+        assert.equal(result.manualFallbackRan, true);
         assert.ok("batch" in result);
         assert.equal(result.batch.jobsRun, 0);
         assert.match(result.nextEligibleJobReason ?? "", /No queued/);
@@ -221,6 +223,218 @@ test("disabled Inngest explicit corpus resume runs the manual fallback", async (
           true
         );
         assert.equal(pipelineUpdates.length, 0);
+      }
+    );
+  } finally {
+    restoreEnv("ENABLE_INNGEST_WORKER", oldEnabled);
+    restoreEnv("INNGEST_EVENT_KEY", oldEventKey);
+    restoreEnv("INNGEST_SIGNING_KEY", oldSigningKey);
+    restoreEnv("INNGEST_DEV", oldDev);
+  }
+});
+
+test("configured Inngest explicit corpus resume runs manual fallback after event dispatch", async () => {
+  const oldEnabled = process.env.ENABLE_INNGEST_WORKER;
+  const oldEventKey = process.env.INNGEST_EVENT_KEY;
+  const oldSigningKey = process.env.INNGEST_SIGNING_KEY;
+  const oldDev = process.env.INNGEST_DEV;
+  const jobs = completedCorpusJobs("book-inngest-resume");
+  const jobsByKey = new Map(jobs.map((job) => [job.idempotencyKey, job]));
+  const heartbeats: Array<{
+    where: { workerType: string };
+    create: Record<string, unknown>;
+    update: Record<string, unknown>;
+  }> = [];
+  const sentEvents: unknown[] = [];
+
+  process.env.ENABLE_INNGEST_WORKER = "true";
+  process.env.INNGEST_EVENT_KEY = "secret-event-key";
+  process.env.INNGEST_SIGNING_KEY = "secret-signing-key";
+  delete process.env.INNGEST_DEV;
+
+  try {
+    await withPatchedPrisma(
+      [
+        [
+          inngest,
+          {
+            send: async (event: unknown) => {
+              sentEvents.push(event);
+              return { ids: ["evt-corpus-resume"] };
+            }
+          }
+        ],
+        [
+          prisma.corpusBook,
+          {
+            findUnique: async () => corpusBookForEnsure("book-inngest-resume"),
+            update: async (args: unknown) => args
+          }
+        ],
+        [
+          prisma.pipelineJob,
+          {
+            findFirst: async (args: {
+              where?: { OR?: Array<{ idempotencyKey?: string }> };
+            }) => {
+              const key = args.where?.OR?.[0]?.idempotencyKey;
+              return key ? jobsByKey.get(key) ?? null : null;
+            },
+            findMany: async (args: {
+              where?: { id?: { in?: string[] }; status?: string | { in?: string[] } };
+            }) => filterCorpusJobsForTest(jobs, args.where),
+            update: async () => {
+              throw new Error("Completed corpus jobs should not be updated.");
+            },
+            create: async () => {
+              throw new Error("Completed corpus jobs should already exist.");
+            }
+          }
+        ],
+        [
+          prisma.workerHeartbeat,
+          {
+            upsert: async (args: {
+              where: { workerType: string };
+              create: Record<string, unknown>;
+              update: Record<string, unknown>;
+            }) => {
+              heartbeats.push(args);
+              return args.update;
+            }
+          }
+        ],
+        [
+          prisma.inngestEventLog,
+          {
+            create: async (args: unknown) => args
+          }
+        ]
+      ],
+      async () => {
+        const result = await startCorpusAnalysis({
+          corpusBookId: "book-inngest-resume",
+          source: "manual-test",
+          runFallbackWhenDisabled: true,
+          runManualFallbackAfterDispatch: true,
+          maxJobs: 1,
+          maxSeconds: 1
+        });
+
+        assert.equal(result.executionMode, "INNGEST");
+        assert.equal(result.accepted, true);
+        assert.equal(result.eventSent, true);
+        assert.deepEqual(result.eventIds, ["evt-corpus-resume"]);
+        assert.equal(result.manualFallbackRan, true);
+        assert.ok("batch" in result);
+        const batch = result.batch;
+        assert.ok(batch);
+        assert.equal(batch.jobsRun, 0);
+        assert.equal(sentEvents.length, 1);
+        assert.equal(
+          heartbeats.some((heartbeat) => heartbeat.where.workerType === "MANUAL"),
+          true
+        );
+      }
+    );
+  } finally {
+    restoreEnv("ENABLE_INNGEST_WORKER", oldEnabled);
+    restoreEnv("INNGEST_EVENT_KEY", oldEventKey);
+    restoreEnv("INNGEST_SIGNING_KEY", oldSigningKey);
+    restoreEnv("INNGEST_DEV", oldDev);
+  }
+});
+
+test("configured Inngest without explicit fallback flag remains event-driven only", async () => {
+  const oldEnabled = process.env.ENABLE_INNGEST_WORKER;
+  const oldEventKey = process.env.INNGEST_EVENT_KEY;
+  const oldSigningKey = process.env.INNGEST_SIGNING_KEY;
+  const oldDev = process.env.INNGEST_DEV;
+  const jobs = completedCorpusJobs("book-inngest-only");
+  const jobsByKey = new Map(jobs.map((job) => [job.idempotencyKey, job]));
+  const heartbeats: Array<{
+    where: { workerType: string };
+    create: Record<string, unknown>;
+    update: Record<string, unknown>;
+  }> = [];
+
+  process.env.ENABLE_INNGEST_WORKER = "true";
+  process.env.INNGEST_EVENT_KEY = "secret-event-key";
+  process.env.INNGEST_SIGNING_KEY = "secret-signing-key";
+  delete process.env.INNGEST_DEV;
+
+  try {
+    await withPatchedPrisma(
+      [
+        [
+          inngest,
+          {
+            send: async () => ({ ids: ["evt-inngest-only"] })
+          }
+        ],
+        [
+          prisma.corpusBook,
+          {
+            findUnique: async () => corpusBookForEnsure("book-inngest-only"),
+            update: async (args: unknown) => args
+          }
+        ],
+        [
+          prisma.pipelineJob,
+          {
+            findFirst: async (args: {
+              where?: { OR?: Array<{ idempotencyKey?: string }> };
+            }) => {
+              const key = args.where?.OR?.[0]?.idempotencyKey;
+              return key ? jobsByKey.get(key) ?? null : null;
+            },
+            findMany: async (args: {
+              where?: { id?: { in?: string[] }; status?: string | { in?: string[] } };
+            }) => filterCorpusJobsForTest(jobs, args.where),
+            update: async () => {
+              throw new Error("Event-driven dispatch should not update jobs.");
+            },
+            create: async () => {
+              throw new Error("Completed corpus jobs should already exist.");
+            }
+          }
+        ],
+        [
+          prisma.workerHeartbeat,
+          {
+            upsert: async (args: {
+              where: { workerType: string };
+              create: Record<string, unknown>;
+              update: Record<string, unknown>;
+            }) => {
+              heartbeats.push(args);
+              return args.update;
+            }
+          }
+        ],
+        [
+          prisma.inngestEventLog,
+          {
+            create: async (args: unknown) => args
+          }
+        ]
+      ],
+      async () => {
+        const result = await startCorpusAnalysis({
+          corpusBookId: "book-inngest-only",
+          source: "manual-test",
+          runFallbackWhenDisabled: true,
+          maxJobs: 1,
+          maxSeconds: 1
+        });
+
+        assert.equal(result.executionMode, "INNGEST");
+        assert.equal(result.accepted, true);
+        assert.equal(result.eventSent, true);
+        assert.deepEqual(result.eventIds, ["evt-inngest-only"]);
+        assert.equal(result.manualFallbackRan, false);
+        assert.equal("batch" in result, false);
+        assert.equal(heartbeats.length, 0);
       }
     );
   } finally {
