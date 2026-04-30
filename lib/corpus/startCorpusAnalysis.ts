@@ -30,6 +30,7 @@ export async function startCorpusAnalysis(input: {
   const ensured = await ensureCorpusAnalysisJobs(input.corpusBookId);
   const executionMode = corpusAnalysisExecutionMode({
     inngestEnabled: config.enabled,
+    inngestConfigured: config.configured,
     runFallbackWhenDisabled: input.runFallbackWhenDisabled ?? false
   });
 
@@ -39,6 +40,31 @@ export async function startCorpusAnalysis(input: {
       source: input.source
     });
 
+    if (!event.sent && input.runFallbackWhenDisabled) {
+      const batch = await runReadyCorpusAnalysisJobs({
+        corpusBookId: input.corpusBookId,
+        maxJobs: input.maxJobs ?? 50,
+        maxSeconds: input.maxSeconds ?? 280
+      });
+
+      return {
+        executionMode: "MANUAL" as const,
+        accepted: false,
+        corpusBookId: input.corpusBookId,
+        jobCount: ensured.jobs.length,
+        eventSent: false,
+        eventIds: [] as string[],
+        eventError: event.error,
+        warnings: [
+          ...corpusAnalysisWarnings(config, "MANUAL"),
+          "Inngest event dispatch failed; ran the manual corpus fallback for this request."
+        ],
+        batch,
+        nextEligibleJobReason: batch.nextEligibleJobReason,
+        summary: await getCorpusAnalysisSummary(input.corpusBookId)
+      };
+    }
+
     return {
       executionMode,
       accepted: event.sent,
@@ -47,7 +73,8 @@ export async function startCorpusAnalysis(input: {
       eventSent: event.sent,
       eventIds: event.ids,
       eventError: event.error,
-      warnings: config.warnings,
+      warnings: corpusAnalysisWarnings(config, executionMode),
+      ...(await corpusAnalysisDiagnostics(input.corpusBookId)),
       summary: await getCorpusAnalysisSummary(input.corpusBookId)
     };
   }
@@ -67,8 +94,9 @@ export async function startCorpusAnalysis(input: {
       eventSent: false,
       eventIds: [] as string[],
       eventError: null,
-      warnings: config.warnings,
+      warnings: corpusAnalysisWarnings(config, executionMode),
       batch,
+      nextEligibleJobReason: batch.nextEligibleJobReason,
       summary: await getCorpusAnalysisSummary(input.corpusBookId)
     };
   }
@@ -81,7 +109,8 @@ export async function startCorpusAnalysis(input: {
     eventSent: false,
     eventIds: [] as string[],
     eventError: null,
-    warnings: config.warnings,
+    warnings: corpusAnalysisWarnings(config, executionMode),
+    ...(await corpusAnalysisDiagnostics(input.corpusBookId)),
     summary: await getCorpusAnalysisSummary(input.corpusBookId)
   };
 }
@@ -99,6 +128,12 @@ export async function runReadyCorpusAnalysisJobs(input: {
   const startedAt = Date.now();
   const results: RunPipelineJobResult[] = [];
   const readyJobIds: string[] = [];
+  let nextEligibleJobReason: string | null = null;
+  let nextEligibleJob: {
+    id: string;
+    type: string;
+    status: string;
+  } | null = null;
 
   await recordWorkerHeartbeat(workerType, "RUNNING", {
     task: "corpus-analysis",
@@ -114,6 +149,8 @@ export async function runReadyCorpusAnalysisJobs(input: {
       recordHeartbeat: false,
       releaseStaleLocks: false
     });
+    nextEligibleJobReason = nextRun.nextEligibleJobReason;
+    nextEligibleJob = nextRun.nextEligibleJob;
     const result = nextRun.results[0];
     if (!result) {
       break;
@@ -143,7 +180,9 @@ export async function runReadyCorpusAnalysisJobs(input: {
     readyJobIds: Array.from(new Set(readyJobIds)),
     remainingReadyJobs,
     hasRemainingWork:
-      remainingReadyJobs > 0 || (hitRunLimit && readyJobIds.length > 0)
+      remainingReadyJobs > 0 || (hitRunLimit && readyJobIds.length > 0),
+    nextEligibleJob,
+    nextEligibleJobReason
   };
 }
 
@@ -233,9 +272,10 @@ export async function runNextEligibleCorpusJob(input: {
 
 export function corpusAnalysisExecutionMode(input: {
   inngestEnabled: boolean;
+  inngestConfigured?: boolean;
   runFallbackWhenDisabled: boolean;
 }): CorpusAnalysisExecutionMode {
-  if (input.inngestEnabled) {
+  if (input.inngestEnabled && (input.inngestConfigured ?? input.inngestEnabled)) {
     return "INNGEST";
   }
 
@@ -262,6 +302,21 @@ async function countRemainingReadyCorpusJobs(corpusBookId: string) {
   return count;
 }
 
+async function corpusAnalysisDiagnostics(corpusBookId: string) {
+  const selection = await getNextEligibleCorpusJobSelection(corpusBookId);
+
+  return {
+    nextEligibleJob: selection.job
+      ? {
+          id: selection.job.id,
+          type: selection.job.type,
+          status: selection.job.status
+        }
+      : null,
+    nextEligibleJobReason: selection.reason
+  };
+}
+
 function logNextEligibleCorpusJobSelection(
   corpusBookId: string,
   selection: NextEligibleCorpusJobSelection
@@ -286,4 +341,21 @@ function positiveInt(value: number | undefined, fallback: number) {
   }
 
   return Math.max(1, Math.floor(value));
+}
+
+function corpusAnalysisWarnings(
+  config: ReturnType<typeof getInngestRuntimeConfig>,
+  executionMode: CorpusAnalysisExecutionMode
+) {
+  const warnings = [...config.warnings];
+
+  if (!config.enabled && executionMode === "MANUAL") {
+    warnings.push("Inngest worker is disabled; ran the manual corpus fallback for this request.");
+  }
+
+  if (!config.enabled && executionMode === "QUEUED") {
+    warnings.push("Inngest worker is disabled; corpus analysis jobs were queued only.");
+  }
+
+  return warnings;
 }

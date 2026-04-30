@@ -53,14 +53,24 @@ test("missing Inngest env vars do not crash and keep fallback visible", () => {
 
   const disabled = getInngestRuntimeConfig();
   assert.equal(disabled.enabled, false);
+  assert.equal(disabled.configured, false);
   assert.equal(disabled.canSendEvents, false);
   assert.deepEqual(disabled.warnings, []);
 
   process.env.ENABLE_INNGEST_WORKER = "true";
   const enabledButMissing = getInngestRuntimeConfig();
   assert.equal(enabledButMissing.enabled, true);
+  assert.equal(enabledButMissing.configured, false);
   assert.equal(enabledButMissing.canSendEvents, false);
   assert.equal(enabledButMissing.warnings.length, 2);
+
+  process.env.INNGEST_EVENT_KEY = "secret-event-key";
+  process.env.INNGEST_SIGNING_KEY = "secret-signing-key";
+  const configured = getInngestRuntimeConfig();
+  assert.equal(configured.enabled, true);
+  assert.equal(configured.configured, true);
+  assert.equal(configured.canSendEvents, true);
+  assert.deepEqual(configured.warnings, []);
 
   restore("ENABLE_INNGEST_WORKER", oldEnabled);
   restore("INNGEST_EVENT_KEY", oldEventKey);
