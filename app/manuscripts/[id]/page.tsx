@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { BarChart3, Download, FileText } from "lucide-react";
+import { BarChart3, BookOpen, Download, FileText } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { AuditButton } from "@/components/AuditButton";
 import { PipelineActionButton } from "@/components/PipelineActionButton";
@@ -82,6 +82,9 @@ export default async function ManuscriptPage({
             <p className="mt-3 text-sm text-danger">{latestRun.error}</p>
           ) : null}
           <div className="mt-3 flex flex-wrap gap-3 text-sm">
+            <Link href={`/manuscripts/${manuscript.id}/structure`} className="font-semibold text-accent hover:underline">
+              Inspect imported structure
+            </Link>
             <Link href={`/manuscripts/${manuscript.id}/audit`} className="text-accent hover:underline">
               Audit
             </Link>
@@ -103,6 +106,13 @@ export default async function ManuscriptPage({
           </div>
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
+          <Link
+            href={`/manuscripts/${manuscript.id}/structure`}
+            className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 border border-line bg-paper px-4 py-2 text-sm font-semibold"
+          >
+            <BookOpen size={16} aria-hidden="true" />
+            Inspect imported structure
+          </Link>
           <AuditButton
             manuscriptId={manuscript.id}
             disabled={manuscript.analysisStatus === "RUNNING"}
