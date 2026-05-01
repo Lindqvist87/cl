@@ -1,8 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { BarChart3, BookOpen, Download, FileText } from "lucide-react";
+import { BookOpen, Download, FileText } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { AuditButton } from "@/components/AuditButton";
+import { LivePipelineProgress } from "@/components/LivePipelineProgress";
 import { PipelineActionButton } from "@/components/PipelineActionButton";
 import { StructureReviewPanel } from "@/components/StructureReviewPanel";
 import { executionModeLabel } from "@/lib/pipeline/jobRules";
@@ -45,7 +46,12 @@ export default async function ManuscriptPage({
   const pipelineStatus = buildPipelineStatusDisplay({
     run: latestRun,
     jobs: manuscript.pipelineJobs,
-    totals: { chunks: manuscript.chunkCount }
+    totals: {
+      chunks: manuscript.chunkCount,
+      chapters: manuscript.chapterCount,
+      sections: manuscript.chapterCount,
+      auditTargets: manuscript.chapterCount
+    }
   });
   const inngestConfig = getInngestRuntimeConfig();
   const lastInngestEvent = await prisma.inngestEventLog.findFirst({
@@ -128,6 +134,8 @@ export default async function ManuscriptPage({
             label="Run manual fallback batch"
             runningLabel="Running..."
             variant="secondary"
+            diagnosticsRefreshManuscriptId={manuscript.id}
+            refreshPageOnComplete={false}
           />
         </div>
       </div>
@@ -173,72 +181,10 @@ export default async function ManuscriptPage({
         </div>
       </section>
 
-      <section className="border border-line bg-white p-4 shadow-panel">
-        <div className="flex items-center justify-between gap-3">
-          <div>
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Pipeline Progress
-            </h2>
-            <p className="mt-1 text-sm text-slate-500">
-              {pipelineStatus.completedSteps} of {pipelineStatus.totalSteps} steps complete
-            </p>
-          </div>
-          <div className="inline-flex items-center gap-2 text-sm font-semibold">
-            <BarChart3 size={18} aria-hidden="true" />
-            {pipelineStatus.percent}%
-          </div>
-        </div>
-        <div className="mt-3 h-2 overflow-hidden bg-paper">
-          <div className="h-full bg-accent" style={{ width: `${pipelineStatus.percent}%` }} />
-        </div>
-        {pipelineStatus.stepProgressLabel ? (
-          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm font-semibold">
-            <span>{pipelineStatus.stepProgressLabel}</span>
-            {pipelineStatus.remainingLabel ? (
-              <span className="text-slate-500">{pipelineStatus.remainingLabel}</span>
-            ) : null}
-          </div>
-        ) : null}
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          <PipelineDetail
-            label="Current step"
-            value={formatStepName(pipelineStatus.currentStep)}
-          />
-          <PipelineDetail
-            label="Current job status"
-            value={formatNullableStatus(pipelineStatus.currentJobStatus)}
-          />
-          <PipelineDetail
-            label="Completed steps"
-            value={`${pipelineStatus.completedSteps} / ${pipelineStatus.totalSteps}`}
-          />
-          <PipelineDetail
-            label="Analyzed count"
-            value={formatOptionalNumber(pipelineStatus.analyzedCount)}
-          />
-          <PipelineDetail
-            label="Remaining count"
-            value={formatOptionalNumber(pipelineStatus.remainingCount)}
-          />
-          <PipelineDetail label="Complete" value={String(pipelineStatus.complete)} />
-          <PipelineDetail
-            label="Last updated"
-            value={formatDisplayTime(pipelineStatus.lastUpdatedAt)}
-          />
-          <PipelineDetail
-            label="Next blocked step"
-            value={formatStepName(pipelineStatus.nextBlockedStep)}
-          />
-        </div>
-        <div className="mt-3 border border-line bg-paper px-3 py-2 text-sm">
-          <div className="text-xs uppercase tracking-wide text-slate-500">
-            Last error
-          </div>
-          <div className="mt-1 text-slate-700">
-            {pipelineStatus.lastError ?? "None"}
-          </div>
-        </div>
-      </section>
+      <LivePipelineProgress
+        manuscriptId={manuscript.id}
+        initialStatus={pipelineStatus}
+      />
 
       {manuscript.pipelineJobs.length > 0 ? (
         <section className="border border-line bg-white shadow-panel">
@@ -314,15 +260,6 @@ function Stat({ label, value }: { label: string; value: string }) {
     <div className="border border-line bg-white p-4 shadow-panel">
       <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
       <div className="mt-2 text-xl font-semibold">{value}</div>
-    </div>
-  );
-}
-
-function PipelineDetail({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="border border-line bg-paper px-3 py-2">
-      <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-1 break-words text-sm font-semibold">{value}</div>
     </div>
   );
 }
@@ -452,26 +389,4 @@ function formatStatus(status: string) {
     .toLowerCase()
     .replace(/_/g, " ")
     .replace(/^\w/, (char) => char.toUpperCase());
-}
-
-function formatNullableStatus(status: string | null) {
-  return status ? formatStatus(status) : "None";
-}
-
-function formatStepName(step: string | null) {
-  if (!step) {
-    return "None";
-  }
-
-  return step
-    .replace(/([a-z])([A-Z])/g, "$1 $2")
-    .replace(/^\w/, (char) => char.toUpperCase());
-}
-
-function formatOptionalNumber(value: number | null) {
-  return typeof value === "number" ? value.toLocaleString() : "Unknown";
-}
-
-function formatDisplayTime(value: string | null) {
-  return value ? new Date(value).toLocaleString() : "Unknown";
 }

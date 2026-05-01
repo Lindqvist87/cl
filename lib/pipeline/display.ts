@@ -10,6 +10,10 @@ export type PipelineDisplayJob = {
   status: string;
   result?: unknown;
   error?: string | null;
+  lockedBy?: string | null;
+  lockedAt?: Date | string | null;
+  lockExpiresAt?: Date | string | null;
+  stale?: boolean;
   updatedAt?: Date | string | null;
   completedAt?: Date | string | null;
   startedAt?: Date | string | null;
@@ -25,6 +29,9 @@ export type PipelineDisplayRun = {
 
 export type PipelineDisplayTotals = {
   chunks?: number | null;
+  chapters?: number | null;
+  sections?: number | null;
+  auditTargets?: number | null;
 };
 
 export type PipelineJobCounts = {
@@ -37,6 +44,7 @@ export type PipelineJobCounts = {
 
 export type PipelineStatusDisplay = {
   currentStep: string | null;
+  nextStep: string | null;
   completedSteps: number;
   totalSteps: number;
   percent: number;
@@ -50,6 +58,50 @@ export type PipelineStatusDisplay = {
   jobCounts: PipelineJobCounts;
   stepProgressLabel: string | null;
   remainingLabel: string | null;
+  stepProgress: PipelineStepProgressDisplay | null;
+  lockStatus: PipelineLockStatusDisplay | null;
+};
+
+export type PipelineStepProgressDisplay = {
+  step: string;
+  completed: number | null;
+  total: number | null;
+  remaining: number | null;
+  percent: number | null;
+  label: string | null;
+  remainingLabel: string | null;
+};
+
+export type PipelineLockStatusDisplay = {
+  type: string;
+  status: string;
+  lockedBy: string | null;
+  lockedAt: string | null;
+  lockExpiresAt: string | null;
+  stale: boolean;
+  message: string;
+};
+
+export type PipelineDiagnosticsPollingSnapshot = {
+  state?: string | null;
+  remainingJobCount?: number | null;
+  nextEligibleJob?: unknown;
+  activeRunningJobs?: unknown[] | null;
+  staleRunningJobs?: unknown[] | null;
+  manualRunner?: {
+    reason?: string | null;
+    message?: string | null;
+    blockingJob?: unknown;
+  } | null;
+  run?: {
+    status?: string | null;
+    error?: string | null;
+  } | null;
+  pipelineStatus?: {
+    complete?: boolean | null;
+    currentJobStatus?: string | null;
+    lastError?: string | null;
+  } | null;
 };
 
 const STEP_SET = new Set<string>(FULL_MANUSCRIPT_PIPELINE_STEPS);
@@ -99,6 +151,7 @@ export function buildPipelineStatusDisplay(input: {
     remaining: remainingCount,
     total: stepTotal
   });
+  const nextStep = nextStepFor(currentStep, completedStepSet);
   const complete =
     booleanValue(progressRecord.complete) ??
     (completedSteps === totalSteps && totalSteps > 0) ??
@@ -112,9 +165,19 @@ export function buildPipelineStatusDisplay(input: {
     total: stepTotal,
     remaining: remainingCount
   });
+  const remainingLabel =
+    typeof remainingCount === "number" ? `${remainingCount} remaining` : null;
+  const stepProgress = stepProgressForStep(currentStep, {
+    analyzed: analyzedCount,
+    total: stepTotal,
+    remaining: remainingCount,
+    label: stepProgressLabel,
+    remainingLabel
+  });
 
   return {
     currentStep,
+    nextStep,
     completedSteps,
     totalSteps,
     percent: Math.round((completedSteps / totalSteps) * 100),
@@ -139,8 +202,16 @@ export function buildPipelineStatusDisplay(input: {
     nextBlockedStep,
     jobCounts: countPipelineJobsByStatus(jobs),
     stepProgressLabel,
-    remainingLabel:
-      typeof remainingCount === "number" ? `${remainingCount} remaining` : null
+    remainingLabel,
+    stepProgress,
+    lockStatus: buildPipelineLockStatus(
+      (currentJob?.status === PIPELINE_JOB_STATUS.RUNNING ? currentJob : null) ??
+        orderedJobs.find(
+          (job) =>
+            isPipelineStep(job.type) && job.status === PIPELINE_JOB_STATUS.RUNNING
+        ) ??
+        null
+    )
   };
 }
 
@@ -157,6 +228,74 @@ export function countPipelineJobsByStatus(jobs: Array<{ status: string }>): Pipe
     failed: jobs.filter((job) => job.status === PIPELINE_JOB_STATUS.FAILED).length,
     completed: jobs.filter((job) => job.status === PIPELINE_JOB_STATUS.COMPLETED).length
   };
+}
+
+export function buildPipelineLockStatus(
+  job?: PipelineDisplayJob | null
+): PipelineLockStatusDisplay | null {
+  if (!job || job.status !== PIPELINE_JOB_STATUS.RUNNING) {
+    return null;
+  }
+
+  const stale =
+    typeof job.stale === "boolean"
+      ? job.stale
+      : Boolean(job.lockExpiresAt && dateMs(job.lockExpiresAt) <= Date.now());
+  const lockedAt = isoDate(job.lockedAt);
+  const lockExpiresAt = isoDate(job.lockExpiresAt);
+
+  return {
+    type: job.type,
+    status: job.status,
+    lockedBy: job.lockedBy ?? null,
+    lockedAt,
+    lockExpiresAt,
+    stale,
+    message: lockMessage({
+      type: job.type,
+      lockedBy: job.lockedBy ?? null,
+      lockExpiresAt,
+      stale
+    })
+  };
+}
+
+export function shouldPollPipelineDiagnostics(
+  diagnostics: PipelineDiagnosticsPollingSnapshot
+) {
+  const runStatus = diagnostics.run?.status?.toUpperCase() ?? null;
+  const jobStatus =
+    diagnostics.pipelineStatus?.currentJobStatus?.toUpperCase() ?? null;
+  const state = diagnostics.state ?? null;
+
+  if (
+    runStatus === "FAILED" ||
+    jobStatus === PIPELINE_JOB_STATUS.FAILED ||
+    state === "blocked_by_error"
+  ) {
+    return false;
+  }
+
+  if (diagnostics.pipelineStatus?.complete || state === "done") {
+    return false;
+  }
+
+  if (
+    state === "more_work_remains" ||
+    diagnostics.nextEligibleJob ||
+    (diagnostics.remainingJobCount ?? 0) > 0 ||
+    (diagnostics.activeRunningJobs?.length ?? 0) > 0 ||
+    (diagnostics.staleRunningJobs?.length ?? 0) > 0
+  ) {
+    return true;
+  }
+
+  return new Set<string>([
+    PIPELINE_JOB_STATUS.QUEUED,
+    PIPELINE_JOB_STATUS.RUNNING,
+    PIPELINE_JOB_STATUS.RETRYING,
+    PIPELINE_JOB_STATUS.BLOCKED
+  ]).has(jobStatus ?? "");
 }
 
 function sortPipelineJobs(jobs: PipelineDisplayJob[]) {
@@ -201,6 +340,22 @@ function totalForStep(
     return Math.max(0, totals.chunks);
   }
 
+  if (step === "runChapterAudits") {
+    return firstNumber(
+      record.total,
+      record.totalCount,
+      record.auditTargets,
+      record.auditTargetCount,
+      record.sectionCount,
+      record.sections,
+      record.chapterCount,
+      record.chapters,
+      totals?.auditTargets,
+      totals?.sections,
+      totals?.chapters
+    );
+  }
+
   return firstNumber(record.total, record.totalCount, record.chunkCount);
 }
 
@@ -210,11 +365,15 @@ function analyzedForStep(
   counts: { remaining: number | null; total: number | null }
 ) {
   if (
-    step === "summarizeChunks" &&
+    (step === "summarizeChunks" || step === "runChapterAudits") &&
     typeof counts.total === "number" &&
     typeof counts.remaining === "number"
   ) {
     return Math.max(0, counts.total - counts.remaining);
+  }
+
+  if (step === "runChapterAudits") {
+    return null;
   }
 
   return firstNumber(
@@ -238,7 +397,88 @@ function progressLabelForStep(
     return `${counts.analyzed} / ${counts.total} chunks summarized`;
   }
 
+  if (
+    step === "runChapterAudits" &&
+    typeof counts.analyzed === "number" &&
+    typeof counts.total === "number"
+  ) {
+    return `${counts.analyzed} / ${counts.total} section audits completed`;
+  }
+
   return null;
+}
+
+function stepProgressForStep(
+  step: string | null,
+  progress: {
+    analyzed: number | null;
+    total: number | null;
+    remaining: number | null;
+    label: string | null;
+    remainingLabel: string | null;
+  }
+): PipelineStepProgressDisplay | null {
+  if (step !== "summarizeChunks" && step !== "runChapterAudits") {
+    return null;
+  }
+
+  if (
+    typeof progress.analyzed !== "number" &&
+    typeof progress.total !== "number" &&
+    typeof progress.remaining !== "number"
+  ) {
+    return null;
+  }
+
+  return {
+    step,
+    completed: progress.analyzed,
+    total: progress.total,
+    remaining: progress.remaining,
+    percent:
+      typeof progress.analyzed === "number" &&
+      typeof progress.total === "number" &&
+      progress.total > 0
+        ? Math.round((progress.analyzed / progress.total) * 100)
+        : null,
+    label: progress.label,
+    remainingLabel: progress.remainingLabel
+  };
+}
+
+function nextStepFor(
+  currentStep: string | null,
+  completedStepSet: Set<string>
+) {
+  if (currentStep) {
+    const index = FULL_MANUSCRIPT_PIPELINE_STEPS.indexOf(
+      currentStep as ManuscriptPipelineStep
+    );
+
+    return index >= 0 ? FULL_MANUSCRIPT_PIPELINE_STEPS[index + 1] ?? null : null;
+  }
+
+  return FULL_MANUSCRIPT_PIPELINE_STEPS.find(
+    (step) => !completedStepSet.has(step)
+  ) ?? null;
+}
+
+function lockMessage(input: {
+  type: string;
+  lockedBy: string | null;
+  lockExpiresAt: string | null;
+  stale: boolean;
+}) {
+  if (input.stale) {
+    return "Lock expired. Click Run next batch to recover and continue.";
+  }
+
+  const lockedBy = input.lockedBy ? ` by ${input.lockedBy}` : "";
+  const lockedUntil = input.lockExpiresAt
+    ? ` until ${formatTimeOfDay(input.lockExpiresAt)}`
+    : "";
+
+  return `${input.type} is running and locked${lockedBy}${lockedUntil}. Wait for the current batch to finish.`;
 }
 
 function firstNumber(...values: unknown[]) {
@@ -275,6 +515,12 @@ function latestDateIso(values: unknown[]) {
   return latest ? new Date(latest).toISOString() : null;
 }
 
+function isoDate(value: unknown) {
+  const ms = dateMs(value);
+
+  return ms ? new Date(ms).toISOString() : null;
+}
+
 function dateMs(value: unknown) {
   if (value instanceof Date) {
     return value.getTime();
@@ -286,4 +532,12 @@ function dateMs(value: unknown) {
   }
 
   return 0;
+}
+
+function formatTimeOfDay(value: string) {
+  return new Date(value).toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  });
 }

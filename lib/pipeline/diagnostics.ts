@@ -16,6 +16,7 @@ import {
   normalizeCheckpoint,
   type ManuscriptPipelineStep
 } from "@/lib/pipeline/steps";
+import { buildPipelineStatusDisplay } from "@/lib/pipeline/display";
 import { getWorkspaceReadinessForManuscript } from "@/lib/pipeline/workspaceReadiness";
 import { prisma } from "@/lib/prisma";
 
@@ -35,7 +36,15 @@ export type PipelineJobDiagnostic = {
 
 export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
   const now = new Date();
-  const [run, jobs, readiness] = await Promise.all([
+  const [manuscript, run, jobs, readiness] = await Promise.all([
+    prisma.manuscript.findUnique({
+      where: { id: manuscriptId },
+      select: {
+        id: true,
+        chapterCount: true,
+        chunkCount: true
+      }
+    }),
     prisma.analysisRun.findFirst({
       where: { manuscriptId },
       orderBy: { createdAt: "desc" },
@@ -53,6 +62,11 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
     }),
     getWorkspaceReadinessForManuscript(manuscriptId)
   ]);
+
+  if (!manuscript) {
+    throw new Error("Manuscript not found.");
+  }
+
   const checkpoint = normalizeCheckpoint(run?.checkpoint);
   const completedSteps = new Set(checkpoint.completedSteps ?? []);
   const currentStep =
@@ -87,9 +101,20 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
   const zeroRunDetails: RunReadyJobsReasonResult = nextEligibleJob
     ? {}
     : zeroRunReasonForJobs({ state: runnerState, jobs, now });
+  const pipelineStatus = buildPipelineStatusDisplay({
+    run,
+    jobs,
+    totals: {
+      chunks: manuscript.chunkCount,
+      chapters: manuscript.chapterCount,
+      sections: manuscript.chapterCount,
+      auditTargets: manuscript.chapterCount
+    }
+  });
 
   return {
     manuscriptId,
+    state: runnerState,
     run: run
       ? {
           id: run.id,
@@ -98,6 +123,7 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
           updatedAt: run.updatedAt.toISOString()
         }
       : null,
+    pipelineStatus,
     currentStep,
     completedSteps: Array.from(completedSteps),
     remainingJobCount: remainingJobs.length,
