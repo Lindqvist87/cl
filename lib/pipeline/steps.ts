@@ -58,6 +58,33 @@ export function markStepStarted(
   };
 }
 
+export function markStepProgress(
+  checkpoint: PipelineCheckpoint,
+  step: ManuscriptPipelineStep,
+  metadata?: Record<string, unknown>
+): PipelineCheckpoint {
+  const normalized = normalizeCheckpoint(checkpoint);
+  const existingMetadata =
+    normalized.stepMetadata?.[step] &&
+    typeof normalized.stepMetadata[step] === "object" &&
+    !Array.isArray(normalized.stepMetadata[step])
+      ? (normalized.stepMetadata[step] as Record<string, unknown>)
+      : {};
+
+  return {
+    ...normalized,
+    currentStep: step,
+    stepMetadata: {
+      ...(normalized.stepMetadata ?? {}),
+      [step]: {
+        ...existingMetadata,
+        ...(metadata ?? {}),
+        updatedAt: new Date().toISOString()
+      }
+    }
+  };
+}
+
 export function markStepComplete(
   checkpoint: PipelineCheckpoint,
   step: ManuscriptPipelineStep,

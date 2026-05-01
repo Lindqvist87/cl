@@ -39,6 +39,7 @@ import {
   FULL_MANUSCRIPT_PIPELINE_STEPS,
   isStepComplete,
   markStepComplete,
+  markStepProgress,
   markStepStarted,
   normalizeCheckpoint,
   type ManuscriptPipelineStep
@@ -573,12 +574,18 @@ async function runManuscriptPipelineStepJob(
   });
 
   if (!isPipelineStepRunComplete(metadata)) {
+    await persistPipelineCheckpoint(
+      run.id,
+      markStepProgress(checkpoint, step, metadata)
+    );
     const queued = await prisma.pipelineJob.update({
       where: { id: job.id },
       data: {
         status: PIPELINE_JOB_STATUS.QUEUED,
         result: jsonInput(metadata),
+        attempts: attemptsAfterPartialProgress(job),
         error: null,
+        readyAt: null,
         lockedAt: null,
         lockedBy: null,
         lockExpiresAt: null
@@ -942,6 +949,11 @@ function positiveInt(value: number | undefined, fallback: number) {
 
 function retryDelayMs(attempts: number) {
   return Math.min(5 * 60 * 1000, Math.max(10_000, attempts * 30_000));
+}
+
+function attemptsAfterPartialProgress(job: PipelineJob) {
+  const beforeThisRun = Math.max(job.attempts - 1, 0);
+  return Math.min(beforeThisRun, Math.max(job.maxAttempts - 1, 0));
 }
 
 function maxAttemptsForJobType(type: string) {
