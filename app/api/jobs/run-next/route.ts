@@ -17,6 +17,7 @@ export async function POST(request: Request) {
     corpusBookId: stringOrUndefined(body.corpusBookId),
     maxJobs: 1,
     maxSeconds: numberOrUndefined(body.maxSeconds),
+    maxItemsPerStep: numberOrUndefined(body.maxItemsPerStep),
     workerType: "MANUAL",
     workerId: "manual:run-next"
   });

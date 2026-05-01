@@ -154,7 +154,7 @@ test("manuscript admin route options pass maxItemsPerStep", () => {
     manuscriptId: "m1",
     maxJobs: 5,
     maxSeconds: 240,
-    maxItemsPerStep: 1,
+    maxItemsPerStep: 4,
     workerType: "MANUAL",
     workerId: "manual:manuscript:m1"
   });

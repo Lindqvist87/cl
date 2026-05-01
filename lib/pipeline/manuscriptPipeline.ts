@@ -160,6 +160,19 @@ export async function findOrCreatePipelineRun(manuscriptId: string) {
     });
   }
 
+  const completedRun = await prisma.analysisRun.findFirst({
+    where: {
+      manuscriptId,
+      type: AnalysisRunType.FULL_AUDIT,
+      status: AnalysisRunStatus.COMPLETED
+    },
+    orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }]
+  });
+
+  if (completedRun) {
+    return completedRun;
+  }
+
   return prisma.analysisRun.create({
     data: {
       manuscriptId,
@@ -747,6 +760,23 @@ async function compareAgainstCorpus(manuscriptId: string, runId: string) {
     .filter((chunk) => chunk.book.benchmarkReady && canUseForChunkContext(chunk.book))
     .sort((a, b) => corpusChunkRank(b.book, manuscriptLanguage, manuscript.targetGenre) - corpusChunkRank(a.book, manuscriptLanguage, manuscript.targetGenre))
     .slice(0, 12);
+
+  if (profiles.length === 0 && chunks.length === 0) {
+    return saveSkippedComparisonOutput({
+      runId,
+      manuscriptId,
+      passType: AnalysisPassType.CORPUS_COMPARISON,
+      reason: "no_benchmark_corpus",
+      summary:
+        "No benchmark corpus profiles or rights-safe corpus chunks are available yet.",
+      inputSummary: {
+        benchmarkProfileCount: 0,
+        similarChunkCount: 0,
+        rightsStatusCounts: rightsStatusCounts([])
+      }
+    });
+  }
+
   const storedCorpusEmbeddings = chunks.filter((chunk) => chunk.embeddingStatus === "STORED").length;
   const manuscriptEmbeddingReady = await prisma.manuscriptChunk.count({
     where: {
@@ -840,6 +870,22 @@ async function compareAgainstTrendSignals(manuscriptId: string, runId: string) {
     take: 50,
     orderBy: [{ signalDate: "desc" }, { createdAt: "desc" }]
   });
+
+  if (signals.length === 0) {
+    return saveSkippedComparisonOutput({
+      runId,
+      manuscriptId,
+      passType: AnalysisPassType.TREND_COMPARISON,
+      reason: "no_trend_signals",
+      summary: "No trend signals are available for this manuscript genre yet.",
+      inputSummary: {
+        signalCount: 0,
+        targetGenre: manuscript.targetGenre,
+        trendSignalsUse: "metadata_context_only"
+      }
+    });
+  }
+
   const wholeBookOutput = await findOutput(
     runId,
     AnalysisPassType.WHOLE_BOOK_AUDIT,
@@ -1124,6 +1170,41 @@ async function saveOutput(input: {
       rawText: input.rawText
     }
   });
+}
+
+async function saveSkippedComparisonOutput(input: {
+  runId: string;
+  manuscriptId: string;
+  passType: AnalysisPassType;
+  reason: string;
+  summary: string;
+  inputSummary?: Record<string, unknown>;
+}) {
+  const output = {
+    status: "skipped",
+    skipped: true,
+    reason: input.reason,
+    summary: input.summary,
+    findings: []
+  };
+
+  await saveOutput({
+    runId: input.runId,
+    manuscriptId: input.manuscriptId,
+    passType: input.passType,
+    scopeType: "manuscript",
+    scopeId: input.manuscriptId,
+    model: "system",
+    output,
+    rawText: JSON.stringify(output),
+    inputSummary: {
+      ...(input.inputSummary ?? {}),
+      skipped: true,
+      skipReason: input.reason
+    }
+  });
+
+  return { skipped: true, reason: input.reason, complete: true };
 }
 
 async function saveFindings(input: {

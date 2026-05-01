@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { ArrowRight, ClipboardList, TriangleAlert } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { aggregateEditorialWorkspaceData } from "@/lib/editorial/workspaceData";
+import { getWorkspaceReadinessForManuscript } from "@/lib/pipeline/workspaceReadiness";
 import { StructureReviewPanel } from "@/components/StructureReviewPanel";
 
 export const dynamic = "force-dynamic";
@@ -45,6 +46,7 @@ export default async function ManuscriptWorkspacePage({
     rewritePlans: manuscript.rewritePlans,
     globalSummary: manuscript.reports[0]?.executiveSummary ?? null
   });
+  const pipelineReadiness = await getWorkspaceReadinessForManuscript(id);
   const nextAction = workspace.nextAction;
 
   return (
@@ -177,7 +179,10 @@ export default async function ManuscriptWorkspacePage({
         </div>
 
         <aside className="space-y-6">
-          <ReadinessPanel readiness={workspace.readiness} />
+          <ReadinessPanel
+            readiness={workspace.readiness}
+            pipeline={pipelineReadiness}
+          />
 
           <section className="border border-line bg-white p-4 shadow-panel">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
@@ -236,7 +241,8 @@ export default async function ManuscriptWorkspacePage({
 }
 
 function ReadinessPanel({
-  readiness
+  readiness,
+  pipeline
 }: {
   readiness: {
     sectionsDetected: number;
@@ -245,6 +251,12 @@ function ReadinessPanel({
     rewritePlanAvailable: boolean;
     decisionsStored: boolean;
     analysisStatus: string;
+  };
+  pipeline: {
+    state: string;
+    workspaceReady: boolean;
+    usableWholeBookOutput: boolean;
+    actionableError: string | null;
   };
 }) {
   return (
@@ -268,7 +280,19 @@ function ReadinessPanel({
           value={readiness.decisionsStored ? "Yes" : "No"}
         />
         <ReadinessRow label="Analysis status" value={formatStatus(readiness.analysisStatus)} />
+        <ReadinessRow label="Pipeline state" value={formatStatus(pipeline.state)} />
+        <ReadinessRow
+          label="Whole-book output"
+          value={pipeline.usableWholeBookOutput ? "Usable" : "Unavailable"}
+        />
+        <ReadinessRow
+          label="Workspace output"
+          value={pipeline.workspaceReady ? "Ready" : "Not ready"}
+        />
       </div>
+      {pipeline.actionableError ? (
+        <p className="mt-3 text-sm text-danger">{pipeline.actionableError}</p>
+      ) : null}
       {!readiness.decisionsStored ? (
         <p className="mt-3 text-sm text-slate-500">No editorial decisions yet.</p>
       ) : null}
