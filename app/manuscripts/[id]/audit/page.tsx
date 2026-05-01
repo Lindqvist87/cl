@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { Download } from "lucide-react";
+import { BookOpen, Download } from "lucide-react";
 import { AnalysisPassType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { AuditReportJson, JsonRecord } from "@/lib/types";
@@ -65,6 +65,13 @@ export default async function ManuscriptAuditPage({
           </h1>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Link
+            href={`/manuscripts/${manuscript.id}/structure`}
+            className="focus-ring inline-flex min-h-9 items-center gap-2 border border-line bg-white px-3 py-2 text-sm font-semibold"
+          >
+            <BookOpen size={16} aria-hidden="true" />
+            Inspect imported structure
+          </Link>
           <a href={`/api/manuscripts/${manuscript.id}/report/markdown`} className="focus-ring inline-flex min-h-9 items-center gap-2 border border-line bg-white px-3 py-2 text-sm font-semibold">
             <Download size={16} aria-hidden="true" />
             Markdown
