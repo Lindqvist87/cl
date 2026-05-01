@@ -8,6 +8,7 @@ import {
   type EditorialFindingInput,
   type EditorialRewriteInput,
   type EditorialRewritePlanInput,
+  type NextEditorialAction,
   nextBestEditorialAction
 } from "@/lib/editorial/nextAction";
 import { buildStructureReviewRows } from "@/lib/editorial/structureReview";
@@ -29,6 +30,42 @@ export type EditorialWorkspaceInput = {
   globalSummary?: string | null;
 };
 
+export type WorkspaceReadiness = {
+  sectionsDetected: number;
+  issuesFound: number;
+  globalSummaryAvailable: boolean;
+  rewritePlanAvailable: boolean;
+  decisionsStored: boolean;
+  analysisStatus: string;
+};
+
+export type EditorialIssueDisplay = {
+  id: string;
+  chapterId: string | null;
+  chapterLabel: string;
+  severity: number;
+  issueType: string;
+  problem: string;
+  recommendation: string;
+  decisionStatus: EditorialDecisionRecord["status"] | null;
+};
+
+export type EditorialIssueGroup = {
+  issueType: string;
+  count: number;
+  maxSeverity: number;
+  topIssues: EditorialIssueDisplay[];
+};
+
+export type NextEditorialActionDisplay = {
+  selectedSection: string;
+  reason: string;
+  severity: number;
+  issueCount: number;
+  suggestedFirstStep: string;
+  priority: NextEditorialAction["priority"];
+};
+
 export function aggregateEditorialWorkspaceData(input: EditorialWorkspaceInput) {
   const decisions = input.decisions ?? [];
   const decisionByFinding = latestDecisionByFinding(decisions);
@@ -36,19 +73,11 @@ export function aggregateEditorialWorkspaceData(input: EditorialWorkspaceInput) 
     const decision = decisionByFinding.get(finding.id);
     return !isResolvedDecisionStatus(decision?.status);
   });
-  const keyIssues = unresolvedFindings
+  const topPriorityIssues = unresolvedFindings
     .slice()
-    .sort((a, b) => b.severity - a.severity || chapterOrder(input.chapters, a) - chapterOrder(input.chapters, b))
-    .slice(0, 8)
-    .map((finding) => ({
-      id: finding.id,
-      chapterId: finding.chapterId ?? null,
-      severity: finding.severity,
-      issueType: finding.issueType,
-      problem: finding.problem,
-      recommendation: finding.recommendation,
-      decisionStatus: decisionByFinding.get(finding.id)?.status ?? null
-    }));
+    .sort((a, b) => compareFindingsByPriority(input.chapters, a, b))
+    .slice(0, 5)
+    .map((finding) => displayIssue(input.chapters, decisionByFinding, finding));
   const chapterRows = input.chapters.map((chapter) => {
     const chapterFindings = unresolvedFindings.filter(
       (finding) => finding.chapterId === chapter.id
@@ -75,24 +104,107 @@ export function aggregateEditorialWorkspaceData(input: EditorialWorkspaceInput) 
     };
   });
   const latestPlan = latestRewritePlan(input.rewritePlans ?? []);
+  const nextAction = nextBestEditorialAction({
+    chapters: input.chapters,
+    findings: input.findings,
+    decisions,
+    rewrites: input.rewrites,
+    rewritePlans: input.rewritePlans
+  });
 
   return {
     manuscript: input.manuscript,
     globalSummary: input.globalSummary ?? null,
-    keyIssues,
-    rewritePlanItems: rewritePlanItems(latestPlan),
-    nextAction: nextBestEditorialAction({
+    readiness: calculateWorkspaceReadiness({
+      manuscript: input.manuscript,
       chapters: input.chapters,
       findings: input.findings,
       decisions,
-      rewrites: input.rewrites,
-      rewritePlans: input.rewritePlans
+      rewritePlans: input.rewritePlans,
+      globalSummary: input.globalSummary
     }),
+    keyIssues: topPriorityIssues,
+    issueGroups: groupEditorialIssuesByType({
+      chapters: input.chapters,
+      findings: input.findings,
+      decisions
+    }),
+    rewritePlanItems: rewritePlanItems(latestPlan),
+    nextAction,
+    nextActionDisplay: buildNextActionDisplayData(nextAction),
     chapterRows,
     structureRows: buildStructureReviewRows({
       chapters: input.chapters,
       findings: input.findings
     })
+  };
+}
+
+export function calculateWorkspaceReadiness(input: EditorialWorkspaceInput): WorkspaceReadiness {
+  return {
+    sectionsDetected: input.chapters.length,
+    issuesFound: input.findings.length,
+    globalSummaryAvailable: Boolean(input.globalSummary?.trim()),
+    rewritePlanAvailable: Boolean(latestRewritePlan(input.rewritePlans ?? [])),
+    decisionsStored: Boolean(input.decisions?.length),
+    analysisStatus: input.manuscript.analysisStatus ?? "NOT_STARTED"
+  };
+}
+
+export function groupEditorialIssuesByType({
+  chapters,
+  findings,
+  decisions = []
+}: {
+  chapters: EditorialChapterInput[];
+  findings: EditorialFindingInput[];
+  decisions?: EditorialDecisionRecord[];
+}): EditorialIssueGroup[] {
+  const decisionByFinding = latestDecisionByFinding(decisions);
+  const unresolvedFindings = findings.filter((finding) => {
+    const decision = decisionByFinding.get(finding.id);
+    return !isResolvedDecisionStatus(decision?.status);
+  });
+  const groups = new Map<string, EditorialIssueDisplay[]>();
+
+  for (const finding of unresolvedFindings
+    .slice()
+    .sort((a, b) => compareFindingsByPriority(chapters, a, b))) {
+    const issueType = finding.issueType || "Editorial";
+    const group = groups.get(issueType) ?? [];
+    group.push(displayIssue(chapters, decisionByFinding, finding));
+    groups.set(issueType, group);
+  }
+
+  return Array.from(groups.entries())
+    .map(([issueType, issues]) => ({
+      issueType,
+      count: issues.length,
+      maxSeverity: issues.reduce((max, issue) => Math.max(max, issue.severity), 0),
+      topIssues: issues.slice(0, 5)
+    }))
+    .sort(
+      (a, b) =>
+        b.maxSeverity - a.maxSeverity ||
+        b.count - a.count ||
+        a.issueType.localeCompare(b.issueType)
+    );
+}
+
+export function buildNextActionDisplayData(
+  action: NextEditorialAction | null
+): NextEditorialActionDisplay | null {
+  if (!action) {
+    return null;
+  }
+
+  return {
+    selectedSection: `Section ${action.targetChapter.order}: ${action.targetChapter.title}`,
+    reason: action.reason,
+    severity: action.severity,
+    issueCount: action.issueCount,
+    suggestedFirstStep: action.suggestedFirstStep,
+    priority: action.priority
   };
 }
 
@@ -120,6 +232,50 @@ function latestRewritePlan(plans: EditorialRewritePlanInput[]) {
   return plans
     .slice()
     .sort((a, b) => timestamp(b.createdAt) - timestamp(a.createdAt))[0];
+}
+
+function displayIssue(
+  chapters: EditorialChapterInput[],
+  decisionByFinding: Map<string, EditorialDecisionRecord>,
+  finding: EditorialFindingInput
+): EditorialIssueDisplay {
+  return {
+    id: finding.id,
+    chapterId: finding.chapterId ?? null,
+    chapterLabel: chapterLabel(chapters, finding),
+    severity: finding.severity,
+    issueType: finding.issueType || "Editorial",
+    problem: finding.problem,
+    recommendation: finding.recommendation,
+    decisionStatus: decisionByFinding.get(finding.id)?.status ?? null
+  };
+}
+
+function compareFindingsByPriority(
+  chapters: EditorialChapterInput[],
+  a: EditorialFindingInput,
+  b: EditorialFindingInput
+) {
+  return (
+    b.severity - a.severity ||
+    chapterOrder(chapters, a) - chapterOrder(chapters, b) ||
+    timestamp(a.createdAt) - timestamp(b.createdAt) ||
+    a.id.localeCompare(b.id)
+  );
+}
+
+function chapterLabel(chapters: EditorialChapterInput[], finding: EditorialFindingInput) {
+  if (!finding.chapterId) {
+    return "Manuscript level";
+  }
+
+  const chapter = chapters.find((candidate) => candidate.id === finding.chapterId);
+
+  if (!chapter) {
+    return "Unlinked section";
+  }
+
+  return `Section ${chapter.order}: ${chapter.title}`;
 }
 
 function chapterOrder(chapters: EditorialChapterInput[], finding: EditorialFindingInput) {
