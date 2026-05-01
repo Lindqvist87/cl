@@ -21,8 +21,13 @@ import {
 import {
   ensureManuscriptPipelineJobs,
   pipelineJobScopeWhere,
+  runPipelineJob,
   runReadyPipelineJobs
 } from "../lib/pipeline/pipelineJobs";
+import {
+  isStepComplete,
+  normalizeCheckpoint
+} from "../lib/pipeline/steps";
 import { prisma } from "../lib/prisma";
 
 type MutableJob = PipelineJob;
@@ -228,6 +233,148 @@ test("run-until-idle bootstraps missing manuscript jobs before running", async (
         assert.deepEqual(result.readyJobIds, [summarizeJob?.id]);
         assert.equal(result.remainingReadyJobs, 1);
         assert.equal(result.hasRemainingWork, true);
+      }
+    );
+  } finally {
+    restoreEnv("OPENAI_API_KEY", oldApiKey);
+  }
+});
+
+test("partial summarizeChunks progress requeues without exhausting maxAttempts", async () => {
+  const manuscriptId = "manuscript-partial-attempts";
+  const oldApiKey = process.env.OPENAI_API_KEY;
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks",
+      "createEmbeddingsForChunks"
+    ],
+    currentStep: "summarizeChunks"
+  });
+  const job = mutableJob("summarize-job", {
+    manuscriptId,
+    type: "summarizeChunks",
+    status: PIPELINE_JOB_STATUS.QUEUED,
+    idempotencyKey: "summarize-job",
+    attempts: 5,
+    maxAttempts: 3
+  });
+  const jobs = [job];
+  const chunks = summarizeChunkFixtures(manuscriptId, 2);
+  const outputs: Array<Record<string, unknown>> = [];
+
+  delete process.env.OPENAI_API_KEY;
+
+  try {
+    await withPatchedPrisma(
+      summarizeChunksPatches({ manuscriptId, run, jobs, chunks, outputs }),
+      async () => {
+        const result = await runPipelineJob(job.id, {
+          maxItemsPerStep: 1,
+          workerId: "test:partial"
+        });
+
+        assert.equal(result.status, "queued");
+        assert.equal(job.status, PIPELINE_JOB_STATUS.QUEUED);
+        assert.equal(job.attempts < job.maxAttempts, true);
+        assert.equal(job.attempts, 2);
+        assert.deepEqual(job.result, {
+          analyzed: 1,
+          remaining: 1,
+          complete: false
+        });
+        assert.equal(outputs.length, 1);
+
+        const checkpoint = normalizeCheckpoint(run.checkpoint);
+        assert.equal(checkpoint.currentStep, "summarizeChunks");
+        assert.deepEqual(checkpoint.completedSteps?.includes("summarizeChunks"), false);
+        assert.equal(
+          (checkpoint.stepMetadata?.summarizeChunks as Record<string, unknown>)
+            .remaining,
+          1
+        );
+      }
+    );
+  } finally {
+    restoreEnv("OPENAI_API_KEY", oldApiKey);
+  }
+});
+
+test("repeated summarizeChunks partial runs finish and unblock summarizeChapters", async () => {
+  const manuscriptId = "manuscript-partial-completes";
+  const oldApiKey = process.env.OPENAI_API_KEY;
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks",
+      "createEmbeddingsForChunks"
+    ],
+    currentStep: "summarizeChunks"
+  });
+  const summarizeJob = mutableJob("summarize-job", {
+    manuscriptId,
+    type: "summarizeChunks",
+    status: PIPELINE_JOB_STATUS.QUEUED,
+    idempotencyKey: "summarize-job",
+    maxAttempts: 3
+  });
+  const chapterJob = mutableJob("chapters-job", {
+    manuscriptId,
+    type: "summarizeChapters",
+    status: PIPELINE_JOB_STATUS.BLOCKED,
+    idempotencyKey: "chapters-job",
+    dependencyIds: [summarizeJob.id],
+    maxAttempts: 3
+  });
+  const jobs = [summarizeJob, chapterJob];
+  const chunks = summarizeChunkFixtures(manuscriptId, 3);
+  const outputs: Array<Record<string, unknown>> = [];
+
+  delete process.env.OPENAI_API_KEY;
+
+  try {
+    await withPatchedPrisma(
+      summarizeChunksPatches({ manuscriptId, run, jobs, chunks, outputs }),
+      async () => {
+        const first = await runPipelineJob(summarizeJob.id, {
+          maxItemsPerStep: 1,
+          workerId: "test:repeat-1"
+        });
+        const second = await runPipelineJob(summarizeJob.id, {
+          maxItemsPerStep: 1,
+          workerId: "test:repeat-2"
+        });
+        const third = await runPipelineJob(summarizeJob.id, {
+          maxItemsPerStep: 1,
+          workerId: "test:repeat-3"
+        });
+
+        assert.equal(first.status, "queued");
+        assert.equal(second.status, "queued");
+        assert.equal(third.status, "completed");
+        assert.deepEqual(
+          outputs.map((output) => output.scopeId),
+          ["chunk-1", "chunk-2", "chunk-3"]
+        );
+        assert.equal(summarizeJob.status, PIPELINE_JOB_STATUS.COMPLETED);
+        assert.deepEqual(summarizeJob.result, {
+          analyzed: 1,
+          remaining: 0,
+          complete: true
+        });
+        assert.equal(chapterJob.status, PIPELINE_JOB_STATUS.QUEUED);
+        assert.deepEqual(third.readyJobIds, [chapterJob.id]);
+
+        const checkpoint = normalizeCheckpoint(run.checkpoint);
+        assert.equal(isStepComplete(checkpoint, "summarizeChunks"), true);
+        assert.equal(checkpoint.currentStep ?? undefined, undefined);
+        assert.equal(
+          (checkpoint.stepMetadata?.summarizeChunks as Record<string, unknown>)
+            .remaining,
+          0
+        );
       }
     );
   } finally {
@@ -482,6 +629,162 @@ function pipelineJobPatch(jobs: MutableJob[]) {
       applyJobData(job, args.data);
       return { count: 1 };
     }
+  };
+}
+
+function summarizeChunksPatches(input: {
+  manuscriptId: string;
+  run: MutableRun;
+  jobs: MutableJob[];
+  chunks: Array<Record<string, unknown>>;
+  outputs: Array<Record<string, unknown>>;
+}): Array<[object, Record<string, unknown>]> {
+  return [
+    [
+      prisma.manuscript,
+      {
+        findUniqueOrThrow: async () => ({
+          id: input.manuscriptId,
+          title: "Test Manuscript",
+          targetGenre: "Fantasy",
+          targetAudience: "Adult",
+          chunks: input.chunks,
+          chapters: [chapterFixture()]
+        }),
+        update: async (args: { data: Record<string, unknown> }) => ({
+          id: input.manuscriptId,
+          ...args.data
+        })
+      }
+    ],
+    [prisma.analysisRun, analysisRunPatch(input.run)],
+    [prisma.pipelineJob, pipelineJobPatch(input.jobs)],
+    [
+      prisma.analysisOutput,
+      {
+        findUnique: async (args: {
+          where: {
+            runId_passType_scopeType_scopeId: {
+              runId: string;
+              passType: string;
+              scopeType: string;
+              scopeId: string;
+            };
+          };
+        }) => {
+          const key = args.where.runId_passType_scopeType_scopeId;
+          return (
+            input.outputs.find(
+              (output) =>
+                output.runId === key.runId &&
+                output.passType === key.passType &&
+                output.scopeType === key.scopeType &&
+                output.scopeId === key.scopeId
+            ) ?? null
+          );
+        },
+        upsert: async (args: {
+          where: {
+            runId_passType_scopeType_scopeId: {
+              runId: string;
+              passType: string;
+              scopeType: string;
+              scopeId: string;
+            };
+          };
+          create: Record<string, unknown>;
+          update: Record<string, unknown>;
+        }) => {
+          const key = args.where.runId_passType_scopeType_scopeId;
+          const existing = input.outputs.find(
+            (output) =>
+              output.runId === key.runId &&
+              output.passType === key.passType &&
+              output.scopeType === key.scopeType &&
+              output.scopeId === key.scopeId
+          );
+
+          if (existing) {
+            Object.assign(existing, args.update);
+            return existing;
+          }
+
+          const output = {
+            id: `output-${input.outputs.length + 1}`,
+            ...args.create
+          };
+          input.outputs.push(output);
+          return output;
+        }
+      }
+    ],
+    [
+      prisma.manuscriptChunk,
+      {
+        update: async (args: {
+          where: { id: string };
+          data: Record<string, unknown>;
+        }) => {
+          const chunk = input.chunks.find(
+            (candidate) => candidate.id === args.where.id
+          );
+          assert.ok(chunk);
+          Object.assign(chunk, args.data);
+          return chunk;
+        }
+      }
+    ],
+    [
+      prisma.finding,
+      {
+        deleteMany: async () => ({ count: 0 }),
+        createMany: async (args: { data: unknown[] }) => ({
+          count: args.data.length
+        })
+      }
+    ]
+  ];
+}
+
+function summarizeChunkFixtures(manuscriptId: string, count: number) {
+  const chapter = chapterFixture();
+
+  return Array.from({ length: count }, (_, index) => ({
+    id: `chunk-${index + 1}`,
+    manuscriptId,
+    chapterId: chapter.id,
+    sceneId: null,
+    chunkIndex: index + 1,
+    text: `Chunk ${index + 1} text with enough words for deterministic analysis.`,
+    wordCount: 9,
+    startParagraph: index + 1,
+    endParagraph: index + 1,
+    paragraphStart: index + 1,
+    paragraphEnd: index + 1,
+    tokenEstimate: 9,
+    tokenCount: 9,
+    metadata: null,
+    localMetrics: null,
+    summary: null,
+    embedding: null,
+    createdAt: new Date("2026-04-29T05:00:00Z"),
+    chapter
+  }));
+}
+
+function chapterFixture() {
+  return {
+    id: "chapter-1",
+    manuscriptId: "manuscript",
+    title: "Opening",
+    order: 1,
+    chapterIndex: 1,
+    text: "Chapter text.",
+    wordCount: 2,
+    summary: null,
+    status: "CHAPTER_READY",
+    createdAt: new Date("2026-04-29T05:00:00Z"),
+    updatedAt: new Date("2026-04-29T05:00:00Z")
   };
 }
 
