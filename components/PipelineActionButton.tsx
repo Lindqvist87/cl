@@ -20,27 +20,28 @@ export function PipelineActionButton({
   const router = useRouter();
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<PipelineActionResult | null>(null);
 
   async function runAction() {
     setIsRunning(true);
     setError(null);
+    setResult(null);
 
     const response = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload ?? {})
     });
-    const result = (await response.json().catch(() => ({}))) as {
-      error?: string;
-    };
+    const nextResult = (await response.json().catch(() => ({}))) as PipelineActionResult;
 
     setIsRunning(false);
 
     if (!response.ok) {
-      setError(result.error ?? "Action failed.");
+      setError(nextResult.error ?? "Action failed.");
       return;
     }
 
+    setResult(nextResult);
     router.refresh();
   }
 
@@ -63,6 +64,44 @@ export function PipelineActionButton({
         {isRunning ? runningLabel ?? "Working..." : label}
       </button>
       {error ? <p className="text-xs text-danger">{error}</p> : null}
+      {result ? <PipelineActionSummary result={result} /> : null}
     </div>
+  );
+}
+
+type PipelineActionResult = {
+  error?: string;
+  jobsRun?: number;
+  remainingReadyJobs?: number;
+  hasRemainingWork?: boolean;
+  progress?: {
+    currentStep?: string;
+    analyzed?: number;
+    remaining?: number;
+    complete?: boolean;
+    completed?: number;
+    total?: number;
+    percent?: number;
+  };
+};
+
+function PipelineActionSummary({ result }: { result: PipelineActionResult }) {
+  const progress = result.progress;
+  const details = [
+    progress?.currentStep ? `step ${progress.currentStep}` : null,
+    typeof progress?.analyzed === "number" ? `analyzed ${progress.analyzed}` : null,
+    typeof progress?.remaining === "number" ? `remaining ${progress.remaining}` : null,
+    typeof progress?.complete === "boolean" ? `complete ${progress.complete ? "yes" : "no"}` : null
+  ].filter(Boolean);
+
+  return (
+    <p className="max-w-64 text-xs text-slate-500">
+      {typeof result.jobsRun === "number" ? `${result.jobsRun} job(s) ran.` : "Done."}
+      {details.length > 0 ? ` ${details.join(" | ")}.` : null}
+      {typeof result.remainingReadyJobs === "number"
+        ? ` Ready jobs left: ${result.remainingReadyJobs}.`
+        : null}
+      {result.hasRemainingWork ? " More work remains." : null}
+    </p>
   );
 }

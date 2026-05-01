@@ -110,8 +110,7 @@ export default async function ManuscriptPage({
             variant="secondary"
           />
           <PipelineActionButton
-            endpoint="/api/jobs/run-until-idle"
-            payload={{ manuscriptId: manuscript.id, maxJobs: 3, maxSeconds: 45 }}
+            endpoint={`/api/admin/manuscripts/${manuscript.id}/run-jobs`}
             label="Run manual fallback batch"
             runningLabel="Running..."
             variant="secondary"
