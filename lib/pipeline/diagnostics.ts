@@ -1,5 +1,11 @@
 import type { PipelineJob } from "@prisma/client";
 import {
+  zeroRunReasonForJobs,
+  type PipelineBlockingJob,
+  type RunReadyJobsReason,
+  type RunReadyJobsReasonResult
+} from "@/lib/pipeline/jobRunReasons";
+import {
   canAttemptJob,
   dependencyIdsFromJson,
   isLockStale,
@@ -21,11 +27,14 @@ export type PipelineJobDiagnostic = {
   maxAttempts: number;
   readyAt: string | null;
   lockedBy: string | null;
+  lockedAt: string | null;
   lockExpiresAt: string | null;
+  stale: boolean;
   blockedReason: string | null;
 };
 
 export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
+  const now = new Date();
   const [run, jobs, readiness] = await Promise.all([
     prisma.analysisRun.findFirst({
       where: { manuscriptId },
@@ -50,9 +59,9 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
     stepOrNull(checkpoint.currentStep) ??
     FULL_MANUSCRIPT_PIPELINE_STEPS.find((step) => !completedSteps.has(step)) ??
     null;
-  const diagnostics = jobs.map((job) => jobDiagnostic(job, jobs));
+  const diagnostics = jobs.map((job) => jobDiagnostic(job, jobs, now));
   const nextEligibleJob = diagnostics.find((job) =>
-    isEligibleDiagnostic(job, jobs)
+    isEligibleDiagnostic(job, jobs, now)
   );
   const activeStatuses = new Set<string>([
     PIPELINE_JOB_STATUS.QUEUED,
@@ -63,6 +72,21 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
   const remainingJobs = diagnostics.filter((job) =>
     activeStatuses.has(job.status)
   );
+  const failedJobs = diagnostics.filter(
+    (job) => job.status === PIPELINE_JOB_STATUS.FAILED
+  );
+  const runningJobs = diagnostics.filter(
+    (job) => job.status === PIPELINE_JOB_STATUS.RUNNING
+  );
+  const runnerState =
+    failedJobs.length > 0
+      ? "blocked_by_error"
+      : remainingJobs.length > 0
+        ? "more_work_remains"
+        : "done";
+  const zeroRunDetails: RunReadyJobsReasonResult = nextEligibleJob
+    ? {}
+    : zeroRunReasonForJobs({ state: runnerState, jobs, now });
 
   return {
     manuscriptId,
@@ -77,6 +101,13 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
     currentStep,
     completedSteps: Array.from(completedSteps),
     remainingJobCount: remainingJobs.length,
+    activeRunningJobs: runningJobs.filter((job) => !job.stale),
+    staleRunningJobs: runningJobs.filter((job) => job.stale),
+    manualRunner: {
+      reason: (zeroRunDetails.reason ?? null) as RunReadyJobsReason | null,
+      message: zeroRunDetails.message ?? null,
+      blockingJob: (zeroRunDetails.blockingJob ?? null) as PipelineBlockingJob | null
+    },
     nextEligibleJob: nextEligibleJob
       ? {
           id: nextEligibleJob.id,
@@ -100,7 +131,8 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
 
 function jobDiagnostic(
   job: PipelineJob,
-  allJobs: PipelineJob[]
+  allJobs: PipelineJob[],
+  now: Date
 ): PipelineJobDiagnostic {
   return {
     id: job.id,
@@ -110,20 +142,23 @@ function jobDiagnostic(
     maxAttempts: job.maxAttempts,
     readyAt: job.readyAt?.toISOString() ?? null,
     lockedBy: job.lockedBy,
+    lockedAt: job.lockedAt?.toISOString() ?? null,
     lockExpiresAt: job.lockExpiresAt?.toISOString() ?? null,
+    stale: isLockStale(job, now),
     blockedReason:
       job.status === PIPELINE_JOB_STATUS.BLOCKED
-        ? blockedReason(job, allJobs)
+        ? blockedReason(job, allJobs, now)
         : null
   };
 }
 
 function isEligibleDiagnostic(
   diagnostic: PipelineJobDiagnostic,
-  allJobs: PipelineJob[]
+  allJobs: PipelineJob[],
+  now: Date
 ) {
   const job = allJobs.find((candidate) => candidate.id === diagnostic.id);
-  if (!job || !canAttemptJob(job)) {
+  if (!job || !canAttemptJob(job, now)) {
     return false;
   }
 
@@ -137,12 +172,12 @@ function isEligibleDiagnostic(
   return dependenciesComplete(job, allJobs);
 }
 
-function blockedReason(job: PipelineJob, allJobs: PipelineJob[]) {
-  if (job.readyAt && job.readyAt > new Date()) {
+function blockedReason(job: PipelineJob, allJobs: PipelineJob[], now: Date) {
+  if (job.readyAt && job.readyAt > now) {
     return `Waiting until ${job.readyAt.toISOString()}.`;
   }
 
-  if (job.lockedAt && !isLockStale(job)) {
+  if (job.lockedAt && !isLockStale(job, now)) {
     return `Locked by ${job.lockedBy ?? "worker"} until ${
       job.lockExpiresAt?.toISOString() ?? "lock expiry"
     }.`;

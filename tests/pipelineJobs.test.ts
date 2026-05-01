@@ -28,6 +28,7 @@ import {
   isStepComplete,
   normalizeCheckpoint
 } from "../lib/pipeline/steps";
+import { manuscriptAdminJobRunner } from "../lib/server/manuscriptAdminJobs";
 import { prisma } from "../lib/prisma";
 
 type MutableJob = PipelineJob;
@@ -238,6 +239,175 @@ test("run-until-idle bootstraps missing manuscript jobs before running", async (
   } finally {
     restoreEnv("OPENAI_API_KEY", oldApiKey);
   }
+});
+
+test("ready runner reports a still-locked running manuscript job", async () => {
+  const manuscriptId = "manuscript-running-lock";
+  const checkpoint = checkpointBeforeRunChapterAudits();
+  const runningPlan = plannedPipelineJobs(manuscriptId, checkpoint).find(
+    (job) => job.type === "runChapterAudits"
+  );
+  assert.ok(runningPlan);
+
+  const lockExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  const jobs: MutableJob[] = [
+    mutableJob("running-audits-job", {
+      manuscriptId,
+      type: "runChapterAudits",
+      status: PIPELINE_JOB_STATUS.RUNNING,
+      idempotencyKey: runningPlan.idempotencyKey,
+      lockedAt: new Date(),
+      lockedBy: "inngest:event-active",
+      lockExpiresAt,
+      attempts: 1
+    })
+  ];
+  const run = mutableRun(manuscriptId, checkpoint);
+
+  await withPatchedPrisma(
+    manuscriptRunnerPatches({ manuscriptId, run, jobs }),
+    async () => {
+      const result = await runReadyPipelineJobs({
+        manuscriptId,
+        maxJobs: 1,
+        maxSeconds: 5,
+        workerType: "MANUAL",
+        workerId: "manual:test-active-lock"
+      });
+
+      assert.equal(result.jobsRun, 0);
+      assert.equal(result.reason, "waiting_for_lock_expiry");
+      assert.equal(result.blockingJob?.id, "running-audits-job");
+      assert.equal(result.blockingJob?.type, "runChapterAudits");
+      assert.equal(result.blockingJob?.lockedBy, "inngest:event-active");
+      assert.equal(result.blockingJob?.stale, false);
+      assert.match(result.message ?? "", /runChapterAudits is currently marked running/);
+      assert.match(result.message ?? "", /recovered after the lock expires/);
+    }
+  );
+});
+
+test("ready runner recovers stale running manuscript jobs before retrying them", async () => {
+  const manuscriptId = "manuscript-stale-running";
+  const checkpoint = checkpointBeforeRunChapterAudits();
+  const runningPlan = plannedPipelineJobs(manuscriptId, checkpoint).find(
+    (job) => job.type === "runChapterAudits"
+  );
+  assert.ok(runningPlan);
+
+  const jobs: MutableJob[] = [
+    mutableJob("stale-audits-job", {
+      manuscriptId,
+      type: "runChapterAudits",
+      status: PIPELINE_JOB_STATUS.RUNNING,
+      idempotencyKey: runningPlan.idempotencyKey,
+      lockedAt: new Date(Date.now() - 20 * 60 * 1000),
+      lockedBy: "inngest:event-stale",
+      lockExpiresAt: new Date(Date.now() - 10 * 60 * 1000),
+      attempts: 1,
+      maxAttempts: 3
+    })
+  ];
+  const run = mutableRun(manuscriptId, checkpoint);
+
+  await withPatchedPrisma(
+    manuscriptRunnerPatches({ manuscriptId, run, jobs }),
+    async () => {
+      const result = await runReadyPipelineJobs({
+        manuscriptId,
+        maxJobs: 1,
+        maxSeconds: 5,
+        workerType: "MANUAL",
+        workerId: "manual:test-stale-lock"
+      });
+
+      assert.equal(result.jobsRun, 0);
+      assert.equal(result.reason, "stale_running_job_recovered");
+      assert.equal(result.blockingJob?.id, "stale-audits-job");
+      assert.equal(result.blockingJob?.stale, true);
+      assert.equal(jobs[0].status, PIPELINE_JOB_STATUS.RETRYING);
+      assert.equal(jobs[0].lockedAt, null);
+      assert.equal(jobs[0].lockedBy, null);
+      assert.equal(jobs[0].lockExpiresAt, null);
+      assert.ok(jobs[0].readyAt instanceof Date);
+      assert.equal(result.remainingReadyJobs, 1);
+      assert.match(result.message ?? "", /Recovered stale running job runChapterAudits/);
+    }
+  );
+});
+
+test("zero ready jobs with unfinished work returns a specific runner reason", async () => {
+  const jobs: MutableJob[] = [
+    mutableJob("blocked-rewrite-plan", {
+      type: "createRewritePlan",
+      status: PIPELINE_JOB_STATUS.BLOCKED,
+      idempotencyKey: "blocked-rewrite-plan",
+      dependencyIds: ["missing-dependency"]
+    })
+  ];
+
+  await withPatchedPrisma(
+    [
+      [prisma.pipelineJob, pipelineJobPatch(jobs)],
+      [
+        prisma.workerHeartbeat,
+        {
+          upsert: async (args: { update: Record<string, unknown> }) => args.update
+        }
+      ]
+    ],
+    async () => {
+      const result = await runReadyPipelineJobs({
+        maxJobs: 1,
+        maxSeconds: 5,
+        workerType: "MANUAL",
+        workerId: "manual:test-no-ready"
+      });
+
+      assert.equal(result.jobsRun, 0);
+      assert.equal(result.remainingReadyJobs, 0);
+      assert.equal(result.hasRemainingWork, true);
+      assert.equal(result.reason, "no_ready_jobs_but_unfinished_work");
+      assert.equal(result.blockingJob?.id, "blocked-rewrite-plan");
+      assert.match(result.message ?? "", /no job is currently ready to run/);
+    }
+  );
+});
+
+test("manual manuscript runner response includes an operator-readable lock reason", async () => {
+  const manuscriptId = "manuscript-manual-readable-lock";
+  const checkpoint = checkpointBeforeRunChapterAudits();
+  const runningPlan = plannedPipelineJobs(manuscriptId, checkpoint).find(
+    (job) => job.type === "runChapterAudits"
+  );
+  assert.ok(runningPlan);
+
+  const jobs: MutableJob[] = [
+    mutableJob("manual-running-audits-job", {
+      manuscriptId,
+      type: "runChapterAudits",
+      status: PIPELINE_JOB_STATUS.RUNNING,
+      idempotencyKey: runningPlan.idempotencyKey,
+      lockedAt: new Date(),
+      lockedBy: "inngest:event-visible",
+      lockExpiresAt: new Date(Date.now() + 10 * 60 * 1000),
+      attempts: 1
+    })
+  ];
+  const run = mutableRun(manuscriptId, checkpoint);
+
+  await withPatchedPrisma(
+    manuscriptRunnerPatches({ manuscriptId, run, jobs }),
+    async () => {
+      const result = await manuscriptAdminJobRunner.run(manuscriptId, {});
+
+      assert.equal(result.jobsRun, 0);
+      assert.equal(result.reason, "waiting_for_lock_expiry");
+      assert.equal(result.blockingJob?.type, "runChapterAudits");
+      assert.match(result.message ?? "", /0 jobs ran because runChapterAudits/);
+      assert.match(result.message ?? "", /locked until/);
+    }
+  );
 });
 
 test("partial summarizeChunks progress requeues without exhausting maxAttempts", async () => {
@@ -630,6 +800,48 @@ function pipelineJobPatch(jobs: MutableJob[]) {
       return { count: 1 };
     }
   };
+}
+
+function checkpointBeforeRunChapterAudits() {
+  return {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks",
+      "createEmbeddingsForChunks",
+      "summarizeChunks",
+      "summarizeChapters",
+      "createManuscriptProfile"
+    ],
+    currentStep: "runChapterAudits"
+  };
+}
+
+function manuscriptRunnerPatches(input: {
+  manuscriptId: string;
+  run: MutableRun;
+  jobs: MutableJob[];
+}): Array<[object, Record<string, unknown>]> {
+  return [
+    [
+      prisma.manuscript,
+      {
+        findUnique: async () => ({ id: input.manuscriptId }),
+        update: async (args: { data: Record<string, unknown> }) => ({
+          id: input.manuscriptId,
+          ...args.data
+        })
+      }
+    ],
+    [prisma.analysisRun, analysisRunPatch(input.run)],
+    [prisma.pipelineJob, pipelineJobPatch(input.jobs)],
+    [
+      prisma.workerHeartbeat,
+      {
+        upsert: async (args: { update: Record<string, unknown> }) => args.update
+      }
+    ]
+  ];
 }
 
 function summarizeChunksPatches(input: {

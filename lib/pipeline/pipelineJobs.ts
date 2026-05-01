@@ -25,6 +25,12 @@ import {
   plannedPipelineJobs
 } from "@/lib/pipeline/jobPlanner";
 import {
+  pipelineBlockingJob,
+  zeroRunReasonForJobs,
+  type PipelineBlockingJob,
+  type RunReadyJobsReason
+} from "@/lib/pipeline/jobRunReasons";
+import {
   areDependenciesComplete,
   canAttemptJob,
   dependencyIdsFromJson,
@@ -70,6 +76,22 @@ export type RunReadyJobsOptions = RunPipelineJobOptions & {
 };
 
 export type RunReadyJobsState = "done" | "more_work_remains" | "blocked_by_error";
+
+export type RunReadyPipelineJobsResult = {
+  jobsRun: number;
+  results: RunPipelineJobResult[];
+  readyJobIds: string[];
+  remainingReadyJobs: number;
+  unfinishedJobs: number;
+  failedJobs: number;
+  state: RunReadyJobsState;
+  moreWorkRemains: boolean;
+  hasRemainingWork: boolean;
+  reason?: RunReadyJobsReason;
+  message?: string;
+  blockingJob?: PipelineBlockingJob;
+  recoveredStaleJobs: PipelineBlockingJob[];
+};
 
 export type PipelineJobScope = {
   manuscriptId?: string;
@@ -248,8 +270,18 @@ export async function runReadyPipelineJobs(options: RunReadyJobsOptions = {}) {
     manuscriptId: scope.manuscriptId ?? null,
     corpusBookId: scope.corpusBookId ?? null
   });
-  await releaseStaleLocks(scope);
+  const recoveredStaleJobs = await releaseStaleLocks(scope);
   await unblockReadyJobsForScope(scope);
+
+  if (recoveredStaleJobs.length > 0) {
+    return buildRunReadyPipelineJobsResult({
+      scope,
+      workerType,
+      results,
+      readyJobIds,
+      recoveredStaleJobs
+    });
+  }
 
   while (results.length < maxJobs && Date.now() - startedAt < maxSeconds * 1000) {
     const nextJob = await findNextReadyJob(scope);
@@ -267,37 +299,76 @@ export async function runReadyPipelineJobs(options: RunReadyJobsOptions = {}) {
   }
 
   await unblockReadyJobsForScope(scope);
-  const remainingReadyJobs = await countReadyJobs(scope);
-  const unfinishedJobs = await countUnfinishedPipelineJobs(scope);
-  const failedJobs = await countFailedPipelineJobs(scope);
+  return buildRunReadyPipelineJobsResult({
+    scope,
+    workerType,
+    results,
+    readyJobIds,
+    recoveredStaleJobs
+  });
+}
+
+async function buildRunReadyPipelineJobsResult(input: {
+  scope: PipelineJobScope;
+  workerType: "INNGEST" | "VERCEL_CRON" | "MANUAL";
+  results: RunPipelineJobResult[];
+  readyJobIds: string[];
+  recoveredStaleJobs: PipelineBlockingJob[];
+}): Promise<RunReadyPipelineJobsResult> {
+  const remainingReadyJobs = await countReadyJobs(input.scope);
+  const unfinishedJobs = await countUnfinishedPipelineJobs(input.scope);
+  const failedJobs = await countFailedPipelineJobs(input.scope);
   const state: RunReadyJobsState =
     failedJobs > 0
       ? "blocked_by_error"
       : unfinishedJobs > 0
         ? "more_work_remains"
         : "done";
+  const reasonDetails =
+    input.results.length === 0 && state !== "done"
+      ? await getZeroRunReason(input.scope, state, input.recoveredStaleJobs)
+      : {};
+  const readyJobIds = Array.from(new Set(input.readyJobIds));
 
-  await recordWorkerHeartbeat(workerType, "IDLE", {
-    manuscriptId: scope.manuscriptId ?? null,
-    corpusBookId: scope.corpusBookId ?? null,
-    jobsRun: results.length,
+  await recordWorkerHeartbeat(input.workerType, "IDLE", {
+    manuscriptId: input.scope.manuscriptId ?? null,
+    corpusBookId: input.scope.corpusBookId ?? null,
+    jobsRun: input.results.length,
     remainingReadyJobs,
     unfinishedJobs,
     failedJobs,
-    state
+    state,
+    reason: reasonDetails.reason ?? null,
+    blockingJob: reasonDetails.blockingJob ?? null,
+    recoveredStaleJobs: input.recoveredStaleJobs
   });
 
   return {
-    jobsRun: results.length,
-    results,
-    readyJobIds: Array.from(new Set(readyJobIds)),
+    jobsRun: input.results.length,
+    results: input.results,
+    readyJobIds,
     remainingReadyJobs,
     unfinishedJobs,
     failedJobs,
     state,
     moreWorkRemains: state === "more_work_remains",
-    hasRemainingWork: state !== "done"
+    hasRemainingWork: state !== "done",
+    reason: reasonDetails.reason,
+    message: reasonDetails.message,
+    blockingJob: reasonDetails.blockingJob,
+    recoveredStaleJobs: input.recoveredStaleJobs
   };
+}
+
+async function getZeroRunReason(
+  scope: PipelineJobScope,
+  state: RunReadyJobsState,
+  recoveredStaleJobs: PipelineBlockingJob[]
+) {
+  const jobs =
+    recoveredStaleJobs.length > 0 ? [] : await findPotentialBlockingJobs(scope);
+
+  return zeroRunReasonForJobs({ state, jobs, staleRecoveredJobs: recoveredStaleJobs });
 }
 
 export async function runPipelineJob(
@@ -516,6 +587,7 @@ export async function releaseStaleLocks(scopeOrManuscriptId?: string | PipelineJ
       lockExpiresAt: { lte: now }
     }
   });
+  const recoveredJobs = staleJobs.map((job) => pipelineBlockingJob(job, now));
 
   for (const job of staleJobs) {
     const status = nextStatusAfterJobError({
@@ -544,7 +616,7 @@ export async function releaseStaleLocks(scopeOrManuscriptId?: string | PipelineJ
     }
   }
 
-  return staleJobs.length;
+  return recoveredJobs;
 }
 
 export async function recordWorkerHeartbeat(
@@ -803,6 +875,25 @@ async function unblockReadyJobsForScope(scope: PipelineJobScope) {
   }
 
   return [];
+}
+
+async function findPotentialBlockingJobs(scope: PipelineJobScope) {
+  return prisma.pipelineJob.findMany({
+    where: {
+      ...pipelineJobScopeWhere(scope),
+      status: {
+        in: [
+          PIPELINE_JOB_STATUS.RUNNING,
+          PIPELINE_JOB_STATUS.FAILED,
+          PIPELINE_JOB_STATUS.QUEUED,
+          PIPELINE_JOB_STATUS.RETRYING,
+          PIPELINE_JOB_STATUS.BLOCKED
+        ]
+      }
+    },
+    orderBy: [{ createdAt: "asc" }],
+    take: 50
+  });
 }
 
 async function markJobCompleted(

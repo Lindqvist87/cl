@@ -74,6 +74,17 @@ type PipelineActionResult = {
   jobsRun?: number;
   remainingReadyJobs?: number;
   hasRemainingWork?: boolean;
+  reason?: string;
+  message?: string;
+  blockingJob?: {
+    id: string;
+    type: string;
+    status: string;
+    lockedBy: string | null;
+    lockedAt: string | null;
+    lockExpiresAt: string | null;
+    stale: boolean;
+  };
   progress?: {
     currentStep?: string;
     analyzed?: number;
@@ -86,6 +97,10 @@ type PipelineActionResult = {
 };
 
 function PipelineActionSummary({ result }: { result: PipelineActionResult }) {
+  if (result.message) {
+    return <p className="max-w-64 text-xs text-slate-500">{result.message}</p>;
+  }
+
   const progress = result.progress;
   const details = [
     progress?.currentStep ? `step ${progress.currentStep}` : null,
