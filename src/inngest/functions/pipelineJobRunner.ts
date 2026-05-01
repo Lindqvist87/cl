@@ -17,7 +17,7 @@ export const pipelineJobRunner = inngest.createFunction(
     const result = await step.run("run one pipeline job", () =>
       runPipelineJob(event.data.jobId, {
         workerId: `inngest-job:${event.id ?? Date.now()}`,
-        maxItemsPerStep: 1
+        maxItemsPerStep: 4
       })
     );
 
