@@ -119,7 +119,7 @@ export async function ensureManuscriptPipelineJobs(
     });
     const completedFromCheckpoint = jobPlan.completedFromCheckpoint;
     const shouldRetryFailed =
-      mode === "RESUME" &&
+      (mode === "RESUME" || mode === "FULL_PIPELINE") &&
       existing?.status === PIPELINE_JOB_STATUS.FAILED &&
       existing.attempts < existing.maxAttempts;
     const baseData = {
@@ -236,6 +236,10 @@ export async function runReadyPipelineJobs(options: RunReadyJobsOptions = {}) {
   const startedAt = Date.now();
   const readyJobIds: string[] = [];
   const results: RunPipelineJobResult[] = [];
+
+  if (scope.manuscriptId) {
+    await ensureManuscriptPipelineJobs(scope.manuscriptId, "RESUME");
+  }
 
   await recordWorkerHeartbeat(workerType, "RUNNING", {
     manuscriptId: scope.manuscriptId ?? null,

@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { runFullManuscriptPipeline } from "@/lib/pipeline/manuscriptPipeline";
+import {
+  pipelineStartHttpStatus,
+  startManuscriptPipeline
+} from "@/lib/pipeline/startPipeline";
 
 export const runtime = "nodejs";
 export const maxDuration = 300;
@@ -11,10 +14,12 @@ export async function POST(
   const { id } = await params;
 
   try {
-    const run = await runFullManuscriptPipeline(id);
-    return NextResponse.json({
-      runId: run.id,
-      manuscriptId: run.manuscriptId
+    const result = await startManuscriptPipeline({
+      manuscriptId: id,
+      mode: "FULL_PIPELINE"
+    });
+    return NextResponse.json(result, {
+      status: pipelineStartHttpStatus(result)
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Audit failed.";

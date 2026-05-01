@@ -1,6 +1,6 @@
-import { runFullManuscriptPipeline } from "@/lib/pipeline/manuscriptPipeline";
 import {
   ensureManuscriptPipelineJobs,
+  runReadyPipelineJobs,
   type PipelineStartMode
 } from "@/lib/pipeline/pipelineJobs";
 import {
@@ -16,9 +16,12 @@ export async function startManuscriptPipeline(input: {
   requestedBy?: string | null;
 }) {
   const config = getInngestRuntimeConfig();
+  const ensured = await ensureManuscriptPipelineJobs(
+    input.manuscriptId,
+    input.mode
+  );
 
   if (config.enabled && config.canSendEvents) {
-    const ensured = await ensureManuscriptPipelineJobs(input.manuscriptId, input.mode);
     const payload = manuscriptPipelineStartedPayload({
       manuscriptId: input.manuscriptId,
       requestedBy: input.requestedBy,
@@ -42,13 +45,21 @@ export async function startManuscriptPipeline(input: {
     };
   }
 
-  const run = await runFullManuscriptPipeline(input.manuscriptId);
+  const batch = await runReadyPipelineJobs({
+    manuscriptId: input.manuscriptId,
+    maxJobs: config.maxJobsPerRun,
+    maxSeconds: config.maxSecondsPerRun,
+    workerType: "MANUAL",
+    workerId: "manual:start-pipeline"
+  });
+
   return {
     executionMode: "MANUAL",
     accepted: false,
-    runId: run.id,
-    manuscriptId: run.manuscriptId,
-    status: run.status,
+    runId: ensured.run.id,
+    manuscriptId: input.manuscriptId,
+    jobCount: ensured.jobs.length,
+    batch,
     warnings: config.warnings
   };
 }
