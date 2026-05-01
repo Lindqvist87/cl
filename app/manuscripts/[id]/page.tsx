@@ -5,9 +5,9 @@ import { prisma } from "@/lib/prisma";
 import { AuditButton } from "@/components/AuditButton";
 import { PipelineActionButton } from "@/components/PipelineActionButton";
 import { StructureReviewPanel } from "@/components/StructureReviewPanel";
-import { executionModeLabel, PIPELINE_JOB_STATUS } from "@/lib/pipeline/jobRules";
+import { executionModeLabel } from "@/lib/pipeline/jobRules";
 import type { AuditReportJson } from "@/lib/types";
-import { pipelineProgress } from "@/lib/pipeline/steps";
+import { buildPipelineStatusDisplay } from "@/lib/pipeline/display";
 import { getInngestRuntimeConfig } from "@/src/inngest/events";
 import { buildStructureReviewRows } from "@/lib/editorial/structureReview";
 
@@ -42,13 +42,17 @@ export default async function ManuscriptPage({
   const structured = report?.structured as AuditReportJson | undefined;
   const latestRun = manuscript.runs[0];
   const latestRewrite = manuscript.rewrites[0];
-  const progress = pipelineProgress(latestRun?.checkpoint ?? {});
+  const pipelineStatus = buildPipelineStatusDisplay({
+    run: latestRun,
+    jobs: manuscript.pipelineJobs,
+    totals: { chunks: manuscript.chunkCount }
+  });
   const inngestConfig = getInngestRuntimeConfig();
   const lastInngestEvent = await prisma.inngestEventLog.findFirst({
     where: { manuscriptId: manuscript.id },
     orderBy: { createdAt: "desc" }
   });
-  const jobCounts = countJobsByStatus(manuscript.pipelineJobs);
+  const jobCounts = pipelineStatus.jobCounts;
   const structureRows = buildStructureReviewRows({
     chapters: manuscript.chapters,
     issueCountByChapterId: new Map(
@@ -150,9 +154,10 @@ export default async function ManuscriptPage({
             </ul>
           ) : null}
         </div>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
           <Stat label="Queued" value={String(jobCounts.queued)} />
           <Stat label="Running" value={String(jobCounts.running)} />
+          <Stat label="Blocked" value={String(jobCounts.blocked)} />
           <Stat label="Failed" value={String(jobCounts.failed)} />
           <Stat label="Completed" value={String(jobCounts.completed)} />
         </div>
@@ -165,16 +170,63 @@ export default async function ManuscriptPage({
               Pipeline Progress
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              {progress.completed} of {progress.total} steps complete
+              {pipelineStatus.completedSteps} of {pipelineStatus.totalSteps} steps complete
             </p>
           </div>
           <div className="inline-flex items-center gap-2 text-sm font-semibold">
             <BarChart3 size={18} aria-hidden="true" />
-            {progress.percent}%
+            {pipelineStatus.percent}%
           </div>
         </div>
         <div className="mt-3 h-2 overflow-hidden bg-paper">
-          <div className="h-full bg-accent" style={{ width: `${progress.percent}%` }} />
+          <div className="h-full bg-accent" style={{ width: `${pipelineStatus.percent}%` }} />
+        </div>
+        {pipelineStatus.stepProgressLabel ? (
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-sm font-semibold">
+            <span>{pipelineStatus.stepProgressLabel}</span>
+            {pipelineStatus.remainingLabel ? (
+              <span className="text-slate-500">{pipelineStatus.remainingLabel}</span>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <PipelineDetail
+            label="Current step"
+            value={formatStepName(pipelineStatus.currentStep)}
+          />
+          <PipelineDetail
+            label="Current job status"
+            value={formatNullableStatus(pipelineStatus.currentJobStatus)}
+          />
+          <PipelineDetail
+            label="Completed steps"
+            value={`${pipelineStatus.completedSteps} / ${pipelineStatus.totalSteps}`}
+          />
+          <PipelineDetail
+            label="Analyzed count"
+            value={formatOptionalNumber(pipelineStatus.analyzedCount)}
+          />
+          <PipelineDetail
+            label="Remaining count"
+            value={formatOptionalNumber(pipelineStatus.remainingCount)}
+          />
+          <PipelineDetail label="Complete" value={String(pipelineStatus.complete)} />
+          <PipelineDetail
+            label="Last updated"
+            value={formatDisplayTime(pipelineStatus.lastUpdatedAt)}
+          />
+          <PipelineDetail
+            label="Next blocked step"
+            value={formatStepName(pipelineStatus.nextBlockedStep)}
+          />
+        </div>
+        <div className="mt-3 border border-line bg-paper px-3 py-2 text-sm">
+          <div className="text-xs uppercase tracking-wide text-slate-500">
+            Last error
+          </div>
+          <div className="mt-1 text-slate-700">
+            {pipelineStatus.lastError ?? "None"}
+          </div>
         </div>
       </section>
 
@@ -256,19 +308,13 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function countJobsByStatus(jobs: Array<{ status: string }>) {
-  const queuedStatuses = new Set<string>([
-    PIPELINE_JOB_STATUS.QUEUED,
-    PIPELINE_JOB_STATUS.RETRYING,
-    PIPELINE_JOB_STATUS.BLOCKED
-  ]);
-
-  return {
-    queued: jobs.filter((job) => queuedStatuses.has(job.status)).length,
-    running: jobs.filter((job) => job.status === PIPELINE_JOB_STATUS.RUNNING).length,
-    failed: jobs.filter((job) => job.status === PIPELINE_JOB_STATUS.FAILED).length,
-    completed: jobs.filter((job) => job.status === PIPELINE_JOB_STATUS.COMPLETED).length
-  };
+function PipelineDetail({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="border border-line bg-paper px-3 py-2">
+      <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mt-1 break-words text-sm font-semibold">{value}</div>
+    </div>
+  );
 }
 
 function ReportPanel({
@@ -396,4 +442,26 @@ function formatStatus(status: string) {
     .toLowerCase()
     .replace(/_/g, " ")
     .replace(/^\w/, (char) => char.toUpperCase());
+}
+
+function formatNullableStatus(status: string | null) {
+  return status ? formatStatus(status) : "None";
+}
+
+function formatStepName(step: string | null) {
+  if (!step) {
+    return "None";
+  }
+
+  return step
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/^\w/, (char) => char.toUpperCase());
+}
+
+function formatOptionalNumber(value: number | null) {
+  return typeof value === "number" ? value.toLocaleString() : "Unknown";
+}
+
+function formatDisplayTime(value: string | null) {
+  return value ? new Date(value).toLocaleString() : "Unknown";
 }
