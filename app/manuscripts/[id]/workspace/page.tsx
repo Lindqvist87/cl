@@ -65,7 +65,12 @@ export default async function ManuscriptWorkspacePage({
         </div>
         <div className="grid grid-cols-2 gap-3 text-sm sm:grid-cols-3">
           <Stat label="Detected sections" value={String(workspace.structureRows.length)} />
-          <Stat label="Open issues" value={String(workspace.keyIssues.length)} />
+          <Stat
+            label="Open issues"
+            value={String(
+              workspace.issueGroups.reduce((total, group) => total + group.count, 0)
+            )}
+          />
           <Stat label="Plan items" value={String(workspace.rewritePlanItems.length)} />
         </div>
       </div>
@@ -82,7 +87,8 @@ export default async function ManuscriptWorkspacePage({
               </p>
             ) : (
               <p className="mt-3 text-sm text-slate-500">
-                No global summary is available yet.
+                No global summary is available yet. Run or resume the full manuscript
+                analysis through the whole-book audit step to create it.
               </p>
             )}
           </section>
@@ -94,27 +100,44 @@ export default async function ManuscriptWorkspacePage({
                 Key Editorial Issues
               </h2>
             </div>
-            <div className="divide-y divide-line">
-              {workspace.keyIssues.length === 0 ? (
+            <div>
+              {workspace.issueGroups.length === 0 ? (
                 <p className="px-4 py-6 text-sm text-slate-500">
                   No unresolved findings are available yet.
                 </p>
               ) : (
-                workspace.keyIssues.map((issue) => (
-                  <div key={issue.id} className="px-4 py-4">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <SeverityBadge severity={issue.severity} />
-                      <span className="text-sm font-semibold">{issue.issueType}</span>
-                      {issue.decisionStatus ? (
-                        <span className="text-xs text-slate-500">
-                          {formatStatus(issue.decisionStatus)}
-                        </span>
-                      ) : null}
+                <div className="space-y-5 px-4 py-4">
+                  <div>
+                    <h3 className="text-sm font-semibold">Top 5 highest priority issues</h3>
+                    <div className="mt-3 divide-y divide-line border-y border-line">
+                      {workspace.keyIssues.map((issue) => (
+                        <IssueSummary key={issue.id} issue={issue} />
+                      ))}
                     </div>
-                    <p className="mt-2 text-sm text-slate-700">{issue.problem}</p>
-                    <p className="mt-1 text-sm text-slate-600">{issue.recommendation}</p>
                   </div>
-                ))
+
+                  <div>
+                    <h3 className="text-sm font-semibold">Grouped by issue type</h3>
+                    <div className="mt-3 space-y-3">
+                      {workspace.issueGroups.map((group) => (
+                        <section key={group.issueType} className="border border-line bg-paper p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="text-sm font-semibold">{group.issueType}</div>
+                            <div className="flex items-center gap-2 text-xs text-slate-500">
+                              <span>{group.count} issue{group.count === 1 ? "" : "s"}</span>
+                              <SeverityBadge severity={group.maxSeverity} />
+                            </div>
+                          </div>
+                          <div className="mt-2 divide-y divide-line">
+                            {group.topIssues.slice(0, 3).map((issue) => (
+                              <IssueSummary key={issue.id} issue={issue} compact />
+                            ))}
+                          </div>
+                        </section>
+                      ))}
+                    </div>
+                  </div>
+                </div>
               )}
             </div>
           </section>
@@ -129,7 +152,8 @@ export default async function ManuscriptWorkspacePage({
             <div className="divide-y divide-line">
               {workspace.rewritePlanItems.length === 0 ? (
                 <p className="px-4 py-6 text-sm text-slate-500">
-                  No rewrite plan is available yet.
+                  Rewrite plan not generated yet. The createRewritePlan pipeline
+                  step creates this after the manuscript audit and comparison steps.
                 </p>
               ) : (
                 workspace.rewritePlanItems.map((item) => (
@@ -153,20 +177,34 @@ export default async function ManuscriptWorkspacePage({
         </div>
 
         <aside className="space-y-6">
+          <ReadinessPanel readiness={workspace.readiness} />
+
           <section className="border border-line bg-white p-4 shadow-panel">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
               Next Best Editorial Action
             </h2>
-            {nextAction ? (
+            {nextAction && workspace.nextActionDisplay ? (
               <div className="mt-4 space-y-3">
                 <PriorityBadge priority={nextAction.priority} />
                 <div>
                   <h3 className="text-lg font-semibold">{nextAction.actionTitle}</h3>
                   <p className="mt-1 text-sm text-slate-500">
-                    Detected section {nextAction.targetChapter.order}: {nextAction.targetChapter.title}
+                    {workspace.nextActionDisplay.selectedSection}
                   </p>
                 </div>
-                <p className="text-sm leading-6 text-slate-700">{nextAction.reason}</p>
+                <NextActionFact label="Reason" value={workspace.nextActionDisplay.reason} />
+                <NextActionFact
+                  label="Severity"
+                  value={`S${workspace.nextActionDisplay.severity}`}
+                />
+                <NextActionFact
+                  label="Issue count"
+                  value={String(workspace.nextActionDisplay.issueCount)}
+                />
+                <NextActionFact
+                  label="Suggested first step"
+                  value={workspace.nextActionDisplay.suggestedFirstStep}
+                />
                 {nextAction.affectedChapters.length > 0 ? (
                   <p className="text-xs text-slate-500">
                     Affects {nextAction.affectedChapters.join(", ")}
@@ -193,6 +231,101 @@ export default async function ManuscriptWorkspacePage({
           />
         </aside>
       </section>
+    </div>
+  );
+}
+
+function ReadinessPanel({
+  readiness
+}: {
+  readiness: {
+    sectionsDetected: number;
+    issuesFound: number;
+    globalSummaryAvailable: boolean;
+    rewritePlanAvailable: boolean;
+    decisionsStored: boolean;
+    analysisStatus: string;
+  };
+}) {
+  return (
+    <section className="border border-line bg-white p-4 shadow-panel">
+      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+        Workspace Readiness
+      </h2>
+      <div className="mt-3 divide-y divide-line border-y border-line text-sm">
+        <ReadinessRow label="Sections detected" value={String(readiness.sectionsDetected)} />
+        <ReadinessRow label="Issues found" value={String(readiness.issuesFound)} />
+        <ReadinessRow
+          label="Global summary"
+          value={readiness.globalSummaryAvailable ? "Yes" : "No"}
+        />
+        <ReadinessRow
+          label="Rewrite plan"
+          value={readiness.rewritePlanAvailable ? "Yes" : "No"}
+        />
+        <ReadinessRow
+          label="Decisions stored"
+          value={readiness.decisionsStored ? "Yes" : "No"}
+        />
+        <ReadinessRow label="Analysis status" value={formatStatus(readiness.analysisStatus)} />
+      </div>
+      {!readiness.decisionsStored ? (
+        <p className="mt-3 text-sm text-slate-500">No editorial decisions yet.</p>
+      ) : null}
+    </section>
+  );
+}
+
+function ReadinessRow({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex items-center justify-between gap-4 py-2">
+      <span className="text-slate-500">{label}</span>
+      <span className="font-semibold">{value}</span>
+    </div>
+  );
+}
+
+function IssueSummary({
+  issue,
+  compact = false
+}: {
+  issue: {
+    chapterLabel: string;
+    severity: number;
+    issueType: string;
+    problem: string;
+    recommendation: string;
+    decisionStatus: string | null;
+  };
+  compact?: boolean;
+}) {
+  return (
+    <div className={compact ? "py-3" : "py-4"}>
+      <div className="flex flex-wrap items-center gap-2">
+        <SeverityBadge severity={issue.severity} />
+        <span className="text-sm font-semibold">{issue.issueType}</span>
+        <span className="text-xs text-slate-500">{issue.chapterLabel}</span>
+        {issue.decisionStatus ? (
+          <span className="text-xs text-slate-500">
+            {formatStatus(issue.decisionStatus)}
+          </span>
+        ) : null}
+      </div>
+      <p className="mt-2 text-sm text-slate-700">{issue.problem}</p>
+      {!compact ? (
+        <p className="mt-1 text-sm text-slate-600">{issue.recommendation}</p>
+      ) : null}
+    </div>
+  );
+}
+
+function NextActionFact({ label, value }: { label: string; value: string }) {
+  return (
+    <div>
+      <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+        {label}
+      </div>
+      <p className="mt-1 text-sm leading-6 text-slate-700">{value}</p>
     </div>
   );
 }

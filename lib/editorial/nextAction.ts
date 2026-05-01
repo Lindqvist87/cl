@@ -53,6 +53,9 @@ export type NextEditorialAction = {
   };
   actionTitle: string;
   reason: string;
+  severity: number;
+  issueCount: number;
+  suggestedFirstStep: string;
   priority: "critical" | "high" | "medium" | "low";
   score: number;
   relatedIssueIds: string[];
@@ -91,6 +94,10 @@ export function nextBestEditorialAction(
       const topFinding = unresolvedFindings
         .slice()
         .sort((a, b) => b.severity - a.severity || timestamp(a.createdAt) - timestamp(b.createdAt))[0];
+      const maxSeverity = unresolvedFindings.reduce(
+        (max, finding) => Math.max(max, finding.severity),
+        0
+      );
       const chapterDecision = latestChapterDecision(decisions, chapter.id, latestPlan?.id);
       const chapterPlanResolved = isResolvedDecisionStatus(chapterDecision?.status);
 
@@ -143,6 +150,9 @@ export function nextBestEditorialAction(
         },
         actionTitle,
         reason,
+        severity: maxSeverity,
+        issueCount: unresolvedFindings.length,
+        suggestedFirstStep: suggestedFirstStep(topFinding, planInfo.suggestedFirstStep),
         priority: priorityForScore(score),
         score,
         relatedIssueIds,
@@ -168,6 +178,9 @@ export function nextBestEditorialAction(
     targetChapter: best.targetChapter,
     actionTitle: best.actionTitle,
     reason: best.reason,
+    severity: best.severity,
+    issueCount: best.issueCount,
+    suggestedFirstStep: best.suggestedFirstStep,
     priority: best.priority,
     score: Math.round(best.score * 10) / 10,
     relatedIssueIds: best.relatedIssueIds,
@@ -278,7 +291,14 @@ function chapterPlanInfo(plan: EditorialRewritePlanInput, chapter: EditorialChap
     hasPlan: true,
     priorityScore: priorityScore(match.priority),
     priorityLabel: priorityLabel(match.priority),
-    affectedChapters: extractAffectedChapters(match)
+    affectedChapters: extractAffectedChapters(match),
+    suggestedFirstStep: firstString(
+      match.firstStep,
+      match.suggestedFirstStep,
+      match.action,
+      match.plan,
+      match.recommendation
+    )
   };
 }
 
@@ -287,8 +307,28 @@ function emptyPlanInfo() {
     hasPlan: false,
     priorityScore: 0,
     priorityLabel: undefined as string | undefined,
-    affectedChapters: [] as string[]
+    affectedChapters: [] as string[],
+    suggestedFirstStep: undefined as string | undefined
   };
+}
+
+function suggestedFirstStep(
+  finding: EditorialFindingInput | undefined,
+  planStep: string | undefined
+) {
+  if (finding?.rewriteInstruction) {
+    return finding.rewriteInstruction;
+  }
+
+  if (finding?.recommendation) {
+    return finding.recommendation;
+  }
+
+  if (planStep) {
+    return planStep;
+  }
+
+  return "Open the section workspace and review the available findings before drafting changes.";
 }
 
 function matchesChapterPlan(candidate: unknown, chapter: EditorialChapterInput) {
@@ -364,6 +404,16 @@ function normalize(value: unknown) {
   return String(value ?? "")
     .trim()
     .toLowerCase();
+}
+
+function firstString(...values: unknown[]) {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+
+  return undefined;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -2,7 +2,12 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { transitionDecisionStatus } from "../lib/editorial/decisions";
 import { nextBestEditorialAction } from "../lib/editorial/nextAction";
-import { aggregateEditorialWorkspaceData } from "../lib/editorial/workspaceData";
+import {
+  aggregateEditorialWorkspaceData,
+  buildNextActionDisplayData,
+  calculateWorkspaceReadiness,
+  groupEditorialIssuesByType
+} from "../lib/editorial/workspaceData";
 
 const chapters = [
   { id: "c1", order: 1, title: "Opening", status: "PENDING", wordCount: 3000 },
@@ -24,7 +29,8 @@ const findings = [
     issueType: "Continuity",
     severity: 5,
     problem: "Character motivation contradicts the prior chapter.",
-    recommendation: "Align the motivation with the established promise."
+    recommendation: "Align the motivation with the established promise.",
+    rewriteInstruction: "Rewrite the motivation beat before changing later scenes."
   }
 ];
 
@@ -39,6 +45,12 @@ test("next best editorial action prioritizes the highest impact chapter", () => 
   assert.equal(action?.targetChapter.id, "c2");
   assert.equal(action?.relatedIssueIds.includes("f2"), true);
   assert.equal(action?.priority, "high");
+  assert.equal(action?.severity, 5);
+  assert.equal(action?.issueCount, 1);
+  assert.equal(
+    action?.suggestedFirstStep,
+    "Rewrite the motivation beat before changing later scenes."
+  );
 });
 
 test("decision status transitions are explicit and immutable", () => {
@@ -123,10 +135,21 @@ test("workspace data aggregation rolls up issues decisions and next action", () 
 
   assert.equal(workspace.keyIssues.length, 1);
   assert.equal(workspace.keyIssues[0].id, "f1");
+  assert.deepEqual(workspace.readiness, {
+    sectionsDetected: 2,
+    issuesFound: 2,
+    globalSummaryAvailable: false,
+    rewritePlanAvailable: true,
+    decisionsStored: true,
+    analysisStatus: "NOT_STARTED"
+  });
+  assert.equal(workspace.issueGroups.length, 1);
+  assert.equal(workspace.issueGroups[0].issueType, "Pacing");
   assert.equal(workspace.chapterRows.find((chapter) => chapter.id === "c2")?.issueCount, 0);
   assert.equal(workspace.structureRows.find((section) => section.id === "c2")?.issueCount, 1);
   assert.equal(workspace.rewritePlanItems.length, 1);
   assert.equal(workspace.nextAction?.targetChapter.id, "c1");
+  assert.equal(workspace.nextActionDisplay?.selectedSection, "Section 1: Opening");
 });
 
 test("workspace data aggregation includes lightweight structure review rows", () => {
@@ -175,4 +198,84 @@ test("workspace data aggregation includes lightweight structure review rows", ()
       { title: "3.", wordCount: 800, issueCount: 0, currentType: "section" }
     ]
   );
+});
+
+test("workspace readiness calculation exposes availability flags", () => {
+  const readiness = calculateWorkspaceReadiness({
+    manuscript: {
+      id: "m1",
+      title: "Draft",
+      status: "PIPELINE_RUNNING",
+      analysisStatus: "RUNNING"
+    },
+    chapters,
+    findings,
+    decisions: [],
+    rewritePlans: [],
+    globalSummary: ""
+  });
+
+  assert.deepEqual(readiness, {
+    sectionsDetected: 2,
+    issuesFound: 2,
+    globalSummaryAvailable: false,
+    rewritePlanAvailable: false,
+    decisionsStored: false,
+    analysisStatus: "RUNNING"
+  });
+});
+
+test("issue grouping counts by type and keeps top priority issues first", () => {
+  const grouped = groupEditorialIssuesByType({
+    chapters,
+    findings: [
+      ...findings,
+      {
+        id: "f3",
+        chapterId: "c1",
+        issueType: "Pacing",
+        severity: 4,
+        problem: "Middle scene repeats the opening beat.",
+        recommendation: "Compress the repeated beat."
+      },
+      {
+        id: "f4",
+        chapterId: "c1",
+        issueType: "Pacing",
+        severity: 1,
+        problem: "Minor sentence rhythm issue.",
+        recommendation: "Smooth the sentence."
+      }
+    ]
+  });
+
+  assert.equal(grouped[0].issueType, "Continuity");
+  assert.equal(grouped[0].count, 1);
+  assert.equal(grouped[0].topIssues[0].id, "f2");
+  assert.equal(grouped[1].issueType, "Pacing");
+  assert.equal(grouped[1].count, 3);
+  assert.deepEqual(
+    grouped[1].topIssues.map((issue) => issue.id),
+    ["f3", "f1", "f4"]
+  );
+});
+
+test("next action display data includes selected section and first step", () => {
+  const action = nextBestEditorialAction({
+    chapters,
+    findings,
+    decisions: [],
+    rewrites: []
+  });
+  const display = buildNextActionDisplayData(action);
+
+  assert.equal(display?.selectedSection, "Section 2: Breakout");
+  assert.equal(display?.severity, 5);
+  assert.equal(display?.issueCount, 1);
+  assert.equal(display?.priority, "high");
+  assert.equal(
+    display?.suggestedFirstStep,
+    "Rewrite the motivation beat before changing later scenes."
+  );
+  assert.match(display?.reason ?? "", /highest severity 5/);
 });
