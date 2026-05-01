@@ -124,6 +124,55 @@ test("workspace data aggregation rolls up issues decisions and next action", () 
   assert.equal(workspace.keyIssues.length, 1);
   assert.equal(workspace.keyIssues[0].id, "f1");
   assert.equal(workspace.chapterRows.find((chapter) => chapter.id === "c2")?.issueCount, 0);
+  assert.equal(workspace.structureRows.find((section) => section.id === "c2")?.issueCount, 1);
   assert.equal(workspace.rewritePlanItems.length, 1);
   assert.equal(workspace.nextAction?.targetChapter.id, "c1");
+});
+
+test("workspace data aggregation includes lightweight structure review rows", () => {
+  const workspace = aggregateEditorialWorkspaceData({
+    manuscript: {
+      id: "m1",
+      title: "Draft",
+      status: "UPLOADED"
+    },
+    chapters: [
+      { id: "c1", order: 1, title: "Chapter 1", status: "PENDING", wordCount: 2500 },
+      { id: "c2", order: 2, title: "Scene 2", status: "PENDING", wordCount: 1200 },
+      { id: "c3", order: 3, title: "3.", status: "PENDING", wordCount: 800 }
+    ],
+    findings: [
+      {
+        id: "f1",
+        chapterId: "c1",
+        issueType: "Pacing",
+        severity: 2,
+        problem: "Opening spends too long in setup.",
+        recommendation: "Move the inciting pressure earlier."
+      },
+      {
+        id: "f2",
+        chapterId: "c1",
+        issueType: "Continuity",
+        severity: 3,
+        problem: "Motivation is unclear.",
+        recommendation: "Clarify the choice."
+      }
+    ],
+    decisions: []
+  });
+
+  assert.deepEqual(
+    workspace.structureRows.map((row) => ({
+      title: row.title,
+      wordCount: row.wordCount,
+      issueCount: row.issueCount,
+      currentType: row.currentType
+    })),
+    [
+      { title: "Chapter 1", wordCount: 2500, issueCount: 2, currentType: "chapter" },
+      { title: "Scene 2", wordCount: 1200, issueCount: 0, currentType: "scene" },
+      { title: "3.", wordCount: 800, issueCount: 0, currentType: "section" }
+    ]
+  );
 });

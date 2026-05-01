@@ -10,6 +10,7 @@ import {
   type EditorialRewritePlanInput,
   nextBestEditorialAction
 } from "@/lib/editorial/nextAction";
+import { buildStructureReviewRows } from "@/lib/editorial/structureReview";
 
 export type EditorialWorkspaceInput = {
   manuscript: {
@@ -87,7 +88,11 @@ export function aggregateEditorialWorkspaceData(input: EditorialWorkspaceInput) 
       rewrites: input.rewrites,
       rewritePlans: input.rewritePlans
     }),
-    chapterRows
+    chapterRows,
+    structureRows: buildStructureReviewRows({
+      chapters: input.chapters,
+      findings: input.findings
+    })
   };
 }
 

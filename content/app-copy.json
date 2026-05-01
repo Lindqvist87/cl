@@ -14,7 +14,7 @@
     "emptyState": "No manuscripts uploaded yet.",
     "metrics": {
       "words": "Words",
-      "chapters": "Chapters",
+      "chapters": "Detected sections",
       "status": "Status"
     }
   },

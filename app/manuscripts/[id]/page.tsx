@@ -4,10 +4,12 @@ import { BarChart3, Download, FileText } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { AuditButton } from "@/components/AuditButton";
 import { PipelineActionButton } from "@/components/PipelineActionButton";
+import { StructureReviewPanel } from "@/components/StructureReviewPanel";
 import { executionModeLabel, PIPELINE_JOB_STATUS } from "@/lib/pipeline/jobRules";
 import type { AuditReportJson } from "@/lib/types";
 import { pipelineProgress } from "@/lib/pipeline/steps";
 import { getInngestRuntimeConfig } from "@/src/inngest/events";
+import { buildStructureReviewRows } from "@/lib/editorial/structureReview";
 
 export const dynamic = "force-dynamic";
 
@@ -20,7 +22,10 @@ export default async function ManuscriptPage({
   const manuscript = await prisma.manuscript.findUnique({
     where: { id },
     include: {
-      chapters: { orderBy: { order: "asc" } },
+      chapters: {
+        orderBy: { order: "asc" },
+        include: { _count: { select: { findings: true } } }
+      },
       reports: { orderBy: { createdAt: "desc" }, take: 1 },
       runs: { orderBy: { createdAt: "desc" }, take: 1 },
       rewrites: { orderBy: { createdAt: "desc" }, take: 1 },
@@ -44,6 +49,12 @@ export default async function ManuscriptPage({
     orderBy: { createdAt: "desc" }
   });
   const jobCounts = countJobsByStatus(manuscript.pipelineJobs);
+  const structureRows = buildStructureReviewRows({
+    chapters: manuscript.chapters,
+    issueCountByChapterId: new Map(
+      manuscript.chapters.map((chapter) => [chapter.id, chapter._count.findings])
+    )
+  });
 
   return (
     <div className="space-y-6">
@@ -110,7 +121,7 @@ export default async function ManuscriptPage({
 
       <section className="grid gap-3 sm:grid-cols-4">
         <Stat label="Words" value={manuscript.wordCount.toLocaleString()} />
-        <Stat label="Chapters" value={String(manuscript.chapterCount)} />
+        <Stat label="Detected sections" value={String(manuscript.chapterCount)} />
         <Stat label="Chunks" value={String(manuscript.chunkCount)} />
         <Stat label="Analysis" value={formatStatus(manuscript.analysisStatus)} />
       </section>
@@ -197,26 +208,12 @@ export default async function ManuscriptPage({
         </section>
       ) : null}
 
-      <section className="grid gap-6 lg:grid-cols-[280px_1fr]">
-        <div className="border border-line bg-white shadow-panel">
-          <div className="border-b border-line px-4 py-3 text-sm font-semibold">
-            Chapters
-          </div>
-          <div className="max-h-[520px] overflow-auto">
-            {manuscript.chapters.map((chapter) => (
-              <Link
-                key={chapter.id}
-                href={`/manuscripts/${manuscript.id}/chapters/${chapter.id}/workspace`}
-                className="block border-b border-line px-4 py-3 last:border-b-0 hover:bg-paper"
-              >
-                <div className="text-sm font-semibold">{chapter.title}</div>
-                <div className="mt-1 text-xs text-slate-500">
-                  {chapter.wordCount.toLocaleString()} words
-                </div>
-              </Link>
-            ))}
-          </div>
-        </div>
+      <section className="grid gap-6 lg:grid-cols-[minmax(520px,0.9fr)_1fr]">
+        <StructureReviewPanel
+          rows={structureRows}
+          title="Detected Sections"
+          getHref={(row) => `/manuscripts/${manuscript.id}/chapters/${row.id}/workspace`}
+        />
 
         <div className="space-y-6">
           {report && structured ? (
@@ -228,7 +225,7 @@ export default async function ManuscriptPage({
           ) : (
             <div className="border border-line bg-white p-6 text-sm text-slate-600 shadow-panel">
               No audit report yet. Run the manuscript audit to generate the
-              executive summary, ranked issues, chapter notes, and rewrite
+              executive summary, ranked issues, section notes, and rewrite
               strategy.
             </div>
           )}
@@ -347,7 +344,7 @@ function ReportPanel({
         </div>
 
         <div>
-          <h3 className="text-lg font-semibold">Chapter-by-Chapter Notes</h3>
+          <h3 className="text-lg font-semibold">Section-by-Section Notes</h3>
           <div className="mt-3 space-y-3">
             {report.chapterNotes.map((chapter) => (
               <div key={chapter.chapter} className="border border-line p-3">

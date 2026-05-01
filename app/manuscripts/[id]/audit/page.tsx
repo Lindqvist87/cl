@@ -119,7 +119,7 @@ export default async function ManuscriptAuditPage({
       <section className="border border-line bg-white shadow-panel">
         <div className="border-b border-line px-4 py-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-            Chapter-by-Chapter Findings
+            Section-by-Section Findings
           </h2>
         </div>
         <div className="divide-y divide-line">
