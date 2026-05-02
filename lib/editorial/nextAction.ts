@@ -3,11 +3,13 @@ import {
   isResolvedDecisionStatus,
   latestDecisionByFinding
 } from "@/lib/editorial/decisions";
+import type { EditorialPriority } from "@/lib/editorial/findingAggregation";
 
 export type EditorialChapterInput = {
   id: string;
   order: number;
   title: string;
+  heading?: string | null;
   status?: string | null;
   summary?: string | null;
   wordCount?: number;
@@ -16,9 +18,11 @@ export type EditorialChapterInput = {
 export type EditorialFindingInput = {
   id: string;
   chapterId?: string | null;
+  chunkId?: string | null;
   issueType: string;
   severity: number;
   problem: string;
+  evidence?: string | null;
   recommendation: string;
   rewriteInstruction?: string | null;
   createdAt?: Date | string;
@@ -43,6 +47,7 @@ export type NextEditorialActionInput = {
   decisions?: EditorialDecisionRecord[];
   rewrites?: EditorialRewriteInput[];
   rewritePlans?: EditorialRewritePlanInput[];
+  aggregatedPriorities?: EditorialPriority[];
 };
 
 export type NextEditorialAction = {
@@ -56,10 +61,12 @@ export type NextEditorialAction = {
   severity: number;
   issueCount: number;
   suggestedFirstStep: string;
+  whatToIgnoreForNow?: string;
   priority: "critical" | "high" | "medium" | "low";
   score: number;
   relatedIssueIds: string[];
   affectedChapters: string[];
+  sourcePriorityId?: string;
 };
 
 type Candidate = NextEditorialAction & {
@@ -73,12 +80,21 @@ export function nextBestEditorialAction(
     return null;
   }
 
+  const priorityAction = nextActionFromAggregatedPriorities(
+    input.chapters,
+    input.aggregatedPriorities ?? []
+  );
+
+  if (priorityAction) {
+    return priorityAction;
+  }
+
   const decisions = input.decisions ?? [];
   const decisionByFinding = latestDecisionByFinding(decisions);
   const latestPlan = latestRewritePlan(input.rewritePlans ?? []);
   const latestRewriteByChapter = latestRewriteStatusByChapter(input.rewrites ?? []);
   const candidates = input.chapters
-    .map((chapter, index) => {
+    .map((chapter, index): Candidate | null => {
       const localFindings = input.findings.filter((finding) => finding.chapterId === chapter.id);
       const unresolvedFindings = localFindings.filter((finding) => {
         const decision = decisionByFinding.get(finding.id);
@@ -153,6 +169,7 @@ export function nextBestEditorialAction(
         severity: maxSeverity,
         issueCount: unresolvedFindings.length,
         suggestedFirstStep: suggestedFirstStep(topFinding, planInfo.suggestedFirstStep),
+        whatToIgnoreForNow: undefined,
         priority: priorityForScore(score),
         score,
         relatedIssueIds,
@@ -181,10 +198,64 @@ export function nextBestEditorialAction(
     severity: best.severity,
     issueCount: best.issueCount,
     suggestedFirstStep: best.suggestedFirstStep,
+    whatToIgnoreForNow: best.whatToIgnoreForNow,
     priority: best.priority,
     score: Math.round(best.score * 10) / 10,
     relatedIssueIds: best.relatedIssueIds,
-    affectedChapters: best.affectedChapters
+    affectedChapters: best.affectedChapters,
+    sourcePriorityId: best.sourcePriorityId
+  };
+}
+
+function nextActionFromAggregatedPriorities(
+  chapters: EditorialChapterInput[],
+  priorities: EditorialPriority[]
+): NextEditorialAction | null {
+  const firstActionablePriority = priorities.find((priority) => priority.shouldActNow) ??
+    priorities[0];
+
+  if (!firstActionablePriority) {
+    return null;
+  }
+
+  const targetChapter =
+    firstActionablePriority.affectedSectionIds
+      .map((sectionId) => chapters.find((chapter) => chapter.id === sectionId))
+      .find((chapter): chapter is EditorialChapterInput => Boolean(chapter)) ??
+    chapters[0];
+
+  if (!targetChapter) {
+    return null;
+  }
+
+  const reasonParts = [
+    `${firstActionablePriority.issueCount} related finding${firstActionablePriority.issueCount === 1 ? "" : "s"}`,
+    `${firstActionablePriority.affectedSectionIds.length || "manuscript-level"} affected section${firstActionablePriority.affectedSectionIds.length === 1 ? "" : "s"}`,
+    `display priority ${firstActionablePriority.displayPriority}`,
+    `raw severity ${firstActionablePriority.rawSeverityRange}`
+  ];
+
+  if (firstActionablePriority.hasFragmentContext) {
+    reasonParts.push("short/title-like section issues are contextualized");
+  }
+
+  return {
+    targetChapter: {
+      id: targetChapter.id,
+      order: targetChapter.order,
+      title: targetChapter.title
+    },
+    actionTitle: firstActionablePriority.recommendedAction,
+    reason: reasonParts.join("; "),
+    severity: firstActionablePriority.rawSeverityMax,
+    issueCount: firstActionablePriority.issueCount,
+    suggestedFirstStep: firstActionablePriority.firstConcreteStep,
+    whatToIgnoreForNow: firstActionablePriority.whatToIgnoreForNow,
+    priority: firstActionablePriority.displayPriority,
+    score: firstActionablePriority.displayScore,
+    relatedIssueIds: firstActionablePriority.rawFindingIds,
+    affectedChapters: firstActionablePriority.affectedSectionLabels,
+    sourcePriorityId: firstActionablePriority.priorityId
   };
 }
 

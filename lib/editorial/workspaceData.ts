@@ -11,6 +11,7 @@ import {
   type NextEditorialAction,
   nextBestEditorialAction
 } from "@/lib/editorial/nextAction";
+import { aggregateEditorialFindingPriorities } from "@/lib/editorial/findingAggregation";
 import { buildStructureReviewRows } from "@/lib/editorial/structureReview";
 
 export type EditorialWorkspaceInput = {
@@ -63,6 +64,8 @@ export type NextEditorialActionDisplay = {
   severity: number;
   issueCount: number;
   suggestedFirstStep: string;
+  whatToIgnoreForNow: string | null;
+  affectedSections: string[];
   priority: NextEditorialAction["priority"];
 };
 
@@ -78,6 +81,11 @@ export function aggregateEditorialWorkspaceData(input: EditorialWorkspaceInput) 
     .sort((a, b) => compareFindingsByPriority(input.chapters, a, b))
     .slice(0, 5)
     .map((finding) => displayIssue(input.chapters, decisionByFinding, finding));
+  const editorialPriorities = aggregateEditorialFindingPriorities({
+    chapters: input.chapters,
+    findings: input.findings,
+    decisions
+  });
   const chapterRows = input.chapters.map((chapter) => {
     const chapterFindings = unresolvedFindings.filter(
       (finding) => finding.chapterId === chapter.id
@@ -109,7 +117,8 @@ export function aggregateEditorialWorkspaceData(input: EditorialWorkspaceInput) 
     findings: input.findings,
     decisions,
     rewrites: input.rewrites,
-    rewritePlans: input.rewritePlans
+    rewritePlans: input.rewritePlans,
+    aggregatedPriorities: editorialPriorities
   });
 
   return {
@@ -124,6 +133,7 @@ export function aggregateEditorialWorkspaceData(input: EditorialWorkspaceInput) 
       globalSummary: input.globalSummary
     }),
     keyIssues: topPriorityIssues,
+    editorialPriorities,
     issueGroups: groupEditorialIssuesByType({
       chapters: input.chapters,
       findings: input.findings,
@@ -204,6 +214,8 @@ export function buildNextActionDisplayData(
     severity: action.severity,
     issueCount: action.issueCount,
     suggestedFirstStep: action.suggestedFirstStep,
+    whatToIgnoreForNow: action.whatToIgnoreForNow ?? null,
+    affectedSections: action.affectedChapters,
     priority: action.priority
   };
 }

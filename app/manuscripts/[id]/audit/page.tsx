@@ -4,6 +4,7 @@ import { BookOpen, Download } from "lucide-react";
 import { AnalysisPassType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { AuditReportJson, JsonRecord } from "@/lib/types";
+import { aggregateEditorialFindingPriorities } from "@/lib/editorial/findingAggregation";
 
 export const dynamic = "force-dynamic";
 
@@ -17,6 +18,7 @@ export default async function ManuscriptAuditPage({
     where: { id },
     include: {
       reports: { orderBy: { createdAt: "desc" }, take: 1 },
+      chapters: { orderBy: { order: "asc" } },
       findings: {
         orderBy: [{ severity: "desc" }, { createdAt: "asc" }],
         include: { chapter: true },
@@ -52,6 +54,11 @@ export default async function ManuscriptAuditPage({
     (output) => output.passType === AnalysisPassType.TREND_COMPARISON
   );
   const rewritePlan = manuscript.rewritePlans[0];
+  const priorityThemes = aggregateEditorialFindingPriorities({
+    chapters: manuscript.chapters,
+    findings: manuscript.findings,
+    limit: 6
+  });
 
   return (
     <div className="space-y-6">
@@ -94,6 +101,23 @@ export default async function ManuscriptAuditPage({
         <p className="mt-2 text-sm leading-6 text-slate-700">
           {structured?.executiveSummary ?? "No audit report has been generated yet."}
         </p>
+      </section>
+
+      <section className="border border-line bg-white shadow-panel">
+        <div className="border-b border-line px-4 py-3">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+            Priority Themes
+          </h2>
+        </div>
+        <div className="grid gap-3 p-4 md:grid-cols-2">
+          {priorityThemes.length === 0 ? (
+            <p className="text-sm text-slate-500">No priority themes are available yet.</p>
+          ) : (
+            priorityThemes.map((priority) => (
+              <PriorityThemeSummary key={priority.priorityId} priority={priority} />
+            ))
+          )}
+        </div>
       </section>
 
       <section className="border border-line bg-white shadow-panel">
@@ -191,6 +215,42 @@ function ComparisonPanel({
         {JSON.stringify(output, null, 2)}
       </pre>
     </div>
+  );
+}
+
+function PriorityThemeSummary({
+  priority
+}: {
+  priority: {
+    title: string;
+    issueCount: number;
+    affectedSectionLabels: string[];
+    displayPriority: string;
+    rawSeverityRange: string;
+    recommendedAction: string;
+  };
+}) {
+  const affected =
+    priority.affectedSectionLabels.length > 0
+      ? priority.affectedSectionLabels.slice(0, 3).join(", ")
+      : "Manuscript level";
+  const remaining = Math.max(0, priority.affectedSectionLabels.length - 3);
+
+  return (
+    <section className="border border-line bg-paper p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold">{priority.title}</h3>
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+          {priority.displayPriority}
+        </span>
+      </div>
+      <div className="mt-2 text-xs text-slate-500">
+        {priority.issueCount} issue{priority.issueCount === 1 ? "" : "s"} |{" "}
+        {priority.rawSeverityRange} raw | {affected}
+        {remaining > 0 ? ` and ${remaining} more` : ""}
+      </div>
+      <p className="mt-2 text-sm leading-6 text-slate-700">{priority.recommendedAction}</p>
+    </section>
   );
 }
 
