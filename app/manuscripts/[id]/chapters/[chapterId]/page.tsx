@@ -61,7 +61,7 @@ export default async function ManuscriptChapterPage({
               href={`/manuscripts/${id}/chapters/${chapterId}/workspace`}
               className="text-sm text-accent hover:underline"
             >
-              Open editorial workspace
+              Open section workspace
             </Link>
           </div>
           <h1 className="mt-2 text-2xl font-semibold tracking-normal">
@@ -74,7 +74,7 @@ export default async function ManuscriptChapterPage({
         <div className="flex flex-wrap gap-2">
           {latestRewrite ? (
             <>
-              <a href={`/api/manuscripts/${id}/chapters/${chapterId}/rewrite/markdown`} className="focus-ring inline-flex min-h-9 items-center gap-2 border border-line bg-white px-3 py-2 text-sm font-semibold">
+              <a href={`/api/manuscripts/${id}/chapters/${chapterId}/rewrite/markdown`} className="secondary-button min-h-9 px-3">
                 <Download size={16} aria-hidden="true" />
                 Rewrite MD
               </a>
@@ -89,9 +89,9 @@ export default async function ManuscriptChapterPage({
       </div>
 
       <section className="grid gap-6 lg:grid-cols-2">
-        <TextPanel title="Original Chapter" text={chapter.text} />
+        <TextPanel title="Original section" text={chapter.text} />
         <TextPanel
-          title={`Rewritten Draft${latestRewrite ? ` (${latestRewrite.status})` : ""}`}
+          title={`Revision draft${latestRewrite ? ` (${latestRewrite.status})` : ""}`}
           text={latestRewrite?.rewrittenText || latestRewrite?.content || "No rewritten draft yet."}
         />
       </section>
@@ -100,12 +100,12 @@ export default async function ManuscriptChapterPage({
         <div className="border border-line bg-white shadow-panel">
           <div className="border-b border-line px-4 py-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Chapter Findings
+              Editorial notes
             </h2>
           </div>
           <div className="divide-y divide-line">
             {chapter.findings.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-slate-500">No chapter findings yet.</p>
+              <p className="px-4 py-6 text-sm text-slate-500">No editorial notes yet.</p>
             ) : (
               chapter.findings.map((finding) => (
                 <div key={finding.id} className="px-4 py-4">
@@ -123,9 +123,9 @@ export default async function ManuscriptChapterPage({
         </div>
 
         <div className="border border-line bg-white p-4 shadow-panel">
-          <h2 className="text-lg font-semibold">Rewrite Instructions</h2>
+          <h2 className="text-lg font-semibold">Revision guidance</h2>
           {rewriteInstructions.length === 0 ? (
-            <p className="mt-2 text-sm text-slate-600">No rewrite instructions yet.</p>
+            <p className="mt-2 text-sm text-slate-600">No revision guidance yet.</p>
           ) : (
             <ul className="mt-3 space-y-2 text-sm text-slate-700">
               {rewriteInstructions.map((instruction) => (

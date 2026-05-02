@@ -12,8 +12,9 @@
 
 body {
   margin: 0;
-  background: #f7f7f2;
-  color: #18212f;
+  background: #FAFAF8;
+  color: #171717;
+  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
 button,
@@ -25,4 +26,55 @@ select {
 
 .focus-ring {
   @apply focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-paper;
+}
+
+::selection {
+  background: rgba(232, 93, 158, 0.18);
+}
+
+input:not([type="checkbox"]):not([type="radio"]),
+textarea,
+select {
+  border-radius: 0.5rem;
+}
+
+button,
+a,
+summary,
+input,
+textarea,
+select {
+  transition:
+    background-color 160ms ease,
+    border-color 160ms ease,
+    box-shadow 160ms ease,
+    color 160ms ease,
+    opacity 160ms ease;
+}
+
+:where(section, article, aside, form, details).shadow-panel,
+div.shadow-panel:not(.rounded-full):not(.rounded-md):not(.rounded-lg):not(.rounded-xl) {
+  border-radius: 0.75rem;
+}
+
+@layer components {
+  .paper-card {
+    @apply rounded-xl border border-line bg-white shadow-panel;
+  }
+
+  .active-card {
+    @apply rounded-xl border border-accent/20 bg-white shadow-active;
+  }
+
+  .primary-button {
+    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white shadow-button hover:bg-accent-dark focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-paper disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .secondary-button {
+    @apply inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-line bg-white px-4 py-2 text-sm font-semibold text-ink hover:border-accent/50 hover:text-accent focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-paper disabled:cursor-not-allowed disabled:opacity-60;
+  }
+
+  .detail-toggle {
+    @apply rounded-xl border border-line bg-white shadow-panel;
+  }
 }

@@ -18,7 +18,7 @@ export default async function DashboardPage() {
 
   return (
     <div className="space-y-6">
-      <section className="space-y-3">
+      <section className="space-y-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-normal">
             {copy.dashboard.title}
@@ -34,7 +34,7 @@ export default async function DashboardPage() {
 
       <section className="border border-line bg-white shadow-panel">
         <div className="border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+          <h2 className="text-sm font-semibold tracking-normal text-ink">
             {copy.dashboard.sectionTitle}
           </h2>
         </div>
@@ -48,7 +48,7 @@ export default async function DashboardPage() {
               <Link
                 key={manuscript.id}
                 href={`/manuscripts/${manuscript.id}`}
-                className="focus-ring grid gap-3 px-4 py-4 hover:bg-paper sm:grid-cols-[1fr_120px_120px_160px]"
+                className="focus-ring grid gap-3 px-4 py-4 hover:bg-paper-alt sm:grid-cols-[1fr_120px_120px_160px]"
               >
                 <div className="flex items-start gap-3">
                   <FileText
@@ -108,7 +108,7 @@ function DatabaseErrorPanel({ message }: { message: string }) {
         right after a schema change, run the production Prisma migration or redeploy
         with `DATABASE_URL` available during build.
       </p>
-      <p className="mt-3 break-words bg-paper p-3 text-xs text-slate-600">
+      <p className="mt-3 break-words rounded-lg bg-paper-alt p-3 text-xs text-slate-600">
         {message}
       </p>
     </section>

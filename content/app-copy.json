@@ -1,27 +1,27 @@
 {
   "metadata": {
-    "title": "Manuscript Audit",
-    "description": "Chunked manuscript analysis and rewrite MVP"
+    "title": "Manuscript Intelligence",
+    "description": "Editorial analysis and revision workspace for manuscripts"
   },
   "shell": {
-    "brand": "Manuscript Audit",
+    "brand": "Manuscript Intelligence",
     "badge": "V2"
   },
   "dashboard": {
     "title": "Manuscripts",
-    "intro": "Upload a full manuscript, split it into structured chunks, and run a resumable analysis, benchmark, trend, and rewrite pipeline.",
-    "sectionTitle": "Recent Manuscripts",
+    "intro": "Upload a full manuscript and move through structure review, editorial analysis, and revision planning in one focused workspace.",
+    "sectionTitle": "Recent manuscripts",
     "emptyState": "No manuscripts uploaded yet.",
     "metrics": {
       "words": "Words",
-      "chapters": "Detected sections",
+      "chapters": "Book structure",
       "status": "Status"
     }
   },
   "upload": {
     "emptyFileError": "Choose a .txt or .docx manuscript.",
     "failedError": "Upload failed.",
-    "idleLabel": "Upload Manuscript",
+    "idleLabel": "Upload manuscript",
     "busyLabel": "Uploading..."
   }
 }

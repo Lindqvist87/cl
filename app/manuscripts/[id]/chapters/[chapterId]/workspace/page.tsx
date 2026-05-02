@@ -97,7 +97,7 @@ export default async function ChapterWorkspacePage({
             Back to workspace
           </Link>
           <h1 className="mt-2 text-2xl font-semibold tracking-normal">
-            Chapter {chapter.order}: {chapter.title}
+            Section {chapter.order}: {chapter.title}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
             {chapter.manuscript.title} | {chapter.wordCount.toLocaleString()} words |{" "}
@@ -116,15 +116,15 @@ export default async function ChapterWorkspacePage({
       </div>
 
       <section className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-        <TextPanel title="Chapter Text" text={chapter.text || "No chapter text available."} />
+        <TextPanel title="Section text" text={chapter.text || "No section text available."} />
         <section className="space-y-6">
-          <InfoPanel title="Chapter Summary">
+          <InfoPanel title="Section summary">
             <p className="text-sm leading-6 text-slate-700">
               {chapter.summary || String(audit.summary ?? "No chapter summary is available yet.")}
             </p>
           </InfoPanel>
 
-          <InfoPanel title="Chapter Function">
+          <InfoPanel title="Role in the book">
             <p className="text-sm leading-6 text-slate-700">
               {String(
                 audit.chapterPromise ??
@@ -143,12 +143,12 @@ export default async function ChapterWorkspacePage({
           <div className="flex items-center gap-2 border-b border-line px-4 py-3">
             <ListChecks size={18} aria-hidden="true" />
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Local Findings
+              Section notes
             </h2>
           </div>
           <div className="divide-y divide-line">
             {chapter.findings.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-slate-500">No local findings yet.</p>
+              <p className="px-4 py-6 text-sm text-slate-500">No section notes yet.</p>
             ) : (
               chapter.findings.map((finding) => {
                 const decision = decisionByFinding.get(finding.id);
@@ -191,13 +191,13 @@ export default async function ChapterWorkspacePage({
         <section className="border border-line bg-white shadow-panel">
           <div className="border-b border-line px-4 py-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Global Issues Affecting This Chapter
+              Manuscript-wide notes for this section
             </h2>
           </div>
           <div className="divide-y divide-line">
             {globalFindings.length === 0 ? (
               <p className="px-4 py-6 text-sm text-slate-500">
-                No manuscript-level issues are linked yet.
+                No manuscript-level notes are linked yet.
               </p>
             ) : (
               globalFindings.slice(0, 6).map((finding) => {
@@ -237,13 +237,13 @@ export default async function ChapterWorkspacePage({
         <section className="border border-line bg-white shadow-panel">
           <div className="border-b border-line px-4 py-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Proposed Actions
+              Suggested revisions
             </h2>
           </div>
           <div className="divide-y divide-line">
             {proposedActions.length === 0 ? (
               <p className="px-4 py-6 text-sm text-slate-500">
-                No proposed actions are available yet.
+                No suggested revisions are available yet.
               </p>
             ) : (
               proposedActions.map((action) => (
@@ -344,7 +344,7 @@ function SeverityBadge({ severity }: { severity: number }) {
         ? "bg-warn text-white"
         : severity >= 3
           ? "bg-accent text-white"
-          : "bg-slate-100 text-slate-700";
+          : "bg-paper-alt text-slate-700";
 
   return (
     <span className={`inline-flex min-h-7 items-center px-2 text-xs font-semibold ${className}`}>

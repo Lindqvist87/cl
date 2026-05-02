@@ -49,23 +49,23 @@ export function UploadForm() {
   return (
     <form
       onSubmit={onSubmit}
-      className="border border-line bg-white p-4 shadow-panel"
+      className="active-card p-5"
     >
       <div className="grid gap-3 lg:grid-cols-3">
         <input
           name="authorName"
           placeholder="Author name"
-          className="focus-ring min-h-10 border border-line bg-paper px-3 py-2 text-sm"
+          className="focus-ring min-h-10 border border-line bg-paper-alt px-3 py-2 text-sm"
         />
         <input
           name="targetGenre"
           placeholder="Target genre"
-          className="focus-ring min-h-10 border border-line bg-paper px-3 py-2 text-sm"
+          className="focus-ring min-h-10 border border-line bg-paper-alt px-3 py-2 text-sm"
         />
         <input
           name="targetAudience"
           placeholder="Target audience"
-          className="focus-ring min-h-10 border border-line bg-paper px-3 py-2 text-sm"
+          className="focus-ring min-h-10 border border-line bg-paper-alt px-3 py-2 text-sm"
         />
       </div>
       <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-center">
@@ -74,12 +74,12 @@ export function UploadForm() {
           name="file"
           type="file"
           accept=".txt,.docx,text/plain,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-          className="focus-ring min-h-10 flex-1 border border-line bg-paper px-3 py-2 text-sm"
+          className="focus-ring min-h-10 flex-1 border border-line bg-paper-alt px-3 py-2 text-sm"
         />
         <button
           type="submit"
           disabled={isUploading}
-          className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 bg-accent px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+          className="primary-button"
         >
           <Upload size={18} aria-hidden="true" />
           {isUploading ? copy.upload.busyLabel : copy.upload.idleLabel}

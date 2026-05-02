@@ -93,8 +93,8 @@ export function EditorialDecisionControls({
               onClick={() => updateDecision(status)}
               className={`focus-ring inline-flex min-h-9 items-center gap-2 border px-3 py-2 text-sm font-semibold ${
                 active
-                  ? "border-accent bg-accent text-white"
-                  : "border-line bg-white text-ink hover:bg-paper"
+                  ? "border-accent bg-accent text-white shadow-button"
+                  : "border-line bg-white text-ink hover:border-accent/50 hover:text-accent"
               } disabled:cursor-not-allowed disabled:opacity-60`}
             >
               <Icon size={16} aria-hidden="true" />

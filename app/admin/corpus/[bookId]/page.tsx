@@ -73,7 +73,7 @@ export default async function CorpusBookDetailPage({
             {book.profile ? (
               <Link
                 href={`/admin/corpus/${book.id}/profile`}
-                className="focus-ring inline-flex min-h-10 items-center justify-center border border-line bg-white px-4 text-sm font-semibold text-ink shadow-panel hover:bg-paper"
+                className="secondary-button"
               >
                 Book DNA
               </Link>

@@ -35,7 +35,7 @@ export function RewriteChapterButton({ manuscriptId }: { manuscriptId: string })
         type="button"
         onClick={rewrite}
         disabled={isRunning}
-        className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 border border-ink bg-white px-4 py-2 text-sm font-semibold text-ink disabled:cursor-not-allowed disabled:opacity-60"
+        className="secondary-button"
       >
         <Wand2 size={18} aria-hidden="true" />
         {isRunning ? "Rewriting..." : "Rewrite Chapter 1"}

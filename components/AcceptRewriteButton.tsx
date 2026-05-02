@@ -54,7 +54,7 @@ export function AcceptRewriteButton({
           type="button"
           disabled={disabled || isBusy || status === "ACCEPTED"}
           onClick={() => runAction("accept")}
-          className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 bg-accent px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md bg-accent px-3 py-2 text-sm font-semibold text-white shadow-button hover:bg-accent-dark disabled:opacity-60"
         >
           <Check size={16} aria-hidden="true" />
           {pendingAction === "accept" ? "Saving..." : "Accept"}
@@ -63,7 +63,7 @@ export function AcceptRewriteButton({
           type="button"
           disabled={disabled || isBusy || status === "REJECTED"}
           onClick={() => runAction("reject")}
-          className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 border border-line bg-white px-3 py-2 text-sm font-semibold text-ink disabled:opacity-60"
+          className="secondary-button min-h-9 px-3"
         >
           <X size={16} aria-hidden="true" />
           {pendingAction === "reject" ? "Rejecting..." : "Reject"}
@@ -72,7 +72,7 @@ export function AcceptRewriteButton({
           type="button"
           disabled={disabled || isBusy}
           onClick={() => runAction("regenerate")}
-          className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 border border-ink bg-white px-3 py-2 text-sm font-semibold text-ink disabled:opacity-60"
+          className="secondary-button min-h-9 px-3"
         >
           <RefreshCw size={16} aria-hidden="true" />
           {pendingAction === "regenerate" ? "Regenerating..." : "Regenerate"}

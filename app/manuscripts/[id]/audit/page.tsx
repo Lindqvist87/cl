@@ -68,22 +68,22 @@ export default async function ManuscriptAuditPage({
             Back to manuscript
           </Link>
           <h1 className="mt-2 text-2xl font-semibold tracking-normal">
-            Audit: {manuscript.title}
+            Editorial report: {manuscript.title}
           </h1>
         </div>
         <div className="flex flex-wrap gap-2">
           <Link
             href={`/manuscripts/${manuscript.id}/structure`}
-            className="focus-ring inline-flex min-h-9 items-center gap-2 border border-line bg-white px-3 py-2 text-sm font-semibold"
+            className="secondary-button min-h-9 px-3"
           >
             <BookOpen size={16} aria-hidden="true" />
-            Inspect imported structure
+            Review structure
           </Link>
-          <a href={`/api/manuscripts/${manuscript.id}/report/markdown`} className="focus-ring inline-flex min-h-9 items-center gap-2 border border-line bg-white px-3 py-2 text-sm font-semibold">
+          <a href={`/api/manuscripts/${manuscript.id}/report/markdown`} className="secondary-button min-h-9 px-3">
             <Download size={16} aria-hidden="true" />
             Markdown
           </a>
-          <a href={`/api/manuscripts/${manuscript.id}/report/json`} className="focus-ring inline-flex min-h-9 items-center gap-2 border border-line bg-white px-3 py-2 text-sm font-semibold">
+          <a href={`/api/manuscripts/${manuscript.id}/report/json`} className="secondary-button min-h-9 px-3">
             <Download size={16} aria-hidden="true" />
             JSON
           </a>
@@ -91,22 +91,22 @@ export default async function ManuscriptAuditPage({
       </div>
 
       <section className="grid gap-3 md:grid-cols-3">
-        <Stat label="Commercial Score" value={typeof score === "number" ? `${score}/100` : "Pending"} />
-        <Stat label="Findings" value={String(manuscript.findings.length)} />
-        <Stat label="Rewrite Plan" value={rewritePlan ? "Ready" : "Pending"} />
+        <Stat label="Editorial score" value={typeof score === "number" ? `${score}/100` : "Pending"} />
+        <Stat label="Issues to review" value={String(manuscript.findings.length)} />
+        <Stat label="Revision plan" value={rewritePlan ? "Ready" : "Pending"} />
       </section>
 
       <section className="border border-line bg-white p-4 shadow-panel">
         <h2 className="text-lg font-semibold">Executive Summary</h2>
         <p className="mt-2 text-sm leading-6 text-slate-700">
-          {structured?.executiveSummary ?? "No audit report has been generated yet."}
+          {structured?.executiveSummary ?? "No editorial report has been generated yet."}
         </p>
       </section>
 
       <section className="border border-line bg-white shadow-panel">
         <div className="border-b border-line px-4 py-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-            Priority Themes
+            Priority themes
           </h2>
         </div>
         <div className="grid gap-3 p-4 md:grid-cols-2">
@@ -123,7 +123,7 @@ export default async function ManuscriptAuditPage({
       <section className="border border-line bg-white shadow-panel">
         <div className="border-b border-line px-4 py-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-            Top Findings
+            Issues to review
           </h2>
         </div>
         <div className="divide-y divide-line">
@@ -150,7 +150,7 @@ export default async function ManuscriptAuditPage({
       <section className="border border-line bg-white shadow-panel">
         <div className="border-b border-line px-4 py-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-            Section-by-Section Findings
+            Section notes
           </h2>
         </div>
         <div className="divide-y divide-line">
@@ -172,8 +172,8 @@ export default async function ManuscriptAuditPage({
       </section>
 
       <section className="grid gap-6 lg:grid-cols-2">
-        <ComparisonPanel title="Corpus Comparison" output={toRecord(corpusOutput?.output)} />
-        <ComparisonPanel title="Trend Comparison" output={toRecord(trendOutput?.output)} />
+        <ComparisonPanel title="Corpus comparison" output={toRecord(corpusOutput?.output)} />
+        <ComparisonPanel title="Trend comparison" output={toRecord(trendOutput?.output)} />
       </section>
 
       <section className="border border-line bg-white p-4 shadow-panel">
@@ -211,9 +211,14 @@ function ComparisonPanel({
     <div className="border border-line bg-white p-4 shadow-panel">
       <h2 className="text-lg font-semibold">{title}</h2>
       <p className="mt-2 text-sm leading-6 text-slate-700">{summary}</p>
-      <pre className="mt-3 max-h-72 overflow-auto bg-paper p-3 text-xs leading-5 text-slate-700">
-        {JSON.stringify(output, null, 2)}
-      </pre>
+      <details className="detail-toggle mt-3">
+        <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-ink hover:text-accent">
+          Technical details
+        </summary>
+        <pre className="max-h-72 overflow-auto border-t border-line bg-paper-alt p-3 text-xs leading-5 text-slate-700">
+          {JSON.stringify(output, null, 2)}
+        </pre>
+      </details>
     </div>
   );
 }
@@ -237,7 +242,7 @@ function PriorityThemeSummary({
   const remaining = Math.max(0, priority.affectedSectionLabels.length - 3);
 
   return (
-    <section className="border border-line bg-paper p-3">
+    <section className="rounded-lg border border-line bg-paper-alt p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold">{priority.title}</h3>
         <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">

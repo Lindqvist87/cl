@@ -44,12 +44,12 @@ export function CorpusAnalysisProgress({
 
   return (
     <div className="space-y-3">
-      <div className="border border-line bg-paper p-3">
+      <div className="rounded-lg border border-line bg-paper-alt p-3">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div className="min-w-0 flex-1">
             <div className="flex flex-wrap items-center gap-2">
               {status.progress.isActive ? (
-                <Loader2 size={16} className="animate-spin text-ink" aria-hidden="true" />
+                <Loader2 size={16} className="animate-spin text-accent" aria-hidden="true" />
               ) : null}
               <div className="text-sm font-semibold">
                 {status.progress.percent}% complete
@@ -85,7 +85,7 @@ export function CorpusAnalysisProgress({
             type="button"
             onClick={() => void refreshStatus()}
             disabled={isRefreshing}
-            className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 border border-line bg-white px-3 py-2 text-sm font-semibold text-ink shadow-panel disabled:cursor-not-allowed disabled:opacity-60"
+            className="secondary-button min-h-9 px-3"
           >
             <RefreshCw
               size={16}
@@ -96,7 +96,7 @@ export function CorpusAnalysisProgress({
           </button>
         </div>
         {warningText ? (
-          <div className="mt-3 flex flex-col gap-3 border border-danger bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="mt-3 flex flex-col gap-3 rounded-lg border border-danger bg-white p-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex gap-2 text-sm text-danger">
               <AlertTriangle size={16} className="mt-0.5 shrink-0" aria-hidden="true" />
               <span>{warningText}</span>
@@ -242,7 +242,7 @@ function ProgressStep({
   const failed = step.status === "failed";
 
   return (
-    <div className="border border-line bg-white p-3">
+    <div className="rounded-lg border border-line bg-white p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="flex min-w-0 gap-2">
           <Icon
@@ -388,9 +388,9 @@ function iconForStatus(status: CorpusProgressStepStatus): LucideIcon {
 function colorForStatus(status: CorpusProgressStepStatus) {
   switch (status) {
     case "done":
-      return "text-accent";
+      return "text-success";
     case "running":
-      return "text-ink";
+      return "text-accent";
     case "failed":
       return "text-danger";
     case "blocked":
@@ -422,8 +422,8 @@ function buttonClassName(variant: "primary" | "secondary", danger: boolean) {
   const colorClass = danger
     ? "border border-danger bg-white text-danger"
     : variant === "primary"
-      ? "bg-ink text-white"
-      : "border border-line bg-paper text-ink";
+      ? "bg-accent text-white shadow-button hover:bg-accent-dark"
+      : "border border-line bg-white text-ink hover:border-accent/50 hover:text-accent";
 
-  return `focus-ring inline-flex min-h-9 items-center justify-center gap-2 px-3 py-2 text-sm font-semibold shadow-panel disabled:cursor-not-allowed disabled:opacity-60 ${colorClass}`;
+  return `focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60 ${colorClass}`;
 }

@@ -58,7 +58,7 @@ export default async function ManuscriptWorkspacePage({
   const rewriteDraftsComplete = rewriteDraftCount >= manuscript.chapterCount;
 
   return (
-    <main className="-mx-4 -my-6 min-h-screen bg-[#fdfcf8] px-4 py-6 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+    <main className="-mx-5 -my-8 min-h-screen bg-paper px-5 py-8">
       <div className="mx-auto max-w-6xl space-y-12">
         <header className="space-y-10 pt-2">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -103,7 +103,7 @@ export default async function ManuscriptWorkspacePage({
           </div>
 
           {authorWorkspace.priorityCards.length === 0 ? (
-            <section className="rounded-lg border border-[#ebe7dc] bg-white p-7 shadow-[0_10px_30px_rgba(24,33,47,0.05)]">
+            <section className="border border-line bg-white p-7 shadow-panel">
               <h3 className="text-lg font-semibold">Inga öppna prioriteringar ännu</h3>
               <p className="mt-2 text-sm leading-6 text-slate-600">
                 När analysen har hittat återkommande mönster visas de här som
@@ -182,9 +182,9 @@ function WorkspaceNav({ manuscriptId }: { manuscriptId: string }) {
   return (
     <nav
       aria-label="Manusnavigering"
-      className="flex flex-wrap gap-1 rounded-lg border border-[#ebe7dc] bg-white p-1 shadow-panel"
+      className="flex flex-wrap gap-1 rounded-lg border border-line bg-white p-1 shadow-panel"
     >
-      <span className="inline-flex min-h-9 items-center rounded-md bg-ink px-4 py-2 text-sm font-semibold text-white">
+      <span className="inline-flex min-h-9 items-center rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white shadow-button">
         Arbetsyta
       </span>
       <NavLink href={`/manuscripts/${manuscriptId}/audit`}>Rapport</NavLink>
@@ -212,9 +212,9 @@ function StartHereCard({
   };
 }) {
   return (
-    <section className="rounded-lg border border-accent/20 bg-white p-7 shadow-[0_24px_70px_rgba(24,33,47,0.12)] ring-1 ring-accent/10 sm:p-9">
+    <section className="active-card p-7 sm:p-9">
       <p className="text-sm font-semibold uppercase tracking-wide text-accent">
-        {start.heading}
+        Start here
       </p>
       <h2 className="mt-4 max-w-3xl text-3xl font-semibold tracking-normal text-ink sm:text-4xl">
         {start.title}
@@ -223,7 +223,7 @@ function StartHereCard({
         {start.explanation}
       </p>
 
-      <div className="mt-8 grid gap-6 border-t border-[#ebe7dc] pt-6 md:grid-cols-3">
+      <div className="mt-8 grid gap-6 border-t border-line pt-6 md:grid-cols-3">
         <EditorialFact label="Varför det spelar roll" value={start.whyItMatters} />
         <EditorialFact label="Första steg" value={start.firstConcreteStep} />
         <EditorialFact label="Berörda delar" value={start.affectedPartsPreview} />
@@ -233,7 +233,7 @@ function StartHereCard({
         {start.primaryEnabled && start.targetSectionId ? (
           <Link
             href={`/manuscripts/${manuscriptId}/chapters/${start.targetSectionId}/workspace`}
-            className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-accent px-5 py-2 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(31,122,109,0.22)]"
+            className="primary-button min-h-11 px-5"
           >
             {start.primaryButtonLabel}
             <ArrowRight size={16} aria-hidden="true" />
@@ -241,7 +241,7 @@ function StartHereCard({
         ) : (
           <span
             aria-disabled="true"
-            className="inline-flex min-h-11 items-center justify-center rounded-md border border-[#ebe7dc] bg-[#f7f5ef] px-5 py-2 text-sm font-semibold text-slate-400"
+            className="inline-flex min-h-11 items-center justify-center rounded-md border border-line bg-paper-alt px-5 py-2 text-sm font-semibold text-slate-400"
           >
             {start.primaryButtonLabel}
           </span>
@@ -265,7 +265,7 @@ function PriorityCard({
   };
 }) {
   return (
-    <article className="flex min-h-[310px] flex-col rounded-lg border border-[#ebe7dc] bg-white p-6 shadow-[0_10px_30px_rgba(24,33,47,0.05)]">
+    <article className="flex min-h-[310px] flex-col rounded-lg border border-line bg-white p-6 shadow-panel">
       <ImportanceBadge label={priority.importanceLabel} />
       <h3 className="mt-4 text-xl font-semibold tracking-normal text-ink">
         {priority.title}
@@ -278,7 +278,7 @@ function PriorityCard({
         {priority.targetSectionId ? (
           <Link
             href={`/manuscripts/${manuscriptId}/chapters/${priority.targetSectionId}/workspace`}
-            className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-[#d9d4c8] bg-white px-3 py-2 text-sm font-semibold text-ink hover:border-accent hover:text-accent"
+            className="secondary-button min-h-9 px-3"
           >
             Visa i texten
             <ArrowRight size={15} aria-hidden="true" />
@@ -286,7 +286,7 @@ function PriorityCard({
         ) : (
           <span
             aria-disabled="true"
-            className="inline-flex min-h-9 items-center justify-center rounded-md border border-[#ebe7dc] bg-[#f7f5ef] px-3 py-2 text-sm font-semibold text-slate-400"
+            className="inline-flex min-h-9 items-center justify-center rounded-md border border-line bg-paper-alt px-3 py-2 text-sm font-semibold text-slate-400"
           >
             Visa i texten
           </span>
@@ -304,11 +304,11 @@ function DetailsSection({
   title: string;
 }) {
   return (
-    <details className="rounded-lg border border-[#ebe7dc] bg-white shadow-panel">
+    <details className="detail-toggle">
       <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-ink hover:text-accent">
         {title}
       </summary>
-      <div className="border-t border-[#ebe7dc] p-4">{children}</div>
+      <div className="border-t border-line p-4">{children}</div>
     </details>
   );
 }
@@ -365,7 +365,7 @@ function RawObservationPanel({
               <h3 className="text-sm font-semibold">Grupperade observationer</h3>
               <div className="mt-3 space-y-3">
                 {issueGroups.map((group) => (
-                  <section key={group.issueType} className="border border-line bg-paper p-3">
+                  <section key={group.issueType} className="rounded-lg border border-line bg-paper-alt p-3">
                     <div className="flex flex-wrap items-center justify-between gap-2">
                       <div className="text-sm font-semibold">{group.issueType}</div>
                       <div className="flex items-center gap-2 text-xs text-slate-500">
@@ -412,7 +412,7 @@ function RewritePlanPanel({
               <span className="text-sm font-semibold">{item.title}</span>
               {item.priority ? (
                 <span className="border border-line bg-paper px-2 py-1 text-xs text-slate-600">
-                  Prio {item.priority}
+                  Priority {item.priority}
                 </span>
               ) : null}
             </div>
@@ -437,7 +437,7 @@ function ImportedStructurePanel({ manuscriptId }: { manuscriptId: string }) {
       </div>
       <Link
         href={`/manuscripts/${manuscriptId}/structure`}
-        className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-[#d9d4c8] bg-white px-4 py-2 text-sm font-semibold text-ink hover:border-accent hover:text-accent"
+        className="secondary-button"
       >
         Öppna strukturvyn
         <ArrowRight size={15} aria-hidden="true" />
@@ -563,7 +563,7 @@ function EditorialFact({ label, value }: { label: string; value: string }) {
 
 function ImportanceBadge({ label }: { label: string }) {
   return (
-    <span className="inline-flex min-h-7 w-fit items-center rounded-full border border-accent/20 bg-[#f2faf6] px-3 text-xs font-semibold text-accent">
+    <span className="inline-flex min-h-7 w-fit items-center rounded-full border border-accent/20 bg-accent/10 px-3 text-xs font-semibold text-accent">
       {label}
     </span>
   );

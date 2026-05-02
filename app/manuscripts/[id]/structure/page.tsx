@@ -75,7 +75,7 @@ export default async function ManuscriptStructurePage({
               Back to manuscript overview
             </Link>
             <h1 className="mt-3 text-2xl font-semibold tracking-normal">
-              Imported structure
+              Book structure
             </h1>
             <p className="mt-1 text-lg font-semibold">{manuscript.title}</p>
             <p className="mt-1 text-sm text-slate-500">
@@ -85,17 +85,17 @@ export default async function ManuscriptStructurePage({
           <div className="flex flex-wrap gap-2">
             <Link
               href={`/manuscripts/${manuscript.id}/audit`}
-              className="focus-ring inline-flex min-h-9 items-center gap-2 border border-line bg-paper px-3 py-2 text-sm font-semibold"
+              className="secondary-button min-h-9 px-3"
             >
               <FileText size={16} aria-hidden="true" />
-              Audit
+              Editorial report
             </Link>
             <Link
               href={`/manuscripts/${manuscript.id}/workspace`}
-              className="focus-ring inline-flex min-h-9 items-center gap-2 border border-line bg-paper px-3 py-2 text-sm font-semibold"
+              className="secondary-button min-h-9 px-3"
             >
               <BookOpen size={16} aria-hidden="true" />
-              Editorial Workspace
+              Editorial workspace
             </Link>
           </div>
         </div>
@@ -103,7 +103,7 @@ export default async function ManuscriptStructurePage({
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
           <HeaderFact label="Word count" value={formatNumber(manuscript.wordCount)} />
           <HeaderFact
-            label="Detected sections"
+            label="Book structure"
             value={formatNumber(inspection.stats.detectedSections)}
           />
           <HeaderFact label="Chunks" value={formatNumber(inspection.stats.chunkCount)} />
@@ -115,7 +115,7 @@ export default async function ManuscriptStructurePage({
       <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
         <Stat label="Total words" value={formatNumber(inspection.stats.totalWords)} />
         <Stat
-          label="Detected sections"
+          label="Book structure"
           value={formatNumber(inspection.stats.detectedSections)}
         />
         <Stat label="Chunks" value={formatNumber(inspection.stats.chunkCount)} />
@@ -153,7 +153,7 @@ export default async function ManuscriptStructurePage({
         <section className="border border-line bg-white shadow-panel">
           <div className="border-b border-line px-4 py-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Detected sections
+              Book structure
             </h2>
             <p className="mt-1 text-sm text-slate-500">
               Review the imported sections before relying on deeper editorial analysis.
@@ -162,7 +162,7 @@ export default async function ManuscriptStructurePage({
           <div className="divide-y divide-line">
             {inspection.sections.length === 0 ? (
               <p className="px-4 py-8 text-sm text-slate-500">
-                No detected sections were imported for this manuscript.
+                No book sections were imported for this manuscript.
               </p>
             ) : (
               inspection.sections.map((section) => (
@@ -193,7 +193,7 @@ function SectionRow({
   selected: boolean;
 }) {
   return (
-    <article className={selected ? "bg-paper px-4 py-4" : "px-4 py-4"}>
+    <article className={selected ? "bg-accent/5 px-4 py-4" : "px-4 py-4"}>
       <div className="grid gap-4 lg:grid-cols-[72px_1fr_110px_110px]">
         <div className="text-sm font-semibold text-slate-500">
           #{section.order}
@@ -215,7 +215,7 @@ function SectionRow({
             href={`/manuscripts/${manuscriptId}/structure?selectedSectionId=${section.id}`}
             className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-accent hover:underline"
           >
-            Inspect section
+              Review section
             <ArrowRight size={16} aria-hidden="true" />
           </Link>
         </div>
@@ -236,7 +236,7 @@ function SectionDetail({
   if (!section) {
     return (
       <aside className="border border-line bg-white p-4 text-sm text-slate-500 shadow-panel">
-        Select a detected section to inspect its text and chunks.
+        Select a book section to inspect its text and chunks.
       </aside>
     );
   }
@@ -267,7 +267,7 @@ function SectionDetail({
 
         <div>
           <h4 className="text-sm font-semibold">Cleaned text</h4>
-          <div className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap border border-line bg-paper p-3 text-sm leading-7 text-slate-800">
+          <div className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap rounded-lg border border-line bg-paper-alt p-3 text-sm leading-7 text-slate-800">
             {section.cleanedText
               ? section.cleanedText
               : "No cleaned text is available for this section."}
@@ -313,7 +313,7 @@ function SectionDetail({
 
 function HeaderFact({ label, value }: { label: string; value: string }) {
   return (
-    <div className="border border-line bg-paper px-3 py-2">
+      <div className="rounded-lg border border-line bg-paper-alt px-3 py-2">
       <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
       <div className="mt-1 text-sm font-semibold">{value}</div>
     </div>

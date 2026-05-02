@@ -40,10 +40,10 @@ export function AuditButton({
         type="button"
         onClick={runAudit}
         disabled={disabled || isRunning}
-        className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 bg-ink px-4 py-2 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-60"
+        className="primary-button"
       >
         <PlayCircle size={18} aria-hidden="true" />
-        {isRunning ? "Starting..." : "Run Full Analysis"}
+        {isRunning ? "Starting..." : "Start analysis"}
       </button>
       {error ? <p className="text-sm text-danger">{error}</p> : null}
     </div>
