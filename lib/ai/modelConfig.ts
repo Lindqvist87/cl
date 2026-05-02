@@ -31,7 +31,7 @@ export type ModelConfigEnv = Partial<
 >;
 
 const DEFAULT_AUDIT_MODEL = "gpt-5.4-mini";
-const DEFAULT_CHIEF_EDITOR_MODEL = "gpt-5.5";
+const DEFAULT_CHIEF_EDITOR_MODEL = "gpt-5.4";
 const DEFAULT_AUDIT_REASONING_EFFORT: ReasoningEffort = "medium";
 const DEFAULT_CHIEF_EDITOR_REASONING_EFFORT: ReasoningEffort = "high";
 

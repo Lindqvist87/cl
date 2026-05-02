@@ -35,7 +35,7 @@ test("model config preserves safe fallbacks when role env vars are missing", () 
 
   assert.equal(defaultConfig.auditModel, "gpt-5.4-mini");
   assert.equal(defaultConfig.auditReasoningEffort, "medium");
-  assert.equal(defaultConfig.chiefEditorModel, "gpt-5.5");
+  assert.equal(defaultConfig.chiefEditorModel, "gpt-5.4");
   assert.equal(defaultConfig.chiefEditorReasoningEffort, "high");
 
   const legacyConfig = resolveModelConfig({

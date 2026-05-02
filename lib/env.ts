@@ -7,7 +7,7 @@ const envSchema = z.object({
   CHIEF_EDITOR_MODEL: z.string().min(1).optional(),
   CHIEF_EDITOR_REASONING_EFFORT: z.string().min(1).optional(),
   OPENAI_AUDIT_MODEL: z.string().min(1).optional(),
-  OPENAI_REWRITE_MODEL: z.string().min(1).default("gpt-5.5"),
+  OPENAI_REWRITE_MODEL: z.string().min(1).default("gpt-5.4"),
   OPENAI_EDITOR_MODEL: z.string().min(1).optional(),
   OPENAI_EMBEDDING_MODEL: z.string().min(1).default("text-embedding-3-small"),
   NEXT_PUBLIC_APP_NAME: z.string().min(1).default("Manuscript Audit")
