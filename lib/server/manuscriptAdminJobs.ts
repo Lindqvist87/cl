@@ -4,6 +4,7 @@ import {
   normalizeCheckpoint,
   pipelineProgress
 } from "@/lib/pipeline/steps";
+import { buildPipelineStatusDisplay } from "@/lib/pipeline/display";
 import { prisma } from "@/lib/prisma";
 
 const DEFAULT_MAX_JOBS = 5;
@@ -47,24 +48,44 @@ export function manuscriptAdminRunJobOptions(
 }
 
 async function getManuscriptRunProgress(manuscriptId: string) {
-  const run = await prisma.analysisRun.findFirst({
-    where: { manuscriptId },
-    orderBy: { createdAt: "desc" },
-    select: { checkpoint: true }
-  });
+  const [manuscript, run, jobs] = await Promise.all([
+    prisma.manuscript.findUnique({
+      where: { id: manuscriptId },
+      select: { chapterCount: true, chunkCount: true }
+    }),
+    prisma.analysisRun.findFirst({
+      where: { manuscriptId },
+      orderBy: { createdAt: "desc" },
+      select: { checkpoint: true, status: true, error: true, updatedAt: true }
+    }),
+    prisma.pipelineJob.findMany({
+      where: { manuscriptId },
+      orderBy: [{ createdAt: "asc" }]
+    })
+  ]);
   const checkpoint = normalizeCheckpoint(run?.checkpoint);
   const currentStep = stepOrUndefined(checkpoint.currentStep);
   const metadata = currentStep
     ? recordOrNull(checkpoint.stepMetadata?.[currentStep])
     : null;
   const summary = pipelineProgress(checkpoint);
+  const display = buildPipelineStatusDisplay({
+    run,
+    jobs,
+    totals: {
+      chunks: manuscript?.chunkCount ?? null,
+      chapters: manuscript?.chapterCount ?? null,
+      sections: manuscript?.chapterCount ?? null,
+      auditTargets: manuscript?.chapterCount ?? null
+    }
+  });
 
   return {
     ...summary,
-    currentStep,
-    analyzed: numberOrUndefined(metadata?.analyzed),
-    remaining: numberOrUndefined(metadata?.remaining),
-    complete: booleanOrUndefined(metadata?.complete)
+    currentStep: display.currentStep ?? currentStep,
+    analyzed: numberOrUndefined(display.analyzedCount),
+    remaining: numberOrUndefined(display.remainingCount),
+    complete: display.complete ?? booleanOrUndefined(metadata?.complete)
   };
 }
 

@@ -3,19 +3,24 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { RotateCw } from "lucide-react";
+import { PIPELINE_DIAGNOSTICS_REFRESH_EVENT } from "@/components/pipelineEvents";
 
 export function PipelineActionButton({
   endpoint,
   payload,
   label,
   runningLabel,
-  variant = "secondary"
+  variant = "secondary",
+  diagnosticsRefreshManuscriptId,
+  refreshPageOnComplete = true
 }: {
   endpoint: string;
   payload?: Record<string, unknown>;
   label: string;
   runningLabel?: string;
   variant?: "primary" | "secondary" | "danger";
+  diagnosticsRefreshManuscriptId?: string;
+  refreshPageOnComplete?: boolean;
 }) {
   const router = useRouter();
   const [isRunning, setIsRunning] = useState(false);
@@ -27,14 +32,27 @@ export function PipelineActionButton({
     setError(null);
     setResult(null);
 
-    const response = await fetch(endpoint, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload ?? {})
-    });
-    const nextResult = (await response.json().catch(() => ({}))) as PipelineActionResult;
+    let response: Response;
+    let nextResult: PipelineActionResult;
+
+    try {
+      response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload ?? {})
+      });
+      nextResult = (await response.json().catch(() => ({}))) as PipelineActionResult;
+    } catch (fetchError) {
+      setIsRunning(false);
+      setError(
+        fetchError instanceof Error ? fetchError.message : "Action failed."
+      );
+      dispatchDiagnosticsRefresh(null);
+      return;
+    }
 
     setIsRunning(false);
+    dispatchDiagnosticsRefresh(nextResult);
 
     if (!response.ok) {
       setError(nextResult.error ?? "Action failed.");
@@ -42,7 +60,24 @@ export function PipelineActionButton({
     }
 
     setResult(nextResult);
-    router.refresh();
+    if (refreshPageOnComplete) {
+      router.refresh();
+    }
+  }
+
+  function dispatchDiagnosticsRefresh(result: PipelineActionResult | null) {
+    if (!diagnosticsRefreshManuscriptId) {
+      return;
+    }
+
+    window.dispatchEvent(
+      new CustomEvent(PIPELINE_DIAGNOSTICS_REFRESH_EVENT, {
+        detail: {
+          manuscriptId: diagnosticsRefreshManuscriptId,
+          result
+        }
+      })
+    );
   }
 
   const className =
@@ -85,6 +120,15 @@ type PipelineActionResult = {
     lockExpiresAt: string | null;
     stale: boolean;
   };
+  recoveredStaleJobs?: Array<{
+    id: string;
+    type: string;
+    status: string;
+    lockedBy: string | null;
+    lockedAt: string | null;
+    lockExpiresAt: string | null;
+    stale: boolean;
+  }>;
   progress?: {
     currentStep?: string;
     analyzed?: number;
