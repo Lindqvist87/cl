@@ -1,5 +1,14 @@
 import Link from "next/link";
-import { ArrowRight, BookOpen, FileText, PenLine } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import {
+  ArrowRight,
+  BookOpen,
+  FileText,
+  Map,
+  PenLine,
+  ShieldCheck,
+  Sparkles
+} from "lucide-react";
 import copy from "@/content/app-copy.json";
 import { prisma } from "@/lib/prisma";
 import { UploadForm } from "@/components/UploadForm";
@@ -17,39 +26,69 @@ export default async function DashboardPage() {
   }
 
   return (
-    <div className="space-y-10">
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,0.95fr)_minmax(420px,0.75fr)] lg:items-start">
-        <div className="paper-card flex min-h-[420px] flex-col justify-between p-8 sm:p-10">
-          <div>
-            <p className="page-kicker">Paperlight Rose workspace</p>
-            <h1 className="page-title mt-4 max-w-3xl">
-              Editorial intelligence for a full manuscript.
+    <div className="space-y-12">
+      <section className="relative isolate overflow-hidden py-5 sm:py-8">
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-[-1.25rem] bottom-[-4rem] top-[-2rem] -z-10"
+          style={{
+            backgroundImage:
+              "linear-gradient(180deg, rgba(250,250,247,0.94) 0%, rgba(250,250,248,1) 100%), repeating-linear-gradient(0deg, rgba(231,226,218,0.28) 0px, rgba(231,226,218,0.28) 1px, transparent 1px, transparent 20px)"
+          }}
+        />
+        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
+          <div className="max-w-3xl">
+            <p className="page-kicker">Starta nytt manus</p>
+            <h1 className="mt-4 max-w-2xl text-4xl font-semibold tracking-normal text-ink sm:text-5xl">
+              Ladda upp ditt manus
             </h1>
-            <p className="mt-5 max-w-2xl text-base leading-8 text-slate-700">
-              {copy.dashboard.intro}
+            <p className="mt-5 max-w-2xl text-base leading-8 text-slate-700 sm:text-lg">
+              Få en redaktionell översikt, prioriterade förbättringsområden
+              och ett tydligt första steg.
+            </p>
+
+            <div className="mt-8">
+              <UploadForm />
+            </div>
+
+            <p className="mt-5 flex max-w-2xl items-start gap-3 text-sm leading-6 text-muted">
+              <ShieldCheck
+                size={18}
+                className="mt-0.5 shrink-0 text-accent"
+                aria-hidden="true"
+              />
+              <span>
+                Du behåller alltid kontrollen. Appen föreslår – du bestämmer.
+              </span>
             </p>
           </div>
 
-          <div className="mt-10 grid gap-3 sm:grid-cols-3">
-            <ProductStep
-              label="1"
-              title="Import"
-              body="Bring in the full manuscript with author, genre, and audience context."
-            />
-            <ProductStep
-              label="2"
-              title="Analyze"
-              body="Move through structure review and guided editorial analysis."
-            />
-            <ProductStep
-              label="3"
-              title="Revise"
-              body="Start from the recommended next step and work section by section."
-            />
-          </div>
+          <aside className="paper-card bg-white/85 p-6 lg:mt-28">
+            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/10 text-accent">
+              <Sparkles size={19} aria-hidden="true" />
+            </div>
+            <h2 className="mt-5 text-xl font-semibold tracking-normal text-ink">
+              Vad händer sedan?
+            </h2>
+            <div className="mt-6 grid gap-4">
+              <ManuscriptStep
+                icon={FileText}
+                label="1"
+                title="Vi läser in manuset"
+              />
+              <ManuscriptStep
+                icon={Map}
+                label="2"
+                title="Vi skapar en redaktionell karta"
+              />
+              <ManuscriptStep
+                icon={ArrowRight}
+                label="3"
+                title="Du får veta var du bör börja"
+              />
+            </div>
+          </aside>
         </div>
-
-        <UploadForm />
       </section>
 
       {dbError ? <DatabaseErrorPanel message={dbError} /> : null}
@@ -150,22 +189,28 @@ function DatabaseErrorPanel({ message }: { message: string }) {
   );
 }
 
-function ProductStep({
-  body,
+function ManuscriptStep({
+  icon: Icon,
   label,
   title
 }: {
-  body: string;
+  icon: LucideIcon;
   label: string;
   title: string;
 }) {
   return (
-    <div className="rounded-lg border border-line bg-paper-alt p-4">
-      <div className="flex h-7 w-7 items-center justify-center rounded-full bg-white text-xs font-semibold text-accent">
-        {label}
+    <div className="flex gap-3">
+      <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-accent/20 bg-white text-accent">
+        <Icon size={16} aria-hidden="true" />
+        <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-accent text-[10px] font-semibold text-white">
+          {label}
+        </span>
       </div>
-      <h3 className="mt-3 text-sm font-semibold">{title}</h3>
-      <p className="mt-1 text-xs leading-5 text-muted">{body}</p>
+      <div className="pt-1">
+        <h3 className="text-sm font-semibold tracking-normal text-ink">
+          {title}
+        </h3>
+      </div>
     </div>
   );
 }

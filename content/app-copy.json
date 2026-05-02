@@ -19,9 +19,9 @@
     }
   },
   "upload": {
-    "emptyFileError": "Choose a .txt or .docx manuscript.",
-    "failedError": "Upload failed.",
-    "idleLabel": "Upload manuscript",
-    "busyLabel": "Uploading..."
+    "emptyFileError": "Välj en DOCX-fil innan du startar.",
+    "failedError": "Uppladdningen kunde inte slutföras.",
+    "idleLabel": "Starta översikt",
+    "busyLabel": "Laddar upp..."
   }
 }
