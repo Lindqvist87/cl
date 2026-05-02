@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { transitionDecisionStatus } from "../lib/editorial/decisions";
+import { buildAuthorWorkspaceViewModel } from "../lib/editorial/authorWorkspace";
 import { aggregateEditorialFindingPriorities } from "../lib/editorial/findingAggregation";
 import { nextBestEditorialAction } from "../lib/editorial/nextAction";
 import {
@@ -372,6 +373,125 @@ test("workspace next best action uses aggregated priority", () => {
     workspace.nextActionDisplay?.whatToIgnoreForNow,
     "Do not tune prose rhythm or minor continuity rows until the scene pressure is legible."
   );
+});
+
+test("author workspace maps aggregated priorities into author-facing cards", () => {
+  const workspace = aggregateEditorialWorkspaceData({
+    manuscript: {
+      id: "m1",
+      title: "Draft",
+      status: "UPLOADED",
+      analysisStatus: "COMPLETED"
+    },
+    chapters: aggregationChapters,
+    findings: systemicConflictFindings,
+    decisions: [],
+    globalSummary:
+      "The manuscript has a clear core but several scenes need stronger dramatic pressure. Handle the repeated scene-pressure pattern before smaller edits."
+  });
+  const authorWorkspace = buildAuthorWorkspaceViewModel(workspace);
+
+  assert.equal(authorWorkspace.hero.statusLabel, "Analysen är klar");
+  assert.match(authorWorkspace.hero.body, /Analysen lyfter 2 prioriterade redigeringsområden/);
+  assert.equal(authorWorkspace.start.heading, "Börja här");
+  assert.equal(
+    authorWorkspace.start.title,
+    "Förtydliga vilket hinder, val eller vilken press som driver de berörda delarna."
+  );
+  assert.equal(
+    authorWorkspace.start.explanation,
+    "Det här är den tydligaste första redigeringsrörelsen utifrån de samlade observationerna."
+  );
+  assert.equal(
+    authorWorkspace.start.whyItMatters,
+    "Scener utan tydlig press, konflikt eller insats tappar framåtrörelse och gör senare stegring svagare."
+  );
+  assert.equal(
+    authorWorkspace.start.firstConcreteStep,
+    "Välj första fulla scenen och skriv ut hinder, insats och beslutsslag innan du ändrar texten."
+  );
+  assert.equal(
+    authorWorkspace.start.affectedPartsPreview,
+    "Del 2: Warehouse, Del 3: The call, Del 4: Aftermath"
+  );
+  assert.equal(authorWorkspace.start.primaryButtonLabel, "Visa första berörda del");
+  assert.equal(authorWorkspace.start.primaryEnabled, true);
+  assert.equal(authorWorkspace.start.targetSectionId, "s2");
+  assert.equal(authorWorkspace.priorityCards.length, 2);
+  assert.deepEqual(authorWorkspace.priorityCards[0], {
+    id: workspace.editorialPriorities[0].priorityId,
+    title: "Dramatiskt tryck saknas i flera avsnitt",
+    importanceLabel: "Hög viktighet",
+    whyItMatters:
+      "Scener utan tydlig press, konflikt eller insats tappar framåtrörelse och gör senare stegring svagare.",
+    recommendedAction:
+      "Förtydliga vilket hinder, val eller vilken press som driver de berörda delarna.",
+    targetSectionId: "s2"
+  });
+});
+
+test("author workspace keeps raw findings secondary instead of primary", () => {
+  const workspace = aggregateEditorialWorkspaceData({
+    manuscript: {
+      id: "m1",
+      title: "Draft",
+      status: "UPLOADED"
+    },
+    chapters: aggregationChapters,
+    findings: systemicConflictFindings,
+    decisions: []
+  });
+  const authorWorkspace = buildAuthorWorkspaceViewModel(workspace);
+  const mainLabels = authorWorkspace.mainSectionLabels.join(" ");
+
+  assert.equal(workspace.keyIssues.length, 4);
+  assert.equal(
+    workspace.issueGroups.reduce((total, group) => total + group.count, 0),
+    4
+  );
+  assert.equal(authorWorkspace.details.summaryLabel, "Detaljer");
+  assert.equal(authorWorkspace.details.allObservationsLabel, "Alla observationer");
+  assert.equal(authorWorkspace.details.sectionsLabel, "Manusets delar");
+  assert.equal(authorWorkspace.details.rewritePlanLabel, "Redigeringsplan");
+  assert.equal(authorWorkspace.details.importedStructureLabel, "Importerad struktur");
+  assert.equal(authorWorkspace.details.rawDataLabel, "Rådata och detaljer");
+  assert.doesNotMatch(
+    mainLabels,
+    /Workspace readiness|Pipeline|Raw findings|Next Best Editorial Action|Detected sections|Severity|Findings/
+  );
+  assert.doesNotMatch(
+    mainLabels,
+    /Alla observationer|Analysen är redo|Redigeringsplan|Importerad struktur|Rådata/
+  );
+});
+
+test("author workspace renders helpful fallback when analysis data is missing", () => {
+  const workspace = aggregateEditorialWorkspaceData({
+    manuscript: {
+      id: "m1",
+      title: "Draft",
+      status: "UPLOADED",
+      analysisStatus: "NOT_STARTED"
+    },
+    chapters: [],
+    findings: [],
+    decisions: [],
+    rewritePlans: [],
+    globalSummary: null
+  });
+  const authorWorkspace = buildAuthorWorkspaceViewModel(workspace);
+
+  assert.equal(workspace.nextActionDisplay, null);
+  assert.equal(authorWorkspace.hero.statusLabel, "Analysen inväntar underlag");
+  assert.match(authorWorkspace.hero.body, /helhetsbild, första rekommendation/);
+  assert.equal(authorWorkspace.start.heading, "Börja här");
+  assert.equal(authorWorkspace.start.primaryEnabled, false);
+  assert.equal(authorWorkspace.start.primaryButtonLabel, "Visa första berörda del");
+  assert.equal(
+    authorWorkspace.start.title,
+    "Analysen saknar ännu en tydlig första prioritet"
+  );
+  assert.equal(authorWorkspace.priorityCards.length, 0);
 });
 
 test("raw findings remain available beside aggregated priorities", () => {
