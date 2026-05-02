@@ -60,7 +60,7 @@ export default async function ManuscriptWorkspacePage({
   return (
     <main className="-mx-5 -my-8 min-h-screen bg-paper px-5 py-8">
       <div className="mx-auto max-w-6xl space-y-12">
-        <header className="space-y-10 pt-2">
+        <header className="space-y-8 pt-2">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <Link
               href={`/manuscripts/${id}`}
@@ -73,21 +73,29 @@ export default async function ManuscriptWorkspacePage({
             <WorkspaceNav manuscriptId={id} />
           </div>
 
-          <section className="mx-auto max-w-4xl space-y-5 py-4 text-center">
-            <div className="inline-flex items-center gap-2 rounded-full border border-accent/20 bg-white px-4 py-2 text-sm font-semibold text-accent shadow-panel">
-              <CheckCircle2 size={16} aria-hidden="true" />
-              {authorWorkspace.hero.statusLabel}
+          <section className="grid gap-6 py-4 lg:grid-cols-[minmax(0,1fr)_320px] lg:items-end">
+            <div className="max-w-3xl">
+              <p className="page-kicker">Författararbetsyta</p>
+              <h1 className="mt-4 text-4xl font-semibold tracking-normal text-ink sm:text-5xl">
+                {workspace.manuscript.title}
+              </h1>
+              <p className="mt-5 line-clamp-4 text-lg leading-8 text-slate-700">
+                {authorWorkspace.hero.body}
+              </p>
             </div>
-            <h1 className="text-4xl font-semibold tracking-normal text-ink sm:text-5xl">
-              {workspace.manuscript.title}
-            </h1>
-            <p className="mx-auto line-clamp-4 max-w-3xl text-lg leading-8 text-slate-700">
-              {authorWorkspace.hero.body}
-            </p>
+            <div className="rounded-xl border border-line bg-white p-5 shadow-panel">
+              <div className="inline-flex items-center gap-2 rounded-full border border-accent/20 bg-accent/10 px-4 py-2 text-sm font-semibold text-accent">
+                <CheckCircle2 size={16} aria-hidden="true" />
+                {authorWorkspace.hero.statusLabel}
+              </div>
+              <p className="mt-4 text-sm leading-6 text-muted">
+                Börja med huvudkortet och använd detaljerna längre ner när du vill kontrollera underlaget.
+              </p>
+            </div>
           </section>
         </header>
 
-        <section className="mx-auto max-w-4xl">
+        <section className="mx-auto max-w-5xl">
           <StartHereCard manuscriptId={id} start={authorWorkspace.start} />
         </section>
 
@@ -111,7 +119,7 @@ export default async function ManuscriptWorkspacePage({
               </p>
             </section>
           ) : (
-            <div className="grid gap-5 lg:grid-cols-3">
+            <div className="grid items-stretch gap-4 lg:grid-cols-3">
               {authorWorkspace.priorityCards.map((priority) => (
                 <PriorityCard
                   key={priority.id}
@@ -214,7 +222,7 @@ function StartHereCard({
   return (
     <section className="active-card p-7 sm:p-9">
       <p className="text-sm font-semibold uppercase tracking-wide text-accent">
-        Start here
+        Börja här
       </p>
       <h2 className="mt-4 max-w-3xl text-3xl font-semibold tracking-normal text-ink sm:text-4xl">
         {start.title}
@@ -278,7 +286,7 @@ function PriorityCard({
         {priority.targetSectionId ? (
           <Link
             href={`/manuscripts/${manuscriptId}/chapters/${priority.targetSectionId}/workspace`}
-            className="secondary-button min-h-9 px-3"
+            className="secondary-button min-h-9 w-full px-3"
           >
             Visa i texten
             <ArrowRight size={15} aria-hidden="true" />
@@ -351,7 +359,7 @@ function RawObservationPanel({
         <>
           {keyIssues.length > 0 ? (
             <div>
-              <h3 className="text-sm font-semibold">Observationer med högst vikt</h3>
+              <h3 className="text-sm font-semibold">Högst prioriterade observationer</h3>
               <div className="mt-3 divide-y divide-line border-y border-line">
                 {keyIssues.map((issue) => (
                   <IssueSummary key={issue.id} issue={issue} />
@@ -412,7 +420,7 @@ function RewritePlanPanel({
               <span className="text-sm font-semibold">{item.title}</span>
               {item.priority ? (
                 <span className="border border-line bg-paper px-2 py-1 text-xs text-slate-600">
-                  Priority {item.priority}
+                  Prio {item.priority}
                 </span>
               ) : null}
             </div>
@@ -590,9 +598,18 @@ function ReadinessRow({ label, value }: { label: string; value: string }) {
 }
 
 function SeverityBadge({ severity }: { severity: number }) {
+  const label =
+    severity >= 5
+      ? "Mycket hög"
+      : severity >= 4
+        ? "Hög"
+        : severity >= 3
+          ? "Medel"
+          : "Låg";
+
   return (
-    <span className="inline-flex min-h-7 items-center border border-line bg-white px-2 text-xs font-semibold text-slate-600">
-      S{severity}
+    <span className="inline-flex min-h-7 items-center rounded-full border border-line bg-white px-3 text-xs font-semibold text-slate-600">
+      {label}
     </span>
   );
 }

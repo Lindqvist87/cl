@@ -13,22 +13,25 @@ export default async function TrendsPage() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <Link href="/" className="text-sm text-accent hover:underline">
+      <header className="paper-card p-7 sm:p-8">
+        <Link href="/" className="ghost-button px-0">
           Back to dashboard
         </Link>
-        <h1 className="mt-2 text-2xl font-semibold tracking-normal">Trends</h1>
-        <p className="mt-1 max-w-2xl text-sm text-slate-600">
-          Store public metadata, bestseller/list signals, category notes, and review snippets.
+        <p className="page-kicker mt-6">Market signals</p>
+        <h1 className="mt-3 text-3xl font-semibold tracking-normal">
+          Signals that shape reader expectations.
+        </h1>
+        <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+          Store public metadata, bestseller/list signals, category notes, and review snippets for editorial comparison.
         </p>
-      </div>
+      </header>
 
       <ManualTrendImportForm />
 
-      <section className="border border-line bg-white shadow-panel">
-        <div className="border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-            Trend Signals
+      <section className="paper-card p-0">
+        <div className="border-b border-line px-5 py-4">
+          <h2 className="section-title">
+            Recent signals
           </h2>
         </div>
         {signals.length === 0 ? (
@@ -36,9 +39,9 @@ export default async function TrendsPage() {
             No trend signals imported yet.
           </div>
         ) : (
-          <div className="divide-y divide-line">
+          <div className="grid gap-3 p-4">
             {signals.map((signal) => (
-              <div key={signal.id} className="grid gap-3 px-4 py-4 lg:grid-cols-[1fr_120px_140px_120px]">
+              <article key={signal.id} className="grid gap-4 rounded-lg border border-line bg-paper-alt p-4 lg:grid-cols-[1fr_auto]">
                 <div className="flex gap-3">
                   <TrendingUp size={20} className="mt-1 text-accent" aria-hidden="true" />
                   <div>
@@ -46,7 +49,7 @@ export default async function TrendsPage() {
                       {signal.title || signal.category || signal.listName || signal.source}
                     </h3>
                     <p className="mt-1 text-sm text-slate-600">
-                      {[signal.author, signal.genre, signal.category].filter(Boolean).join(" | ") || "General market signal"}
+                      {[signal.author, signal.genre, signal.category].filter(Boolean).join(" / ") || "General market signal"}
                     </p>
                     {signal.description ? (
                       <p className="mt-2 line-clamp-2 text-sm text-slate-700">
@@ -55,13 +58,15 @@ export default async function TrendsPage() {
                     ) : null}
                   </div>
                 </div>
-                <Metric label="Source" value={signal.source} />
-                <Metric
-                  label="Date"
-                  value={signal.signalDate ? signal.signalDate.toLocaleDateString() : "Unknown"}
-                />
-                <Metric label="Rank" value={signal.rank ? String(signal.rank) : "N/A"} />
-              </div>
+                <div className="flex flex-wrap gap-2 lg:justify-end">
+                  <Metric label="Source" value={signal.source} />
+                  <Metric
+                    label="Date"
+                    value={signal.signalDate ? signal.signalDate.toLocaleDateString() : "Unknown"}
+                  />
+                  <Metric label="Rank" value={signal.rank ? String(signal.rank) : "N/A"} />
+                </div>
+              </article>
             ))}
           </div>
         )}
@@ -72,9 +77,9 @@ export default async function TrendsPage() {
 
 function Metric({ label, value }: { label: string; value: string }) {
   return (
-    <div>
-      <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-1 text-sm font-semibold">{value}</div>
-    </div>
+    <span className="inline-flex items-center gap-2 rounded-full border border-line bg-white px-3 py-1 text-xs text-muted">
+      <span>{label}</span>
+      <span className="font-semibold text-ink">{value}</span>
+    </span>
   );
 }

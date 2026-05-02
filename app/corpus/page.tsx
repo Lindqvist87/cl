@@ -36,24 +36,27 @@ export default async function CorpusPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+      <header className="paper-card p-7 sm:p-8">
         <div>
-          <Link href="/" className="text-sm text-accent hover:underline">
+          <Link href="/" className="ghost-button px-0">
             Back to dashboard
           </Link>
-          <h1 className="mt-2 text-2xl font-semibold tracking-normal">Corpus</h1>
-          <p className="mt-1 max-w-2xl text-sm text-slate-600">
-            Import legal benchmark texts and metadata with rights status tracked per book.
+          <p className="page-kicker mt-6">Reference library</p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-normal">
+            Benchmark texts for editorial comparison.
+          </h1>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-slate-600">
+            Keep legally usable reference books and metadata close to the editorial workflow.
           </p>
         </div>
-      </div>
+      </header>
 
       <ManualCorpusImportForm />
 
-      <section className="border border-line bg-white shadow-panel">
-        <div className="border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-            Imported Books
+      <section className="paper-card p-0">
+        <div className="border-b border-line px-5 py-4">
+          <h2 className="section-title">
+            Reference texts
           </h2>
         </div>
         {books.length === 0 ? (
@@ -61,13 +64,13 @@ export default async function CorpusPage() {
             No corpus books imported yet.
           </div>
         ) : (
-          <div className="divide-y divide-line">
+          <div className="grid gap-3 p-4">
             {books.map((book) => {
               const status = statuses.get(book.id);
               if (!status) return null;
 
               return (
-                <div key={book.id} className="space-y-4 px-4 py-4">
+                <article key={book.id} className="space-y-4 rounded-lg border border-line bg-paper-alt p-4">
                   <div className="grid gap-4 xl:grid-cols-[1fr_360px_180px]">
                     <div className="flex gap-3">
                       <BookOpen size={20} className="mt-1 text-accent" aria-hidden="true" />
@@ -76,21 +79,21 @@ export default async function CorpusPage() {
                           <h3 className="font-semibold">{book.title}</h3>
                           <Link
                             href={`/admin/corpus/${book.id}`}
-                            className="text-sm text-accent hover:underline"
+                            className="text-sm font-semibold text-accent hover:underline"
                           >
-                            Details
+                            Admin details
                           </Link>
                           {book.profile ? (
                             <Link
                               href={`/admin/corpus/${book.id}/profile`}
-                              className="text-sm text-accent hover:underline"
-                            >
-                              Book DNA
-                            </Link>
+                            className="text-sm text-accent hover:underline"
+                          >
+                              Reading profile
+                          </Link>
                           ) : null}
                         </div>
                         <p className="mt-1 text-sm text-slate-600">
-                          {[book.author, book.language, book.genre].filter(Boolean).join(" | ") || "Metadata pending"}
+                          {[book.author, book.language, book.genre].filter(Boolean).join(" / ") || "Metadata pending"}
                         </p>
                         <p className="mt-1 text-xs text-slate-500">{book.source.name}</p>
                       </div>
@@ -105,7 +108,14 @@ export default async function CorpusPage() {
                         value={book.benchmarkReady ? "Ready" : "Not ready"}
                       />
                       <MetricWithIcon label="Chapters" value={String(book._count.chapters)} />
-                      <MetricWithIcon label="Chunks" value={String(book._count.chunks)} />
+                      <details className="col-span-2 rounded-lg border border-line bg-white px-3 py-2 sm:col-span-4 xl:col-span-2">
+                        <summary className="cursor-pointer text-xs font-semibold text-muted hover:text-accent">
+                          Admin details
+                        </summary>
+                        <div className="mt-2">
+                          <MetricWithIcon label="Chunks" value={String(book._count.chunks)} />
+                        </div>
+                      </details>
                     </div>
 
                     <div className="flex items-start xl:justify-end">
@@ -114,7 +124,7 @@ export default async function CorpusPage() {
                   </div>
 
                   <CorpusAnalysisProgress initialStatus={status} compact />
-                </div>
+                </article>
               );
             })}
           </div>

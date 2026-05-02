@@ -56,30 +56,35 @@ export function CorpusAnalysisProgress({
               </div>
               {status.progress.currentStepLabel ? (
                 <div className="text-sm text-slate-600">
-                  Current step: {status.progress.currentStepLabel}
+                  Current pass: {status.progress.currentStepLabel}
                 </div>
               ) : null}
             </div>
-            <div className="mt-3 h-2 w-full overflow-hidden bg-white">
+            <div className="mt-3 h-2 w-full overflow-hidden rounded-full bg-white">
               <div
-                className="h-full bg-accent transition-all"
+                className="h-full rounded-full bg-accent transition-all"
                 style={{ width: `${status.progress.percent}%` }}
               />
             </div>
-            <div className="mt-3 grid gap-2 text-xs text-slate-600 sm:grid-cols-2 xl:grid-cols-4">
-              <span>Last update: {formatRelativeAge(status.lastUpdatedAt, now)} ago</span>
-              <span>
-                Jobs: {status.counts.runningJobs} running,{" "}
-                {status.counts.queuedJobs} queued,{" "}
-                {status.counts.completedJobs} done
-              </span>
-              <span>Failed jobs: {status.counts.failedJobs}</span>
-              <span>
-                Chapters: {status.counts.chapters.toLocaleString()} | Chunks:{" "}
-                {status.counts.chunks.toLocaleString()} | Embedded:{" "}
-                {status.counts.embeddedChunks.toLocaleString()}
-              </span>
-            </div>
+            <details className="detail-toggle mt-3">
+              <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-muted hover:text-accent">
+                Progress details
+              </summary>
+              <div className="grid gap-2 border-t border-line p-3 text-xs text-slate-600 sm:grid-cols-2 xl:grid-cols-4">
+                <span>Last update: {formatRelativeAge(status.lastUpdatedAt, now)} ago</span>
+                <span>
+                  Jobs: {status.counts.runningJobs} running,{" "}
+                  {status.counts.queuedJobs} queued,{" "}
+                  {status.counts.completedJobs} done
+                </span>
+                <span>Failed jobs: {status.counts.failedJobs}</span>
+                <span>
+                  Chapters: {status.counts.chapters.toLocaleString()} / Chunks:{" "}
+                  {status.counts.chunks.toLocaleString()} / Embedded:{" "}
+                  {status.counts.embeddedChunks.toLocaleString()}
+                </span>
+              </div>
+            </details>
           </div>
           <button
             type="button"
@@ -92,7 +97,7 @@ export function CorpusAnalysisProgress({
               className={isRefreshing ? "animate-spin" : undefined}
               aria-hidden="true"
             />
-            Refresh status
+            Refresh
           </button>
         </div>
         {warningText ? (

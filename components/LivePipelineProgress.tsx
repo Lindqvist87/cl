@@ -140,9 +140,20 @@ export function LivePipelineProgress({
   }, [manuscriptId, refreshDiagnostics]);
 
   return (
-    <section className="border border-line bg-white p-4 shadow-panel">
+    <section className="paper-card p-6 sm:p-7">
+      <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+          <p className="page-kicker">Analysis progress</p>
+          <h2 className="section-title mt-2">Current editorial pass</h2>
+        </div>
+        <div className="inline-flex items-center gap-2 rounded-full border border-line bg-paper-alt px-3 py-1 text-sm font-semibold text-ink">
+          <BarChart3 size={16} aria-hidden="true" />
+          {status.percent}% complete
+        </div>
+      </div>
+
       <div
-        className={`rounded-lg border px-4 py-4 ${
+        className={`rounded-xl border px-5 py-5 ${
           isBlockedByError
             ? "border-danger bg-white"
             : fetchError && !diagnostics
@@ -151,30 +162,37 @@ export function LivePipelineProgress({
         }`}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
+          <div className="max-w-2xl">
             <div
               className={`text-xs font-semibold uppercase tracking-wide ${
                 isBlockedByError ? "text-danger" : "text-accent"
               }`}
             >
-              Current analysis step
+              Current editorial step
             </div>
             <h2 className="mt-1 text-2xl font-semibold tracking-normal text-ink">
               {isBlockedByError
                 ? `Analysis paused at ${formatStepName(status.currentStep)}`
                 : formatStepName(status.currentStep)}
             </h2>
-            <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-base font-semibold">
+            <p className="mt-2 text-sm leading-6 text-slate-700">
+              {currentStepExplanation({
+                currentStep: status.currentStep,
+                isBlockedByError,
+                rewriteDraftsDeferred
+              })}
+            </p>
+            <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-sm font-semibold text-muted">
               {rewriteDraftsDeferred ? (
-                <span>Rewrite plan ready. Chapter rewrite drafts can be generated when needed.</span>
+                <span>Revision plan ready</span>
               ) : status.stepProgress?.label ? (
                 <span>{status.stepProgress.label}</span>
               ) : status.stepProgress?.remainingLabel ? (
                 <span>{status.stepProgress.remainingLabel}</span>
               ) : fetchError && !diagnostics ? (
-                <span>Live diagnostics unavailable</span>
+                <span>Progress refresh unavailable</span>
               ) : (
-                <span>Progress total not available yet</span>
+                <span>Preparing progress details</span>
               )}
               {status.stepProgress?.remainingLabel &&
               status.stepProgress.label ? (
@@ -192,7 +210,7 @@ export function LivePipelineProgress({
             ) : null}
           </div>
           <div
-            className={`inline-flex min-h-8 items-center px-3 text-sm font-semibold ${
+            className={`inline-flex min-h-8 shrink-0 items-center rounded-full px-3 text-sm font-semibold ${
               isBlockedByError
                 ? "bg-danger text-white"
                 : liveShouldPoll
@@ -205,7 +223,7 @@ export function LivePipelineProgress({
         </div>
 
         <div
-          className="mt-4 h-5 overflow-hidden bg-white shadow-inner"
+          className="mt-5 h-3 overflow-hidden rounded-full bg-paper-alt"
           role="progressbar"
           aria-label={`${formatStepName(status.currentStep)} current step progress`}
           aria-valuemin={0}
@@ -218,14 +236,13 @@ export function LivePipelineProgress({
           }
         >
           <div
-            className={`h-full ${
+            className={`h-full rounded-full ${
               isBlockedByError ? "bg-danger" : "bg-accent"
             }`}
             style={{ width: `${primaryPercent ?? 0}%` }}
           />
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm font-semibold text-slate-600">
-          <span>{liveStatusText}</span>
+        <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-muted">
           <span>{lastRefreshLabel(lastRefreshedAt)}</span>
           {hasStepProgress && primaryPercent !== null ? (
             <span>{primaryPercent}% of current step</span>
@@ -233,16 +250,14 @@ export function LivePipelineProgress({
         </div>
         {fetchError && !diagnostics ? (
           <p className="mt-2 text-sm font-semibold text-warn">
-            Live diagnostics unavailable
+            Progress refresh unavailable
           </p>
         ) : null}
       </div>
 
-      <div className="mt-5 flex items-center justify-between gap-3">
+      <div className="mt-6 flex items-center justify-between gap-3">
         <div>
-          <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-            Overall analysis progress
-          </h3>
+          <h3 className="text-sm font-semibold text-ink">Book-wide progress</h3>
           <p className="mt-1 text-sm text-slate-500">
             {status.completedSteps} of {status.totalSteps} steps complete
           </p>
@@ -253,51 +268,51 @@ export function LivePipelineProgress({
         </div>
       </div>
       <div
-        className="mt-3 h-2 overflow-hidden bg-paper"
+        className="mt-3 h-2 overflow-hidden rounded-full bg-paper-alt"
         role="progressbar"
         aria-label="Overall analysis progress"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={status.percent}
       >
-        <div className="h-full bg-accent" style={{ width: `${status.percent}%` }} />
+        <div className="h-full rounded-full bg-accent" style={{ width: `${status.percent}%` }} />
       </div>
-
-      {status.lockStatus ? (
-        <div className="mt-4 border border-line bg-paper px-3 py-3 text-sm">
-          <div className="font-semibold">{status.lockStatus.message}</div>
-          <div className="mt-2 grid gap-2 sm:grid-cols-3">
-            <PipelineDetail label="Locked job" value={status.lockStatus.type} />
-            <PipelineDetail
-              label="Locked until"
-              value={formatDisplayTime(status.lockStatus.lockExpiresAt)}
-            />
-            <PipelineDetail
-              label="Stale"
-              value={status.lockStatus.stale ? "Yes" : "No"}
-            />
-          </div>
-        </div>
-      ) : null}
-
-      {manualNotice ? (
-        <div className="mt-3 border border-line bg-paper px-3 py-2 text-sm font-semibold">
-          {manualNotice}
-        </div>
-      ) : null}
 
       <details className="detail-toggle mt-4">
         <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-ink hover:text-accent">
-          Technical details
+          Troubleshooting
         </summary>
         <div className="border-t border-line p-4">
+          {status.lockStatus ? (
+            <div className="mb-4 rounded-lg border border-line bg-paper-alt px-3 py-3 text-sm">
+              <div className="font-semibold">{status.lockStatus.message}</div>
+              <div className="mt-2 grid gap-2 sm:grid-cols-3">
+                <PipelineDetail label="Locked task" value={status.lockStatus.type} />
+                <PipelineDetail
+                  label="Locked until"
+                  value={formatDisplayTime(status.lockStatus.lockExpiresAt)}
+                />
+                <PipelineDetail
+                  label="Stale"
+                  value={status.lockStatus.stale ? "Yes" : "No"}
+                />
+              </div>
+            </div>
+          ) : null}
+
+          {manualNotice ? (
+            <div className="mb-4 rounded-lg border border-line bg-paper-alt px-3 py-2 text-sm font-semibold">
+              {manualNotice}
+            </div>
+          ) : null}
+
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <PipelineDetail
               label="Current step"
               value={formatStepName(status.currentStep)}
             />
             <PipelineDetail
-              label="Current job status"
+              label="Background task status"
               value={formatNullableStatus(status.currentJobStatus)}
             />
             <PipelineDetail
@@ -315,10 +330,10 @@ export function LivePipelineProgress({
               />
             ) : null}
             <PipelineDetail
-              label="Live diagnostics"
+              label="Diagnostics"
               value={diagnostics || !fetchError ? "Available" : "Unavailable"}
             />
-            <PipelineDetail label="Complete" value={String(status.complete)} />
+            <PipelineDetail label="Finished" value={String(status.complete)} />
             <PipelineDetail
               label="Last updated"
               value={formatDisplayTime(status.lastUpdatedAt)}
@@ -338,7 +353,7 @@ export function LivePipelineProgress({
       </details>
       {fetchError && diagnostics ? (
         <p className="mt-3 text-xs text-danger">
-          Live diagnostics refresh failed: {fetchError}
+          Progress refresh failed: {fetchError}
         </p>
       ) : null}
     </section>
@@ -347,11 +362,35 @@ export function LivePipelineProgress({
 
 function PipelineDetail({ label, value }: { label: string; value: string }) {
   return (
-      <div className="rounded-lg border border-line bg-paper-alt px-3 py-2">
+    <div className="rounded-lg border border-line bg-paper-alt px-3 py-2">
       <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
       <div className="mt-1 break-words text-sm font-semibold">{value}</div>
     </div>
   );
+}
+
+function currentStepExplanation({
+  currentStep,
+  isBlockedByError,
+  rewriteDraftsDeferred
+}: {
+  currentStep: string | null;
+  isBlockedByError: boolean;
+  rewriteDraftsDeferred: boolean;
+}) {
+  if (isBlockedByError) {
+    return "The analysis needs attention before it can continue. Troubleshooting details are available below.";
+  }
+
+  if (rewriteDraftsDeferred) {
+    return "The core editorial analysis is complete. Rewrite drafts are optional and can be generated when you are ready.";
+  }
+
+  if (!currentStep) {
+    return "The analysis is preparing its next editorial step.";
+  }
+
+  return "The editorial pass is preparing the manuscript map, notes, and revision guidance. You can keep this page open while it updates.";
 }
 
 function manualNoticeFromResult(result: unknown) {
@@ -370,14 +409,14 @@ function manualNoticeFromResult(result: unknown) {
   }
 
   if (typeof recovered?.type === "string") {
-    return `Recovered stale ${recovered.type}. Run until pause again to continue.`;
+    return `Recovered stale ${recovered.type}. Continue background work again to proceed.`;
   }
 
   if (
     record.reason === "stale_running_job_recovered" &&
     typeof blockingJob.type === "string"
   ) {
-    return `Recovered stale ${blockingJob.type}. Run until pause again to continue.`;
+    return `Recovered stale ${blockingJob.type}. Continue background work again to proceed.`;
   }
 
   if (
@@ -443,30 +482,30 @@ function liveStatusLabel(input: {
   }
 
   if (input.autoRunnerActive) {
-    return "Run until pause active";
+    return "Continuing";
   }
 
   if (input.fetchError && !input.diagnostics) {
-    return "Live diagnostics unavailable";
+    return "Refresh unavailable";
   }
 
   if (input.isBlockedByError) {
-    return "Live updates paused because analysis is blocked by error.";
+    return "Needs attention";
   }
 
   if (input.rewriteDraftsDeferred) {
-    return "Rewrite plan ready. Chapter rewrite drafts can be generated when needed.";
+    return "Ready for drafts";
   }
 
-  return input.shouldPoll ? "Live updates active" : "Live updates paused";
+  return input.shouldPoll ? "Updating" : "Paused";
 }
 
 function lastRefreshLabel(value: Date | null) {
   if (!value) {
-    return "Last refreshed: pending";
+    return "Update pending";
   }
 
-  return `Last refreshed at ${value.toLocaleTimeString([], {
+  return `Updated at ${value.toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit"

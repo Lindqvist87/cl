@@ -454,14 +454,14 @@ test("author workspace keeps raw findings secondary instead of primary", () => {
   assert.equal(authorWorkspace.details.sectionsLabel, "Manusets delar");
   assert.equal(authorWorkspace.details.rewritePlanLabel, "Redigeringsplan");
   assert.equal(authorWorkspace.details.importedStructureLabel, "Importerad struktur");
-  assert.equal(authorWorkspace.details.rawDataLabel, "Rådata och detaljer");
+  assert.equal(authorWorkspace.details.rawDataLabel, "Förberedelsestatus");
   assert.doesNotMatch(
     mainLabels,
     /Workspace readiness|Pipeline|Raw findings|Next Best Editorial Action|Detected sections|Severity|Findings/
   );
   assert.doesNotMatch(
     mainLabels,
-    /Alla observationer|Analysen är redo|Redigeringsplan|Importerad struktur|Rådata/
+    /Alla observationer|Analysen är redo|Redigeringsplan|Importerad struktur|Förberedelsestatus/
   );
 });
 

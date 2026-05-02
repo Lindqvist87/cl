@@ -87,22 +87,25 @@ export default async function ChapterWorkspacePage({
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-3 border border-line bg-white p-4 shadow-panel sm:flex-row sm:items-start sm:justify-between">
+      <header className="paper-card flex flex-col gap-5 p-6 sm:p-7 lg:flex-row lg:items-start lg:justify-between">
         <div>
           <Link
             href={`/manuscripts/${id}/workspace`}
-            className="inline-flex items-center gap-2 text-sm text-accent hover:underline"
+            className="ghost-button px-0"
           >
             <ArrowLeft size={16} aria-hidden="true" />
             Back to workspace
           </Link>
-          <h1 className="mt-2 text-2xl font-semibold tracking-normal">
-            Section {chapter.order}: {chapter.title}
+          <p className="page-kicker mt-5">Chapter workspace</p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-normal">
+            {chapter.title}
           </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            {chapter.manuscript.title} | {chapter.wordCount.toLocaleString()} words |{" "}
-            {formatStatus(chapter.status)}
-          </p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            <MetaPill label="Book" value={chapter.manuscript.title} />
+            <MetaPill label="Chapter" value={String(chapter.order)} />
+            <MetaPill label="Length" value={`${chapter.wordCount.toLocaleString()} words`} />
+            <MetaPill label="Preparation" value={formatStatus(chapter.status)} />
+          </div>
         </div>
         <EditorialDecisionControls
           manuscriptId={id}
@@ -113,12 +116,12 @@ export default async function ChapterWorkspacePage({
           scope="CHAPTER"
           currentStatus={latestChapterDecision(decisions, chapterId, latestRewritePlan?.id)?.status}
         />
-      </div>
+      </header>
 
       <section className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-        <TextPanel title="Section text" text={chapter.text || "No section text available."} />
+        <TextPanel title="Chapter text" text={chapter.text || "No chapter text available."} />
         <section className="space-y-6">
-          <InfoPanel title="Section summary">
+          <InfoPanel title="Chapter summary">
             <p className="text-sm leading-6 text-slate-700">
               {chapter.summary || String(audit.summary ?? "No chapter summary is available yet.")}
             </p>
@@ -139,10 +142,10 @@ export default async function ChapterWorkspacePage({
       </section>
 
       <section className="grid gap-6 lg:grid-cols-2">
-        <section className="border border-line bg-white shadow-panel">
-          <div className="flex items-center gap-2 border-b border-line px-4 py-3">
+        <section className="paper-card p-0">
+          <div className="flex items-center gap-2 border-b border-line px-5 py-4">
             <ListChecks size={18} aria-hidden="true" />
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+            <h2 className="section-title">
               Section notes
             </h2>
           </div>
@@ -188,10 +191,10 @@ export default async function ChapterWorkspacePage({
           </div>
         </section>
 
-        <section className="border border-line bg-white shadow-panel">
-          <div className="border-b border-line px-4 py-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Manuscript-wide notes for this section
+        <section className="paper-card p-0">
+          <div className="border-b border-line px-5 py-4">
+            <h2 className="section-title">
+              Book-wide notes for this chapter
             </h2>
           </div>
           <div className="divide-y divide-line">
@@ -234,9 +237,9 @@ export default async function ChapterWorkspacePage({
       </section>
 
       <section className="grid gap-6 lg:grid-cols-[1fr_360px]">
-        <section className="border border-line bg-white shadow-panel">
-          <div className="border-b border-line px-4 py-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+        <section className="paper-card p-0">
+          <div className="border-b border-line px-5 py-4">
+            <h2 className="section-title">
               Suggested revisions
             </h2>
           </div>
@@ -256,17 +259,17 @@ export default async function ChapterWorkspacePage({
           </div>
         </section>
 
-        <section className="border border-line bg-white p-4 shadow-panel">
+        <section className="paper-card p-5">
           <div className="flex items-center gap-2">
             <GitBranch size={18} aria-hidden="true" />
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Echo Impact
+            <h2 className="section-title">
+              Ripple effects
             </h2>
           </div>
           {affectedChapters.length === 0 &&
           relatedUnresolvedFindings.length === 0 &&
           continuityNotes.length === 0 ? (
-            <p className="mt-3 text-sm text-slate-500">No global impact detected yet.</p>
+            <p className="mt-3 text-sm text-slate-500">No ripple effects detected yet.</p>
           ) : (
             <div className="mt-3 space-y-4">
               {affectedChapters.length > 0 ? (
@@ -274,7 +277,7 @@ export default async function ChapterWorkspacePage({
               ) : null}
               {relatedUnresolvedFindings.length > 0 ? (
                 <ImpactBlock
-                  title="Related unresolved findings"
+                  title="Linked notes still open"
                   items={relatedUnresolvedFindings.slice(0, 5).map((finding) => finding.problem)}
                 />
               ) : null}
@@ -293,13 +296,13 @@ function TextPanel({ title, text }: { title: string; text: string }) {
   const excerpt = text.length > 9000 ? `${text.slice(0, 9000)}...` : text;
 
   return (
-    <section className="border border-line bg-white shadow-panel">
-      <div className="border-b border-line px-4 py-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+    <section className="paper-card p-0">
+      <div className="border-b border-line px-5 py-4">
+        <h2 className="section-title">
           {title}
         </h2>
       </div>
-      <div className="max-h-[720px] overflow-auto whitespace-pre-wrap px-4 py-4 text-sm leading-7">
+      <div className="max-h-[720px] overflow-auto whitespace-pre-wrap px-5 py-5 text-sm leading-7">
         {excerpt}
       </div>
     </section>
@@ -314,8 +317,8 @@ function InfoPanel({
   children: ReactNode;
 }) {
   return (
-    <section className="border border-line bg-white p-4 shadow-panel">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+    <section className="paper-card p-5">
+      <h2 className="text-base font-semibold tracking-normal text-ink">
         {title}
       </h2>
       <div className="mt-3">{children}</div>
@@ -337,18 +340,35 @@ function ImpactBlock({ title, items }: { title: string; items: string[] }) {
 }
 
 function SeverityBadge({ severity }: { severity: number }) {
+  const label =
+    severity >= 5
+      ? "Highest priority"
+      : severity >= 4
+        ? "High priority"
+        : severity >= 3
+          ? "Medium priority"
+          : "Lower priority";
   const className =
     severity >= 5
-      ? "bg-danger text-white"
+      ? "border-danger/20 bg-danger/5 text-danger"
       : severity >= 4
-        ? "bg-warn text-white"
+        ? "border-warn/25 bg-warn/5 text-warn"
         : severity >= 3
-          ? "bg-accent text-white"
-          : "bg-paper-alt text-slate-700";
+          ? "border-accent/20 bg-accent/10 text-accent"
+          : "border-line bg-white text-slate-700";
 
   return (
-    <span className={`inline-flex min-h-7 items-center px-2 text-xs font-semibold ${className}`}>
-      S{severity}
+    <span className={`inline-flex min-h-7 items-center rounded-full border px-3 text-xs font-semibold ${className}`}>
+      {label}
+    </span>
+  );
+}
+
+function MetaPill({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full border border-line bg-paper-alt px-3 py-1 text-xs text-muted">
+      <span>{label}</span>
+      <span className="font-semibold text-ink">{value}</span>
     </span>
   );
 }

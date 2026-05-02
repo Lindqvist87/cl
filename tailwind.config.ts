@@ -23,8 +23,8 @@ const config: Config = {
         info: "#2563EB"
       },
       boxShadow: {
-        panel: "0 10px 30px rgba(23, 23, 23, 0.05)",
-        active: "0 20px 60px rgba(23, 23, 23, 0.08), 0 0 0 1px rgba(232, 93, 158, 0.16), 0 0 34px rgba(232, 93, 158, 0.12)",
+        panel: "0 14px 36px rgba(23, 23, 23, 0.04)",
+        active: "0 22px 60px rgba(23, 23, 23, 0.07), 0 0 0 1px rgba(232, 93, 158, 0.14), 0 0 34px rgba(232, 93, 158, 0.1)",
         button: "0 10px 24px rgba(232, 93, 158, 0.22)"
       }
     }

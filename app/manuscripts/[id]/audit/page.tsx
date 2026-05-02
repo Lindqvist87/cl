@@ -61,17 +61,21 @@ export default async function ManuscriptAuditPage({
   });
 
   return (
-    <div className="space-y-6">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+    <div className="space-y-8">
+      <header className="paper-card flex flex-col gap-5 p-7 sm:p-8 lg:flex-row lg:items-start lg:justify-between">
         <div>
-          <Link href={`/manuscripts/${manuscript.id}`} className="text-sm text-accent hover:underline">
+          <Link href={`/manuscripts/${manuscript.id}`} className="ghost-button px-0">
             Back to manuscript
           </Link>
-          <h1 className="mt-2 text-2xl font-semibold tracking-normal">
-            Editorial report: {manuscript.title}
+          <p className="page-kicker mt-6">Editorial report</p>
+          <h1 className="mt-3 text-3xl font-semibold tracking-normal">
+            {manuscript.title}
           </h1>
+          <p className="mt-3 max-w-2xl text-sm leading-6 text-muted">
+            Review the manuscript-level summary, priority themes, and section notes before moving into revision.
+          </p>
         </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2 lg:justify-end">
           <Link
             href={`/manuscripts/${manuscript.id}/structure`}
             className="secondary-button min-h-9 px-3"
@@ -83,12 +87,19 @@ export default async function ManuscriptAuditPage({
             <Download size={16} aria-hidden="true" />
             Markdown
           </a>
-          <a href={`/api/manuscripts/${manuscript.id}/report/json`} className="secondary-button min-h-9 px-3">
-            <Download size={16} aria-hidden="true" />
-            JSON
-          </a>
+          <details className="rounded-lg border border-line bg-paper-alt">
+            <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-ink hover:text-accent">
+              Export details
+            </summary>
+            <div className="border-t border-line p-2">
+              <a href={`/api/manuscripts/${manuscript.id}/report/json`} className="ghost-button justify-start">
+                <Download size={16} aria-hidden="true" />
+                JSON
+              </a>
+            </div>
+          </details>
         </div>
-      </div>
+      </header>
 
       <section className="grid gap-3 md:grid-cols-3">
         <Stat label="Editorial score" value={typeof score === "number" ? `${score}/100` : "Pending"} />
@@ -96,16 +107,17 @@ export default async function ManuscriptAuditPage({
         <Stat label="Revision plan" value={rewritePlan ? "Ready" : "Pending"} />
       </section>
 
-      <section className="border border-line bg-white p-4 shadow-panel">
-        <h2 className="text-lg font-semibold">Executive Summary</h2>
+      <section className="active-card p-6">
+        <p className="page-kicker">Start here</p>
+        <h2 className="mt-2 text-2xl font-semibold tracking-normal">Executive summary</h2>
         <p className="mt-2 text-sm leading-6 text-slate-700">
           {structured?.executiveSummary ?? "No editorial report has been generated yet."}
         </p>
       </section>
 
-      <section className="border border-line bg-white shadow-panel">
-        <div className="border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+      <section className="paper-card p-0">
+        <div className="border-b border-line px-5 py-4">
+          <h2 className="section-title">
             Priority themes
           </h2>
         </div>
@@ -120,36 +132,36 @@ export default async function ManuscriptAuditPage({
         </div>
       </section>
 
-      <section className="border border-line bg-white shadow-panel">
-        <div className="border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+      <section className="paper-card p-0">
+        <div className="border-b border-line px-5 py-4">
+          <h2 className="section-title">
             Issues to review
           </h2>
         </div>
-        <div className="divide-y divide-line">
+        <div className="grid gap-3 p-4">
           {manuscript.findings.slice(0, 20).map((finding) => (
-            <div key={finding.id} className="grid gap-3 px-4 py-4 md:grid-cols-[90px_1fr]">
-              <span className="inline-flex h-7 items-center justify-center bg-paper text-xs font-semibold">
-                S{finding.severity}
-              </span>
+            <article key={finding.id} className="rounded-lg border border-line bg-paper-alt p-4">
               <div>
-                <div className="font-semibold">{finding.problem}</div>
-                <div className="mt-1 text-xs text-slate-500">
-                  {[finding.issueType, finding.chapter?.title].filter(Boolean).join(" | ")}
+                <div className="flex flex-wrap items-center gap-2">
+                  <PriorityBadge severity={finding.severity} />
+                  <div className="font-semibold">{finding.problem}</div>
+                </div>
+                <div className="mt-2 text-xs text-muted">
+                  {[finding.issueType, finding.chapter?.title].filter(Boolean).join(" / ")}
                 </div>
                 {finding.evidence ? (
                   <p className="mt-2 text-sm text-slate-700">{finding.evidence}</p>
                 ) : null}
                 <p className="mt-2 text-sm text-slate-700">{finding.recommendation}</p>
               </div>
-            </div>
+            </article>
           ))}
         </div>
       </section>
 
-      <section className="border border-line bg-white shadow-panel">
-        <div className="border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+      <section className="paper-card p-0">
+        <div className="border-b border-line px-5 py-4">
+          <h2 className="section-title">
             Section notes
           </h2>
         </div>
@@ -160,8 +172,9 @@ export default async function ManuscriptAuditPage({
                 <h3 className="font-semibold">{chapterTitle}</h3>
                 <ul className="mt-2 space-y-2 text-sm text-slate-700">
                   {findings.map((finding) => (
-                    <li key={finding.id}>
-                      S{finding.severity} {finding.problem}
+                    <li key={finding.id} className="flex flex-wrap items-center gap-2">
+                      <PriorityBadge severity={finding.severity} compact />
+                      <span>{finding.problem}</span>
                     </li>
                   ))}
                 </ul>
@@ -176,8 +189,8 @@ export default async function ManuscriptAuditPage({
         <ComparisonPanel title="Trend comparison" output={toRecord(trendOutput?.output)} />
       </section>
 
-      <section className="border border-line bg-white p-4 shadow-panel">
-        <h2 className="text-lg font-semibold">Recommended Rewrite Strategy</h2>
+      <section className="paper-card p-6">
+        <h2 className="text-lg font-semibold">Recommended rewrite strategy</h2>
         <p className="mt-2 text-sm leading-6 text-slate-700">
           {rewritePlan?.globalStrategy ?? structured?.rewriteStrategy ?? "Rewrite plan pending."}
         </p>
@@ -188,8 +201,8 @@ export default async function ManuscriptAuditPage({
 
 function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="border border-line bg-white p-4 shadow-panel">
-      <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
+    <div className="metric-tile">
+      <div className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</div>
       <div className="mt-2 text-xl font-semibold">{value}</div>
     </div>
   );
@@ -208,7 +221,7 @@ function ComparisonPanel({
       : "Comparison pending or source data unavailable.";
 
   return (
-    <div className="border border-line bg-white p-4 shadow-panel">
+    <div className="paper-card p-5">
       <h2 className="text-lg font-semibold">{title}</h2>
       <p className="mt-2 text-sm leading-6 text-slate-700">{summary}</p>
       <details className="detail-toggle mt-3">
@@ -250,12 +263,42 @@ function PriorityThemeSummary({
         </span>
       </div>
       <div className="mt-2 text-xs text-slate-500">
-        {priority.issueCount} issue{priority.issueCount === 1 ? "" : "s"} |{" "}
-        {priority.rawSeverityRange} raw | {affected}
+        {priority.issueCount} note{priority.issueCount === 1 ? "" : "s"} / {affected}
         {remaining > 0 ? ` and ${remaining} more` : ""}
       </div>
       <p className="mt-2 text-sm leading-6 text-slate-700">{priority.recommendedAction}</p>
     </section>
+  );
+}
+
+function PriorityBadge({
+  compact = false,
+  severity
+}: {
+  compact?: boolean;
+  severity: number;
+}) {
+  const label =
+    severity >= 5
+      ? "Highest priority"
+      : severity >= 4
+        ? "High priority"
+        : severity >= 3
+          ? "Medium priority"
+          : "Lower priority";
+  const className =
+    severity >= 5
+      ? "border-danger/20 bg-danger/5 text-danger"
+      : severity >= 4
+        ? "border-warn/25 bg-warn/5 text-warn"
+        : severity >= 3
+          ? "border-accent/20 bg-accent/10 text-accent"
+          : "border-line bg-white text-muted";
+
+  return (
+    <span className={`inline-flex min-h-7 w-fit items-center rounded-full border px-3 text-xs font-semibold ${className}`}>
+      {compact ? label.replace(" priority", "") : label}
+    </span>
   );
 }
 
