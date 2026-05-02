@@ -19,9 +19,9 @@
     }
   },
   "upload": {
-    "emptyFileError": "Välj en DOCX-fil innan du startar.",
+    "emptyFileError": "Välj en DOCX-fil innan du laddar upp manuset.",
     "failedError": "Uppladdningen kunde inte slutföras.",
-    "idleLabel": "Starta översikt",
+    "idleLabel": "Ladda upp manus",
     "busyLabel": "Laddar upp..."
   }
 }

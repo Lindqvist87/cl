@@ -26,127 +26,164 @@ export default async function DashboardPage() {
   }
 
   return (
-    <div className="space-y-12">
-      <section className="relative isolate overflow-hidden py-5 sm:py-8">
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-x-[-1.25rem] bottom-[-4rem] top-[-2rem] -z-10"
-          style={{
-            backgroundImage:
-              "linear-gradient(180deg, rgba(250,250,247,0.94) 0%, rgba(250,250,248,1) 100%), repeating-linear-gradient(0deg, rgba(231,226,218,0.28) 0px, rgba(231,226,218,0.28) 1px, transparent 1px, transparent 20px)"
-          }}
-        />
-        <div className="grid gap-8 lg:grid-cols-[minmax(0,1fr)_340px] lg:items-start">
-          <div className="max-w-3xl">
-            <p className="page-kicker">Starta nytt manus</p>
-            <h1 className="mt-4 max-w-2xl text-4xl font-semibold tracking-normal text-ink sm:text-5xl">
-              Ladda upp ditt manus
-            </h1>
-            <p className="mt-5 max-w-2xl text-base leading-8 text-slate-700 sm:text-lg">
-              Få en redaktionell översikt, prioriterade förbättringsområden
-              och ett tydligt första steg.
-            </p>
+    <div className="relative isolate -mx-5 -my-10 overflow-hidden px-5 pb-16 pt-8 sm:pb-20 sm:pt-10">
+      <style>{`
+        body > div:first-child {
+          background: rgba(255, 255, 255, 0.68);
+          border-color: rgba(231, 226, 218, 0.68);
+          box-shadow: 0 1px 0 rgba(255, 255, 255, 0.76) inset;
+        }
 
-            <div className="mt-8">
-              <UploadForm />
+        body > div:first-child nav {
+          background: rgba(250, 250, 247, 0.48);
+          border-color: rgba(231, 226, 218, 0.64);
+          color: rgba(107, 114, 128, 0.88);
+        }
+
+        body > div:first-child nav a,
+        body > div:first-child nav summary,
+        body > div:first-child nav > span {
+          color: rgba(75, 85, 99, 0.82);
+        }
+      `}</style>
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 -z-20"
+        style={{
+          backgroundImage:
+            "linear-gradient(135deg, #FAFAF7 0%, rgba(255,248,251,0.94) 42%, #FAFAF8 76%, #FFFFFF 100%)"
+        }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[620px] opacity-90"
+        style={{
+          backgroundImage:
+            "radial-gradient(58% 54% at 46% 20%, rgba(232,93,158,0.12), transparent 70%), radial-gradient(34% 32% at 9% 72%, rgba(232,93,158,0.07), transparent 72%), linear-gradient(180deg, rgba(255,255,255,0.46), transparent 74%)"
+        }}
+      />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0 -z-10 opacity-[0.32]"
+        style={{
+          backgroundImage:
+            "repeating-linear-gradient(0deg, rgba(231,226,218,0.24) 0px, rgba(231,226,218,0.24) 1px, transparent 1px, transparent 22px)"
+        }}
+      />
+
+      <div className="mx-auto max-w-6xl space-y-12">
+        <section className="relative isolate overflow-hidden py-5 sm:py-8">
+          <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
+            <div className="max-w-3xl">
+              <p className="page-kicker text-accent/90">Starta nytt manus</p>
+              <h1 className="mt-4 max-w-2xl text-4xl font-semibold tracking-normal text-ink sm:text-5xl">
+                Ladda upp ditt manus
+              </h1>
+              <p className="mt-5 max-w-2xl text-base leading-8 text-slate-700 sm:text-lg">
+                Få en redaktionell översikt, prioriterade förbättringsområden
+                och ett tydligt första steg.
+              </p>
+
+              <div className="mt-8">
+                <UploadForm />
+              </div>
+
+              <TrustNote />
             </div>
 
-            <p className="mt-5 flex max-w-2xl items-start gap-3 text-sm leading-6 text-muted">
-              <ShieldCheck
-                size={18}
-                className="mt-0.5 shrink-0 text-accent"
+            <aside className="paper-card relative overflow-hidden border-white/75 bg-white/90 p-6 shadow-[0_18px_44px_rgba(23,23,23,0.055)] ring-1 ring-line/70 lg:mt-28">
+              <div
                 aria-hidden="true"
+                className="absolute inset-x-6 top-0 h-px bg-gradient-to-r from-transparent via-accent/25 to-transparent"
               />
-              <span>
-                Du behåller alltid kontrollen. Appen föreslår – du bestämmer.
-              </span>
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg border border-accent/10 bg-accent/10 text-accent shadow-[0_10px_24px_rgba(232,93,158,0.09)]">
+                <Sparkles size={19} aria-hidden="true" />
+              </div>
+              <h2 className="mt-5 text-xl font-semibold tracking-normal text-ink">
+                Så fungerar det
+              </h2>
+              <div className="relative mt-6 grid gap-5">
+                <div
+                  aria-hidden="true"
+                  className="absolute bottom-5 left-[17px] top-5 w-px bg-gradient-to-b from-accent/20 via-line to-transparent"
+                />
+                <ManuscriptStep
+                  icon={FileText}
+                  label="1"
+                  title="Vi läser in manuset"
+                />
+                <ManuscriptStep
+                  icon={Map}
+                  label="2"
+                  title="Vi skapar en redaktionell karta"
+                />
+                <ManuscriptStep
+                  icon={ArrowRight}
+                  label="3"
+                  title="Du får veta var du bör börja"
+                />
+              </div>
+            </aside>
+          </div>
+        </section>
+
+        {dbError ? <DatabaseErrorPanel message={dbError} /> : null}
+
+        <section className="space-y-4">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="page-kicker">Library</p>
+              <h2 className="section-title mt-2">{copy.dashboard.sectionTitle}</h2>
+            </div>
+            <p className="text-sm text-muted">
+              Pick up the next editorial step for each manuscript.
             </p>
           </div>
-
-          <aside className="paper-card bg-white/85 p-6 lg:mt-28">
-            <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-accent/10 text-accent">
-              <Sparkles size={19} aria-hidden="true" />
-            </div>
-            <h2 className="mt-5 text-xl font-semibold tracking-normal text-ink">
-              Vad händer sedan?
-            </h2>
-            <div className="mt-6 grid gap-4">
-              <ManuscriptStep
-                icon={FileText}
-                label="1"
-                title="Vi läser in manuset"
-              />
-              <ManuscriptStep
-                icon={Map}
-                label="2"
-                title="Vi skapar en redaktionell karta"
-              />
-              <ManuscriptStep
-                icon={ArrowRight}
-                label="3"
-                title="Du får veta var du bör börja"
-              />
-            </div>
-          </aside>
-        </div>
-      </section>
-
-      {dbError ? <DatabaseErrorPanel message={dbError} /> : null}
-
-      <section className="space-y-4">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-          <div>
-            <p className="page-kicker">Library</p>
-            <h2 className="section-title mt-2">{copy.dashboard.sectionTitle}</h2>
-          </div>
-          <p className="text-sm text-muted">
-            Pick up the next editorial step for each manuscript.
-          </p>
-        </div>
-        {manuscripts.length === 0 ? (
-          <EmptyLibrary />
-        ) : (
-          <div className="grid gap-4">
-            {manuscripts.map((manuscript) => (
-              <article
-                key={manuscript.id}
-                className="paper-card grid gap-5 p-5 md:grid-cols-[1fr_auto] md:items-center"
-              >
-                <div className="flex min-w-0 gap-4">
-                  <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
-                    <FileText size={20} aria-hidden="true" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Link
-                        href={`/manuscripts/${manuscript.id}`}
-                        className="text-lg font-semibold tracking-normal text-ink hover:text-accent"
-                      >
-                        {manuscript.title}
-                      </Link>
-                      <StatusBadge status={manuscript.analysisStatus} />
+          {manuscripts.length === 0 ? (
+            <EmptyLibrary />
+          ) : (
+            <div className="grid gap-4">
+              {manuscripts.map((manuscript) => (
+                <article
+                  key={manuscript.id}
+                  className="paper-card grid gap-5 p-5 md:grid-cols-[1fr_auto] md:items-center"
+                >
+                  <div className="flex min-w-0 gap-4">
+                    <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg bg-accent/10 text-accent">
+                      <FileText size={20} aria-hidden="true" />
                     </div>
-                    <p className="mt-1 truncate text-sm text-muted">
-                      {manuscript.sourceFileName}
-                    </p>
-                    <div className="mt-4 flex flex-wrap gap-2">
-                      <MetricPill
-                        label={copy.dashboard.metrics.words}
-                        value={manuscript.wordCount.toLocaleString()}
-                      />
-                      <MetricPill
-                        label={copy.dashboard.metrics.chapters}
-                        value={String(manuscript.chapterCount)}
-                      />
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Link
+                          href={`/manuscripts/${manuscript.id}`}
+                          className="text-lg font-semibold tracking-normal text-ink hover:text-accent"
+                        >
+                          {manuscript.title}
+                        </Link>
+                        <StatusBadge status={manuscript.analysisStatus} />
+                      </div>
+                      <p className="mt-1 truncate text-sm text-muted">
+                        {manuscript.sourceFileName}
+                      </p>
+                      <div className="mt-4 flex flex-wrap gap-2">
+                        <MetricPill
+                          label={copy.dashboard.metrics.words}
+                          value={manuscript.wordCount.toLocaleString()}
+                        />
+                        <MetricPill
+                          label={copy.dashboard.metrics.chapters}
+                          value={String(manuscript.chapterCount)}
+                        />
+                      </div>
                     </div>
                   </div>
-                </div>
-                <DashboardAction manuscript={manuscript} />
-              </article>
-            ))}
-          </div>
-        )}
-      </section>
+                  <DashboardAction manuscript={manuscript} />
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
     </div>
   );
 }
@@ -199,19 +236,30 @@ function ManuscriptStep({
   title: string;
 }) {
   return (
-    <div className="flex gap-3">
-      <div className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-accent/20 bg-white text-accent">
-        <Icon size={16} aria-hidden="true" />
-        <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-accent text-[10px] font-semibold text-white">
+    <div className="relative flex gap-4">
+      <div className="relative z-10 flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-accent/20 bg-white text-accent shadow-[0_8px_18px_rgba(23,23,23,0.045)]">
+        <Icon size={15} aria-hidden="true" />
+        <span className="absolute -right-1.5 -top-1.5 flex h-5 w-5 items-center justify-center rounded-full border border-white bg-accent text-[10px] font-semibold text-white shadow-[0_6px_14px_rgba(232,93,158,0.22)]">
           {label}
         </span>
       </div>
-      <div className="pt-1">
+      <div className="pt-1.5">
         <h3 className="text-sm font-semibold tracking-normal text-ink">
           {title}
         </h3>
       </div>
     </div>
+  );
+}
+
+function TrustNote() {
+  return (
+    <p className="mt-5 flex max-w-2xl items-start gap-3 text-sm leading-6 text-muted">
+      <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-accent/15 bg-white text-accent shadow-[0_8px_18px_rgba(232,93,158,0.08)]">
+        <ShieldCheck size={14} aria-hidden="true" />
+      </span>
+      <span>Du behåller alltid kontrollen. Appen föreslår – du bestämmer.</span>
+    </p>
   );
 }
 
