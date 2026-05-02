@@ -1,4 +1,4 @@
-import { runReadyPipelineJobs } from "@/lib/pipeline/pipelineJobs";
+import { autoContinueManuscriptPipeline } from "@/lib/pipeline/autoContinue";
 import {
   FULL_MANUSCRIPT_PIPELINE_STEPS,
   normalizeCheckpoint,
@@ -10,16 +10,19 @@ import { prisma } from "@/lib/prisma";
 const DEFAULT_MAX_JOBS = 5;
 const DEFAULT_MAX_SECONDS = 240;
 const DEFAULT_MAX_ITEMS_PER_STEP = 4;
+const DEFAULT_MAX_BATCHES = 5;
 
 export type ManuscriptAdminRunJobsBody = {
   maxJobs?: unknown;
+  maxJobsPerBatch?: unknown;
+  maxBatches?: unknown;
   maxSeconds?: unknown;
   maxItemsPerStep?: unknown;
 };
 
 export const manuscriptAdminJobRunner = {
   async run(manuscriptId: string, body: ManuscriptAdminRunJobsBody = {}) {
-    const result = await runReadyPipelineJobs(
+    const result = await autoContinueManuscriptPipeline(
       manuscriptAdminRunJobOptions(manuscriptId, body)
     );
 
@@ -36,7 +39,11 @@ export function manuscriptAdminRunJobOptions(
 ) {
   return {
     manuscriptId,
-    maxJobs: numberOrDefault(body.maxJobs, DEFAULT_MAX_JOBS),
+    maxBatches: numberOrDefault(body.maxBatches, DEFAULT_MAX_BATCHES),
+    maxJobsPerBatch: numberOrDefault(
+      body.maxJobsPerBatch ?? body.maxJobs,
+      DEFAULT_MAX_JOBS
+    ),
     maxSeconds: numberOrDefault(body.maxSeconds, DEFAULT_MAX_SECONDS),
     maxItemsPerStep: numberOrDefault(
       body.maxItemsPerStep,

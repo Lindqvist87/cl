@@ -31,6 +31,7 @@ export function PipelineActionButton({
     setIsRunning(true);
     setError(null);
     setResult(null);
+    dispatchDiagnosticsRefresh(null, true);
 
     let response: Response;
     let nextResult: PipelineActionResult;
@@ -47,12 +48,12 @@ export function PipelineActionButton({
       setError(
         fetchError instanceof Error ? fetchError.message : "Action failed."
       );
-      dispatchDiagnosticsRefresh(null);
+      dispatchDiagnosticsRefresh(null, false);
       return;
     }
 
     setIsRunning(false);
-    dispatchDiagnosticsRefresh(nextResult);
+    dispatchDiagnosticsRefresh(nextResult, false);
 
     if (!response.ok) {
       setError(nextResult.error ?? "Action failed.");
@@ -65,7 +66,10 @@ export function PipelineActionButton({
     }
   }
 
-  function dispatchDiagnosticsRefresh(result: PipelineActionResult | null) {
+  function dispatchDiagnosticsRefresh(
+    result: PipelineActionResult | null,
+    autoRunnerActive?: boolean
+  ) {
     if (!diagnosticsRefreshManuscriptId) {
       return;
     }
@@ -74,7 +78,8 @@ export function PipelineActionButton({
       new CustomEvent(PIPELINE_DIAGNOSTICS_REFRESH_EVENT, {
         detail: {
           manuscriptId: diagnosticsRefreshManuscriptId,
-          result
+          result,
+          autoRunnerActive
         }
       })
     );
@@ -106,8 +111,12 @@ export function PipelineActionButton({
 
 type PipelineActionResult = {
   error?: string;
+  batchesRun?: number;
+  totalJobsRun?: number;
+  stoppedReason?: string;
   jobsRun?: number;
   remainingReadyJobs?: number;
+  moreWorkRemains?: boolean;
   hasRemainingWork?: boolean;
   reason?: string;
   message?: string;
@@ -143,6 +152,24 @@ type PipelineActionResult = {
 function PipelineActionSummary({ result }: { result: PipelineActionResult }) {
   if (result.message) {
     return <p className="max-w-64 text-xs text-slate-500">{result.message}</p>;
+  }
+
+  if (
+    typeof result.batchesRun === "number" ||
+    typeof result.totalJobsRun === "number"
+  ) {
+    return (
+      <p className="max-w-64 text-xs text-slate-500">
+        {`Ran ${result.batchesRun ?? 0} ${
+          result.batchesRun === 1 ? "batch" : "batches"
+        }, processed ${result.totalJobsRun ?? 0} ${
+          result.totalJobsRun === 1 ? "item" : "items"
+        }.`}
+        {result.moreWorkRemains ?? result.hasRemainingWork
+          ? " More work remains."
+          : null}
+      </p>
+    );
   }
 
   const progress = result.progress;

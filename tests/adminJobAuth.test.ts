@@ -152,7 +152,8 @@ test("manuscript admin job route runs server-side without browser token", async 
 test("manuscript admin route options pass maxItemsPerStep", () => {
   assert.deepEqual(manuscriptAdminRunJobOptions("m1", {}), {
     manuscriptId: "m1",
-    maxJobs: 5,
+    maxBatches: 5,
+    maxJobsPerBatch: 5,
     maxSeconds: 240,
     maxItemsPerStep: 4,
     workerType: "MANUAL",
@@ -160,13 +161,15 @@ test("manuscript admin route options pass maxItemsPerStep", () => {
   });
   assert.deepEqual(
     manuscriptAdminRunJobOptions("m1", {
-      maxJobs: 9,
+      maxBatches: 2,
+      maxJobsPerBatch: 9,
       maxSeconds: 90,
       maxItemsPerStep: 3
     }),
     {
       manuscriptId: "m1",
-      maxJobs: 9,
+      maxBatches: 2,
+      maxJobsPerBatch: 9,
       maxSeconds: 90,
       maxItemsPerStep: 3,
       workerType: "MANUAL",
