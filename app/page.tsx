@@ -28,22 +28,52 @@ export default async function DashboardPage() {
   return (
     <div className="relative isolate -mx-5 -my-10 overflow-hidden px-5 pb-16 pt-8 sm:pb-20 sm:pt-10">
       <style>{`
-        body > div:first-child {
+        body > div.border-b {
           background: rgba(255, 255, 255, 0.68);
           border-color: rgba(231, 226, 218, 0.68);
           box-shadow: 0 1px 0 rgba(255, 255, 255, 0.76) inset;
+          backdrop-filter: blur(18px);
         }
 
-        body > div:first-child nav {
+        body > div.border-b > div {
+          gap: 1rem;
+        }
+
+        body > div.border-b a[href="/"] {
+          flex: 0 0 auto;
+          white-space: nowrap;
+        }
+
+        body > div.border-b nav {
           background: rgba(250, 250, 247, 0.48);
           border-color: rgba(231, 226, 218, 0.64);
           color: rgba(107, 114, 128, 0.88);
+          min-width: 0;
+          opacity: 0.7;
+          overflow-x: auto;
+          scrollbar-width: none;
+          transition: opacity 160ms ease;
         }
 
-        body > div:first-child nav a,
-        body > div:first-child nav summary,
-        body > div:first-child nav > span {
+        body > div.border-b nav:hover,
+        body > div.border-b nav:focus-within {
+          opacity: 0.92;
+        }
+
+        body > div.border-b nav::-webkit-scrollbar {
+          display: none;
+        }
+
+        body > div.border-b nav a,
+        body > div.border-b nav summary,
+        body > div.border-b nav > span {
           color: rgba(75, 85, 99, 0.82);
+        }
+
+        @media (max-width: 640px) {
+          body > div.border-b nav {
+            display: none;
+          }
         }
       `}</style>
       <div

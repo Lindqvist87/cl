@@ -41,7 +41,7 @@ export type AuthorWorkspaceViewModel = {
     sectionsLabel: "Manusets delar";
     rewritePlanLabel: "Redigeringsplan";
     importedStructureLabel: "Importerad struktur";
-    rawDataLabel: "Förberedelsestatus";
+    rawDataLabel: "Rådata och detaljer";
   };
   mainSectionLabels: string[];
 };
@@ -167,7 +167,7 @@ export function buildAuthorWorkspaceViewModel(
       sectionsLabel: "Manusets delar",
       rewritePlanLabel: "Redigeringsplan",
       importedStructureLabel: "Importerad struktur",
-      rawDataLabel: "Förberedelsestatus"
+      rawDataLabel: "Rådata och detaljer"
     },
     mainSectionLabels: [
       hero.statusLabel,

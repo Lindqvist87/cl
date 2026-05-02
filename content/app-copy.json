@@ -8,13 +8,13 @@
     "badge": "V2"
   },
   "dashboard": {
-    "title": "Manuscripts",
-    "intro": "Upload a full manuscript and move through structure review, editorial analysis, and revision planning in one focused workspace.",
-    "sectionTitle": "Recent manuscripts",
-    "emptyState": "No manuscripts uploaded yet.",
+    "title": "Starta nytt manus",
+    "intro": "Få en redaktionell översikt, prioriterade förbättringsområden och ett tydligt första steg.",
+    "sectionTitle": "Senaste manus",
+    "emptyState": "Inga manus har laddats upp ännu.",
     "metrics": {
-      "words": "Words",
-      "chapters": "Book structure",
+      "words": "Ord",
+      "chapters": "Manusdelar",
       "status": "Status"
     }
   },

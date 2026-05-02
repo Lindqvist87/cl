@@ -36,15 +36,6 @@ export function ManualTrendImportForm() {
 
   return (
     <form ref={formRef} onSubmit={onSubmit} className="active-card p-5">
-      <div className="mb-5">
-        <p className="page-kicker">Market intake</p>
-        <h2 className="mt-2 text-xl font-semibold tracking-normal text-ink">
-          Add market signal
-        </h2>
-        <p className="mt-2 text-sm leading-6 text-muted">
-          Capture public metadata, list movement, review language, and category notes.
-        </p>
-      </div>
       <div className="grid gap-3 md:grid-cols-2">
         <input name="source" required placeholder="Source" className="focus-ring min-h-10 border border-line bg-paper-alt px-3 text-sm" />
         <input name="listName" placeholder="List name" className="focus-ring min-h-10 border border-line bg-paper-alt px-3 text-sm" />
@@ -62,7 +53,7 @@ export function ManualTrendImportForm() {
       <div className="mt-4 flex items-center gap-3">
         <button type="submit" disabled={isSubmitting} className="primary-button">
           <Plus size={18} aria-hidden="true" />
-          {isSubmitting ? "Adding..." : "Add market signal"}
+          {isSubmitting ? "Adding..." : "Add Trend Signal"}
         </button>
         {error ? <p className="text-sm text-danger">{error}</p> : null}
       </div>

@@ -1,7 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { ArrowRight, BookOpen, Download, FileText, Wrench } from "lucide-react";
-import type { ReactNode } from "react";
+import { BookOpen, Download, FileText } from "lucide-react";
 import { prisma } from "@/lib/prisma";
 import { AuditButton } from "@/components/AuditButton";
 import { LivePipelineProgress } from "@/components/LivePipelineProgress";
@@ -75,183 +74,153 @@ export default async function ManuscriptPage({
     )
   });
 
-  const recommendedAction = buildRecommendedAction({
-    analysisStatus: manuscript.analysisStatus,
-    coreAnalysisComplete: pipelineStatus.coreAnalysisComplete,
-    manuscriptId: manuscript.id,
-    rewriteDraftsComplete,
-    rewritePlanReady: Boolean(latestRewritePlan)
-  });
-
   return (
-    <div className="space-y-8">
-      <Link href="/" className="ghost-button px-0">
-        Back to manuscripts
-      </Link>
-
-      <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <div className="paper-card p-7 sm:p-8">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-            <div>
-              <p className="page-kicker">Manuscript</p>
-              <h1 className="mt-3 text-3xl font-semibold tracking-normal text-ink">
-                {manuscript.title}
-              </h1>
-              <p className="mt-2 text-sm text-muted">{manuscript.sourceFileName}</p>
-              {[manuscript.authorName, manuscript.targetGenre, manuscript.targetAudience].some(Boolean) ? (
-                <p className="mt-2 text-sm text-muted">
-                  {[manuscript.authorName, manuscript.targetGenre, manuscript.targetAudience]
-                    .filter(Boolean)
-                    .join(" | ")}
-                </p>
-              ) : null}
-            </div>
-            <StatusBadge status={manuscript.analysisStatus} />
-          </div>
-
-          {latestRun?.error ? (
-            <p className="mt-5 rounded-lg border border-danger/20 bg-danger/5 px-4 py-3 text-sm text-danger">
-              {latestRun.error}
+    <div className="space-y-6">
+      <div className="flex flex-col gap-4 border border-line bg-white p-4 shadow-panel lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <Link href="/" className="text-sm text-accent hover:underline">
+            Back to dashboard
+          </Link>
+          <h1 className="mt-2 text-2xl font-semibold tracking-normal">
+            {manuscript.title}
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">{manuscript.sourceFileName}</p>
+          {[manuscript.authorName, manuscript.targetGenre, manuscript.targetAudience].some(Boolean) ? (
+            <p className="mt-1 text-sm text-slate-500">
+              {[manuscript.authorName, manuscript.targetGenre, manuscript.targetAudience]
+                .filter(Boolean)
+                .join(" | ")}
             </p>
           ) : null}
-
-          <div className="mt-8 grid gap-3 sm:grid-cols-4">
-            <MetricTile label="Words" value={manuscript.wordCount.toLocaleString()} />
-            <MetricTile label="Book structure" value={String(manuscript.chapterCount)} />
-            <MetricTile label="Progress" value={`${pipelineStatus.percent}%`} />
-            <MetricTile label="Analysis" value={formatStatus(manuscript.analysisStatus)} />
+          {latestRun?.error ? (
+            <p className="mt-3 text-sm text-danger">{latestRun.error}</p>
+          ) : null}
+          <div className="mt-3 flex flex-wrap gap-3 text-sm">
+            <Link href={`/manuscripts/${manuscript.id}/structure`} className="font-semibold text-accent hover:underline">
+              Review book structure
+            </Link>
+            <Link href={`/manuscripts/${manuscript.id}/audit`} className="text-accent hover:underline">
+              Editorial report
+            </Link>
+            <Link href={`/manuscripts/${manuscript.id}/workspace`} className="text-accent hover:underline">
+              Editorial workspace
+            </Link>
+            <a href={`/api/manuscripts/${manuscript.id}/rewritten/markdown`} className="text-accent hover:underline">
+              Full rewritten Markdown
+            </a>
+            <a href={`/api/manuscripts/${manuscript.id}/rewritten/json`} className="text-accent hover:underline">
+              Full rewritten JSON
+            </a>
+            <Link href="/corpus" className="text-accent hover:underline">
+              Corpus
+            </Link>
+            <Link href="/trends" className="text-accent hover:underline">
+              Trends
+            </Link>
           </div>
         </div>
-
-        <RecommendedActionCard
-          action={recommendedAction}
-          manuscriptId={manuscript.id}
-          diagnosticsRefreshManuscriptId={manuscript.id}
-        />
-      </section>
-
-      <section className="grid gap-4 lg:grid-cols-3">
-        <ActionGroup title="Manuscript work" description="Review and revise the book-facing material.">
-          <Link href={`/manuscripts/${manuscript.id}/structure`} className="secondary-button justify-between">
-            <span className="inline-flex items-center gap-2">
-              <BookOpen size={16} aria-hidden="true" />
-              Review structure
-            </span>
-            <ArrowRight size={15} aria-hidden="true" />
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Link
+            href={`/manuscripts/${manuscript.id}/structure`}
+            className="secondary-button"
+          >
+            <BookOpen size={16} aria-hidden="true" />
+            Review structure
           </Link>
-          <Link href={`/manuscripts/${manuscript.id}/workspace`} className="secondary-button justify-between">
-            <span>Open editorial workspace</span>
-            <ArrowRight size={15} aria-hidden="true" />
-          </Link>
-          <Link href={`/manuscripts/${manuscript.id}/audit`} className="ghost-button justify-between">
-            <span>View editorial report</span>
-            <ArrowRight size={15} aria-hidden="true" />
-          </Link>
-        </ActionGroup>
-
-        <ActionGroup title="Exports" description="Download the current editorial or rewrite output.">
-          <a href={`/api/manuscripts/${manuscript.id}/report/markdown`} className="secondary-button justify-between">
-            <span className="inline-flex items-center gap-2">
-              <Download size={16} aria-hidden="true" />
-              Report Markdown
-            </span>
-            <ArrowRight size={15} aria-hidden="true" />
-          </a>
-          <a href={`/api/manuscripts/${manuscript.id}/report/docx`} className="secondary-button justify-between">
-            <span className="inline-flex items-center gap-2">
-              <FileText size={16} aria-hidden="true" />
-              Report DOCX
-            </span>
-            <ArrowRight size={15} aria-hidden="true" />
-          </a>
-          <details className="rounded-lg border border-line bg-paper-alt">
-            <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-ink hover:text-accent">
-              More export formats
-            </summary>
-            <div className="grid gap-2 border-t border-line p-3">
-              <a href={`/api/manuscripts/${manuscript.id}/report/json`} className="ghost-button justify-start">
-                Report JSON
-              </a>
-              <a href={`/api/manuscripts/${manuscript.id}/rewritten/markdown`} className="ghost-button justify-start">
-                Full rewritten Markdown
-              </a>
-              <a href={`/api/manuscripts/${manuscript.id}/rewritten/json`} className="ghost-button justify-start">
-                Full rewritten JSON
-              </a>
-            </div>
-          </details>
-        </ActionGroup>
-
-        <section className="paper-card p-5">
-          <details>
-            <summary className="flex cursor-pointer items-center gap-2 text-sm font-semibold text-ink hover:text-accent">
-              <Wrench size={16} aria-hidden="true" />
-              Advanced tools
-            </summary>
-            <div className="mt-4 space-y-5 border-t border-line pt-4">
-              <div>
-                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted">
-                  Background processing
-                </h3>
-                <p className="mt-2 text-sm font-semibold">
-                  {executionModeLabel({
-                    inngestEnabled: inngestConfig.enabled,
-                    hasCronFallback: false
-                  })}
-                </p>
-                <p className="mt-1 text-xs text-muted">
-                  Last processing event:{" "}
-                  {lastInngestEvent
-                    ? `${lastInngestEvent.eventName} at ${lastInngestEvent.createdAt.toLocaleString()}`
-                    : "none recorded"}
-                </p>
-                {inngestConfig.warnings.length > 0 ? (
-                  <ul className="mt-2 space-y-1 text-xs text-danger">
-                    {inngestConfig.warnings.map((warning) => (
-                      <li key={warning}>{warning}</li>
-                    ))}
-                  </ul>
-                ) : null}
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                <MetricTile label="Queued" value={String(jobCounts.queued)} compact />
-                <MetricTile label="Running" value={String(jobCounts.running)} compact />
-                <MetricTile label="Blocked" value={String(jobCounts.blocked)} compact />
-                <MetricTile label="Failed" value={String(jobCounts.failed)} compact />
-                <MetricTile label="Completed" value={String(jobCounts.completed)} compact />
-              </div>
-              <div className="space-y-2">
-                <PipelineActionButton
-                  endpoint={`/api/manuscripts/${manuscript.id}/resume-pipeline`}
-                  label="Resume analysis"
-                  runningLabel="Resuming..."
-                  variant="secondary"
-                />
-                <PipelineActionButton
-                  endpoint={`/api/admin/manuscripts/${manuscript.id}/run-jobs`}
-                  label="Continue background work"
-                  runningLabel="Continuing..."
-                  variant="secondary"
-                  diagnosticsRefreshManuscriptId={manuscript.id}
-                  refreshPageOnComplete={false}
-                />
-              </div>
-            </div>
-          </details>
-        </section>
-      </section>
-
-      <div id="analysis-progress">
-        <LivePipelineProgress
-          manuscriptId={manuscript.id}
-          initialStatus={pipelineStatus}
-        />
+          <AuditButton
+            manuscriptId={manuscript.id}
+            disabled={manuscript.analysisStatus === "RUNNING"}
+          />
+          <PipelineActionButton
+            endpoint={`/api/manuscripts/${manuscript.id}/resume-pipeline`}
+            label="Resume via Inngest"
+            runningLabel="Kicking..."
+            variant="secondary"
+          />
+          <PipelineActionButton
+            endpoint={`/api/admin/manuscripts/${manuscript.id}/run-jobs`}
+            label="Run until pause"
+            runningLabel="Running..."
+            variant="secondary"
+            diagnosticsRefreshManuscriptId={manuscript.id}
+            refreshPageOnComplete={false}
+          />
+          {latestRewritePlan && !rewriteDraftsComplete ? (
+            <PipelineActionButton
+              endpoint={`/api/admin/manuscripts/${manuscript.id}/generate-rewrite-drafts`}
+              label="Generate chapter rewrite drafts"
+              runningLabel="Generating..."
+              variant="secondary"
+              diagnosticsRefreshManuscriptId={manuscript.id}
+              refreshPageOnComplete={false}
+            />
+          ) : null}
+        </div>
       </div>
+
+      {latestRewritePlan && !rewriteDraftsComplete ? (
+        <section className="active-card px-4 py-3 text-sm font-semibold text-accent">
+          Rewrite plan ready. Chapter rewrite drafts can be generated when needed.
+        </section>
+      ) : null}
+
+      <section className="grid gap-3 sm:grid-cols-4">
+        <Stat label="Words" value={manuscript.wordCount.toLocaleString()} />
+        <Stat label="Book structure" value={String(manuscript.chapterCount)} />
+        <Stat label="Chunks" value={String(manuscript.chunkCount)} />
+        <Stat label="Analysis" value={formatStatus(manuscript.analysisStatus)} />
+      </section>
+
+      <section className="grid gap-3 lg:grid-cols-[1.2fr_1fr]">
+        <div className="border border-line bg-white p-4 shadow-panel">
+          <details>
+            <summary className="cursor-pointer text-sm font-semibold text-ink hover:text-accent">
+              Technical details
+            </summary>
+            <div className="mt-3">
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Execution mode
+              </h2>
+              <p className="mt-2 text-sm font-semibold">
+                {executionModeLabel({
+                  inngestEnabled: inngestConfig.enabled,
+                  hasCronFallback: false
+                })}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Last Inngest event:{" "}
+                {lastInngestEvent
+                  ? `${lastInngestEvent.eventName} at ${lastInngestEvent.createdAt.toLocaleString()}`
+                  : "none recorded"}
+              </p>
+              {inngestConfig.warnings.length > 0 ? (
+                <ul className="mt-2 space-y-1 text-xs text-danger">
+                  {inngestConfig.warnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          </details>
+        </div>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+          <Stat label="Queued" value={String(jobCounts.queued)} />
+          <Stat label="Running" value={String(jobCounts.running)} />
+          <Stat label="Blocked" value={String(jobCounts.blocked)} />
+          <Stat label="Failed" value={String(jobCounts.failed)} />
+          <Stat label="Completed" value={String(jobCounts.completed)} />
+        </div>
+      </section>
+
+      <LivePipelineProgress
+        manuscriptId={manuscript.id}
+        initialStatus={pipelineStatus}
+      />
 
       {manuscript.pipelineJobs.length > 0 ? (
         <details className="detail-toggle">
           <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-ink hover:text-accent">
-            Troubleshooting history
+            Technical job details
           </summary>
           <div className="divide-y divide-line border-t border-line">
             {manuscript.pipelineJobs.slice(0, 12).map((job) => (
@@ -275,7 +244,7 @@ export default async function ManuscriptPage({
         </details>
       ) : null}
 
-      <section className="grid gap-6 lg:grid-cols-[minmax(420px,0.9fr)_1fr]">
+      <section className="grid gap-6 lg:grid-cols-[minmax(520px,0.9fr)_1fr]">
         <StructureReviewPanel
           rows={structureRows}
           title="Book structure"
@@ -291,8 +260,9 @@ export default async function ManuscriptPage({
             />
           ) : (
             <div className="border border-line bg-white p-6 text-sm text-slate-600 shadow-panel">
-              No editorial report yet. Start analysis to generate the summary,
-              editorial notes, section guidance, and rewrite strategy.
+              No editorial report yet. Start analysis to generate the
+              executive summary, issues to review, section notes, and rewrite
+              strategy.
             </div>
           )}
 
@@ -314,179 +284,12 @@ export default async function ManuscriptPage({
   );
 }
 
-type RecommendedAction =
-  | {
-      kind: "link";
-      body: string;
-      href: string;
-      label: string;
-      title: string;
-    }
-  | {
-      kind: "analysis";
-      body: string;
-      label: string;
-      title: string;
-    }
-  | {
-      kind: "rewrite";
-      body: string;
-      label: string;
-      title: string;
-    };
-
-function RecommendedActionCard({
-  action,
-  diagnosticsRefreshManuscriptId,
-  manuscriptId
-}: {
-  action: RecommendedAction;
-  diagnosticsRefreshManuscriptId: string;
-  manuscriptId: string;
-}) {
+function Stat({ label, value }: { label: string; value: string }) {
   return (
-    <aside className="active-card p-6">
-      <p className="page-kicker">Recommended next step</p>
-      <h2 className="mt-3 text-2xl font-semibold tracking-normal text-ink">
-        {action.title}
-      </h2>
-      <p className="mt-3 text-sm leading-6 text-slate-700">{action.body}</p>
-      <div className="mt-6">
-        {action.kind === "link" ? (
-          <Link href={action.href} className="primary-button w-full">
-            {action.label}
-            <ArrowRight size={16} aria-hidden="true" />
-          </Link>
-        ) : null}
-        {action.kind === "analysis" ? (
-          <AuditButton manuscriptId={manuscriptId} />
-        ) : null}
-        {action.kind === "rewrite" ? (
-          <PipelineActionButton
-            endpoint={`/api/admin/manuscripts/${manuscriptId}/generate-rewrite-drafts`}
-            label={action.label}
-            runningLabel="Generating..."
-            variant="primary"
-            fullWidth
-            diagnosticsRefreshManuscriptId={diagnosticsRefreshManuscriptId}
-            refreshPageOnComplete={false}
-          />
-        ) : null}
-      </div>
-    </aside>
-  );
-}
-
-function buildRecommendedAction({
-  analysisStatus,
-  coreAnalysisComplete,
-  manuscriptId,
-  rewriteDraftsComplete,
-  rewritePlanReady
-}: {
-  analysisStatus: string;
-  coreAnalysisComplete: boolean;
-  manuscriptId: string;
-  rewriteDraftsComplete: boolean;
-  rewritePlanReady: boolean;
-}): RecommendedAction {
-  if (rewritePlanReady && !rewriteDraftsComplete) {
-    return {
-      kind: "rewrite",
-      title: "Generate rewrite drafts",
-      body: "The revision plan is ready. Generate chapter drafts when you are ready to compare rewritten text against the original.",
-      label: "Generate rewrite drafts"
-    };
-  }
-
-  if (analysisStatus === "COMPLETED" || coreAnalysisComplete) {
-    return {
-      kind: "link",
-      href: `/manuscripts/${manuscriptId}/workspace`,
-      title: "Open the editorial workspace",
-      body: "Start with the guided recommendation, then move through the priority cards in order.",
-      label: "Open workspace"
-    };
-  }
-
-  if (analysisStatus === "RUNNING") {
-    return {
-      kind: "link",
-      href: "#analysis-progress",
-      title: "Follow analysis progress",
-      body: "The manuscript is being analyzed. Watch the current step and continue once the workspace is ready.",
-      label: "View progress"
-    };
-  }
-
-  if (analysisStatus === "FAILED") {
-    return {
-      kind: "analysis",
-      title: "Continue analysis",
-      body: "The last run needs attention. Start analysis again after reviewing the message on this page.",
-      label: "Continue analysis"
-    };
-  }
-
-  return {
-    kind: "analysis",
-    title: "Start analysis",
-    body: "Begin the editorial pass after confirming that the imported book structure looks right.",
-    label: "Start analysis"
-  };
-}
-
-function ActionGroup({
-  children,
-  description,
-  title
-}: {
-  children: ReactNode;
-  description: string;
-  title: string;
-}) {
-  return (
-    <section className="paper-card p-5">
-      <h2 className="text-base font-semibold tracking-normal text-ink">{title}</h2>
-      <p className="mt-1 text-sm leading-6 text-muted">{description}</p>
-      <div className="mt-4 grid gap-2">{children}</div>
-    </section>
-  );
-}
-
-function MetricTile({
-  compact = false,
-  label,
-  value
-}: {
-  compact?: boolean;
-  label: string;
-  value: string;
-}) {
-  return (
-    <div className="metric-tile">
-      <div className="text-xs font-semibold uppercase tracking-wide text-muted">{label}</div>
-      <div className={compact ? "mt-1 text-base font-semibold" : "mt-2 text-xl font-semibold"}>
-        {value}
-      </div>
+    <div className="border border-line bg-white p-4 shadow-panel">
+      <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
+      <div className="mt-2 text-xl font-semibold">{value}</div>
     </div>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const className =
-    status === "COMPLETED"
-      ? "border-success/20 bg-success/5 text-success"
-      : status === "RUNNING"
-        ? "border-accent/25 bg-accent/10 text-accent"
-        : status === "FAILED"
-          ? "border-danger/20 bg-danger/5 text-danger"
-          : "border-line bg-paper-alt text-muted";
-
-  return (
-    <span className={`inline-flex min-h-8 items-center rounded-full border px-3 text-xs font-semibold ${className}`}>
-      {formatStatus(status)}
-    </span>
   );
 }
 
@@ -500,10 +303,10 @@ function ReportPanel({
   createdAt: Date;
 }) {
   return (
-    <section className="paper-card p-0">
+    <section className="border border-line bg-white shadow-panel">
       <div className="flex flex-col gap-3 border-b border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="section-title">
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
             Editorial report
           </h2>
           <p className="mt-1 text-xs text-slate-500">
@@ -513,32 +316,25 @@ function ReportPanel({
         <div className="flex flex-wrap gap-2">
           <a
             href={`/api/manuscripts/${manuscriptId}/report/markdown`}
-            className="secondary-button min-h-9 px-3"
+            className="focus-ring inline-flex min-h-9 items-center gap-2 border border-line bg-paper px-3 py-2 text-sm font-semibold"
           >
             <Download size={16} aria-hidden="true" />
             Markdown
           </a>
           <a
+            href={`/api/manuscripts/${manuscriptId}/report/json`}
+            className="focus-ring inline-flex min-h-9 items-center gap-2 border border-line bg-paper px-3 py-2 text-sm font-semibold"
+          >
+            <Download size={16} aria-hidden="true" />
+            JSON
+          </a>
+          <a
             href={`/api/manuscripts/${manuscriptId}/report/docx`}
-            className="secondary-button min-h-9 px-3"
+            className="focus-ring inline-flex min-h-9 items-center gap-2 border border-line bg-paper px-3 py-2 text-sm font-semibold"
           >
             <FileText size={16} aria-hidden="true" />
             DOCX
           </a>
-          <details className="rounded-lg border border-line bg-paper-alt">
-            <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-ink hover:text-accent">
-              Export details
-            </summary>
-            <div className="border-t border-line p-2">
-              <a
-                href={`/api/manuscripts/${manuscriptId}/report/json`}
-                className="ghost-button justify-start"
-              >
-                <Download size={16} aria-hidden="true" />
-                JSON
-              </a>
-            </div>
-          </details>
         </div>
       </div>
 
@@ -552,9 +348,9 @@ function ReportPanel({
 
         <div>
           <h3 className="text-lg font-semibold">Issues to review</h3>
-          <div className="mt-3 grid gap-3">
+          <div className="mt-3 divide-y divide-line border border-line">
             {report.topIssues.map((issue, index) => (
-              <div key={`${issue.title}-${index}`} className="rounded-lg border border-line bg-paper-alt p-3">
+              <div key={`${issue.title}-${index}`} className="grid gap-2 px-3 py-3 sm:grid-cols-[120px_1fr]">
                 <SeverityBadge severity={issue.severity} />
                 <div>
                   <div className="font-semibold">{issue.title}</div>
@@ -572,7 +368,7 @@ function ReportPanel({
           <h3 className="text-lg font-semibold">Section notes</h3>
           <div className="mt-3 space-y-3">
             {report.chapterNotes.map((chapter) => (
-              <div key={chapter.chapter} className="rounded-lg border border-line bg-paper-alt p-3">
+              <div key={chapter.chapter} className="border border-line p-3">
                 <div className="flex items-center justify-between gap-3">
                   <h4 className="font-semibold">{chapter.chapter}</h4>
                   <SeverityBadge severity={chapter.priority} />
@@ -610,24 +406,11 @@ function SeverityBadge({ severity }: { severity: string }) {
 
   return (
     <span
-      className={`inline-flex min-h-7 w-fit items-center justify-center rounded-full px-3 text-xs font-semibold ${className}`}
+      className={`inline-flex min-h-7 items-center justify-center px-2 text-xs font-semibold uppercase tracking-wide ${className}`}
     >
-      {formatSeverityLabel(severity)}
+      {severity}
     </span>
   );
-}
-
-function formatSeverityLabel(severity: string) {
-  switch (severity) {
-    case "critical":
-      return "Highest priority";
-    case "high":
-      return "High priority";
-    case "medium":
-      return "Medium priority";
-    default:
-      return "Lower priority";
-  }
 }
 
 function formatStatus(status: string) {
