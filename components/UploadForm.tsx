@@ -24,7 +24,6 @@ export function UploadForm() {
 
   function onDragOver(event: React.DragEvent<HTMLLabelElement>) {
     event.preventDefault();
-
     if (!isUploading) {
       setIsDragging(true);
     }
@@ -92,37 +91,47 @@ export function UploadForm() {
   }
 
   return (
-    <form onSubmit={onSubmit} className="paper-card p-5 sm:p-7">
+    <form
+      onSubmit={onSubmit}
+      className="relative overflow-hidden rounded-xl border border-accent/18 bg-white p-5 shadow-[0_28px_70px_rgba(23,23,23,0.075),0_0_0_1px_rgba(232,93,158,0.10),0_0_44px_rgba(232,93,158,0.095)] sm:p-7"
+    >
+      <div
+        aria-hidden="true"
+        className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-accent/30 to-transparent"
+      />
+      <div className="flex flex-col gap-2">
+        <p className="text-sm font-semibold text-accent">
+          Ladda upp ditt manus. Vi hjälper dig förstå vad som behöver göras.
+        </p>
+      </div>
+
       <label
-        className={[
-          "flex min-h-[230px] cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed px-5 py-8 text-center transition sm:min-h-[270px]",
-          "focus-within:ring-2 focus-within:ring-accent focus-within:ring-offset-2 focus-within:ring-offset-paper",
+        className={`mt-5 flex min-h-[250px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed px-5 py-8 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.92)] focus-within:ring-2 focus-within:ring-accent focus-within:ring-offset-2 focus-within:ring-offset-paper sm:min-h-[286px] sm:py-10 ${
           isDragging
-            ? "border-accent bg-white shadow-active"
-            : "border-accent/35 bg-paper-alt shadow-active hover:border-accent/70 hover:bg-white"
-        ].join(" ")}
+            ? "border-accent bg-white shadow-[0_0_0_6px_rgba(232,93,158,0.08),inset_0_1px_0_rgba(255,255,255,0.92)]"
+            : "border-accent/30 bg-[linear-gradient(180deg,#FFFEFC_0%,#FAFAF7_100%)] hover:border-accent/55 hover:bg-white"
+        }`}
         onDragLeave={onDragLeave}
         onDragOver={onDragOver}
         onDrop={onDrop}
       >
-        <span className="flex h-14 w-14 items-center justify-center rounded-full border border-accent/15 bg-white text-accent shadow-panel">
-          <FileText size={26} aria-hidden="true" />
+        <span className="flex h-16 w-16 items-center justify-center rounded-full border border-accent/14 bg-white text-accent shadow-[0_16px_34px_rgba(23,23,23,0.055),0_0_28px_rgba(232,93,158,0.12)]">
+          <FileText size={28} aria-hidden="true" />
         </span>
-        <span className="mt-5 text-2xl font-semibold tracking-normal text-ink">
+        <span className="mt-6 text-2xl font-semibold tracking-normal text-ink">
           Dra in din fil här
         </span>
-        <span className="mt-2 text-sm text-muted">eller</span>
-        <span className="secondary-button mt-3 min-h-11 px-5">Välj fil</span>
+        <span className="mt-3 text-sm text-muted">eller</span>
+        <span className="secondary-button mt-4 min-h-11 border-line/90 bg-white/92 px-5 shadow-[0_10px_24px_rgba(23,23,23,0.04)] hover:border-accent/35 hover:bg-white hover:shadow-[0_14px_28px_rgba(23,23,23,0.055)]">
+          <Upload size={16} aria-hidden="true" />
+          {selectedFileName ? "Byt fil" : "Välj fil"}
+        </span>
         <span className="mt-5 max-w-sm text-sm leading-6 text-muted">
           DOCX stöds först. EPUB och PDF kan läggas till senare.
         </span>
         {selectedFileName ? (
-          <span className="mt-5 inline-flex max-w-full items-center gap-2 rounded-full border border-accent/20 bg-white px-4 py-2 text-sm font-semibold text-ink">
-            <CheckCircle2
-              size={16}
-              className="shrink-0 text-accent"
-              aria-hidden="true"
-            />
+          <span className="mt-5 inline-flex max-w-full items-center gap-2 rounded-full border border-accent/18 bg-white px-4 py-2 text-sm font-semibold text-ink shadow-[0_10px_22px_rgba(23,23,23,0.045)]">
+            <CheckCircle2 size={16} className="shrink-0 text-accent" aria-hidden="true" />
             <span className="truncate">{selectedFileName}</span>
           </span>
         ) : null}
@@ -136,44 +145,34 @@ export function UploadForm() {
         />
       </label>
 
-      <div className="mt-5 grid gap-3 lg:grid-cols-3">
-        <label className="block">
-          <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-            Författare
-          </span>
-          <input
+      <div className="mt-5 rounded-lg border border-line/85 bg-[#FFFEFC]/76 p-4 shadow-[inset_0_1px_0_rgba(255,255,255,0.78)]">
+        <div className="grid gap-3 lg:grid-cols-3">
+          <EditorialField
+            label="Författare"
             name="authorName"
             placeholder="Namn"
-            className="focus-ring mt-1 min-h-10 w-full border border-line bg-paper-alt px-3 py-2 text-sm"
           />
-        </label>
-        <label className="block">
-          <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-            Genre
-          </span>
-          <input
+          <EditorialField
+            label="Genre"
             name="targetGenre"
             placeholder="Ex. roman"
-            className="focus-ring mt-1 min-h-10 w-full border border-line bg-paper-alt px-3 py-2 text-sm"
           />
-        </label>
-        <label className="block">
-          <span className="text-xs font-semibold uppercase tracking-wide text-muted">
-            Målgrupp
-          </span>
-          <input
+          <EditorialField
+            label="Målgrupp"
             name="targetAudience"
             placeholder="Ex. vuxna läsare"
-            className="focus-ring mt-1 min-h-10 w-full border border-line bg-paper-alt px-3 py-2 text-sm"
           />
-        </label>
+        </div>
       </div>
 
-      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+      <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-xs leading-5 text-muted">
+          Du kan starta med bara filen och lägga till mer senare.
+        </p>
         <button
           type="submit"
           disabled={isUploading}
-          className="primary-button min-h-12 sm:min-w-52"
+          className="inline-flex min-h-12 items-center justify-center gap-2 rounded-md bg-accent px-5 py-2 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(232,93,158,0.26),inset_0_1px_0_rgba(255,255,255,0.22)] hover:bg-accent-dark hover:shadow-[0_18px_34px_rgba(232,93,158,0.32),inset_0_1px_0_rgba(255,255,255,0.24)] active:translate-y-px active:shadow-[0_8px_18px_rgba(232,93,158,0.24)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-paper disabled:cursor-not-allowed disabled:opacity-60 sm:min-w-52"
         >
           <Upload size={18} aria-hidden="true" />
           {isUploading ? copy.upload.busyLabel : copy.upload.idleLabel}
@@ -181,5 +180,28 @@ export function UploadForm() {
       </div>
       {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
     </form>
+  );
+}
+
+function EditorialField({
+  label,
+  name,
+  placeholder
+}: {
+  label: string;
+  name: string;
+  placeholder: string;
+}) {
+  return (
+    <label className="block">
+      <span className="text-xs font-semibold uppercase tracking-wide text-muted/90">
+        {label}
+      </span>
+      <input
+        name={name}
+        placeholder={placeholder}
+        className="focus-ring mt-1 min-h-11 w-full rounded-lg border border-line/90 bg-white/82 px-3.5 py-2.5 text-sm text-ink shadow-[0_1px_0_rgba(255,255,255,0.9)_inset,0_8px_18px_rgba(23,23,23,0.025)] placeholder:text-slate-400 hover:border-accent/25 hover:bg-white"
+      />
+    </label>
   );
 }
