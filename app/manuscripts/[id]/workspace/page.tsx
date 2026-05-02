@@ -1,12 +1,6 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import {
-  ArrowLeft,
-  ArrowRight,
-  BookOpen,
-  FileText,
-  Sparkles
-} from "lucide-react";
+import { ArrowLeft, ArrowRight, CheckCircle2 } from "lucide-react";
 import type { ReactNode } from "react";
 import { StructureReviewPanel } from "@/components/StructureReviewPanel";
 import { buildAuthorWorkspaceViewModel } from "@/lib/editorial/authorWorkspace";
@@ -64,80 +58,60 @@ export default async function ManuscriptWorkspacePage({
   const rewriteDraftsComplete = rewriteDraftCount >= manuscript.chapterCount;
 
   return (
-    <main className="-mx-4 -my-6 bg-[#fbfaf6] px-4 py-6 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
-      <div className="mx-auto max-w-7xl space-y-8">
-        <header className="space-y-5">
-          <Link
-            href={`/manuscripts/${id}`}
-            className="inline-flex items-center gap-2 text-sm font-semibold text-accent hover:underline"
-          >
-            <ArrowLeft size={16} aria-hidden="true" />
-            Till manus
-          </Link>
+    <main className="-mx-4 -my-6 min-h-screen bg-[#fdfcf8] px-4 py-6 sm:-mx-6 sm:px-6 lg:-mx-8 lg:px-8">
+      <div className="mx-auto max-w-6xl space-y-12">
+        <header className="space-y-10 pt-2">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <Link
+              href={`/manuscripts/${id}`}
+              className="inline-flex items-center gap-2 text-sm font-semibold text-slate-600 hover:text-accent hover:underline"
+            >
+              <ArrowLeft size={16} aria-hidden="true" />
+              Till manus
+            </Link>
 
-          <section className="rounded-lg border border-line bg-white px-5 py-6 shadow-panel sm:px-7 lg:px-8">
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-start">
-              <div className="max-w-3xl">
-                <p className="text-sm font-semibold text-accent">Redigeringsöversikt</p>
-                <h1 className="mt-3 text-3xl font-semibold tracking-normal text-ink sm:text-4xl">
-                  {authorWorkspace.hero.title}
-                </h1>
-                <p className="mt-3 text-lg font-semibold text-ink">
-                  {workspace.manuscript.title}
-                </p>
-                <p className="mt-4 max-w-3xl text-base leading-7 text-slate-700">
-                  {authorWorkspace.hero.body}
-                </p>
-              </div>
-              <nav className="flex flex-wrap gap-2 lg:justify-end" aria-label="Sekundära länkar">
-                <SecondaryLink href={`/manuscripts/${id}/audit`} icon={<FileText size={16} />}>
-                  Granska rapport
-                </SecondaryLink>
-                <SecondaryLink href={`/manuscripts/${id}/structure`} icon={<BookOpen size={16} />}>
-                  Manusets delar
-                </SecondaryLink>
-                <SecondaryLink href="#alla-observationer">
-                  Alla observationer
-                </SecondaryLink>
-              </nav>
+            <WorkspaceNav manuscriptId={id} />
+          </div>
+
+          <section className="mx-auto max-w-4xl space-y-5 py-4 text-center">
+            <div className="inline-flex items-center gap-2 rounded-full border border-accent/20 bg-white px-4 py-2 text-sm font-semibold text-accent shadow-panel">
+              <CheckCircle2 size={16} aria-hidden="true" />
+              {authorWorkspace.hero.statusLabel}
             </div>
+            <h1 className="text-4xl font-semibold tracking-normal text-ink sm:text-5xl">
+              {workspace.manuscript.title}
+            </h1>
+            <p className="mx-auto line-clamp-4 max-w-3xl text-lg leading-8 text-slate-700">
+              {authorWorkspace.hero.body}
+            </p>
           </section>
         </header>
 
-        <section className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_380px]">
-          <StartHereCard
-            manuscriptId={id}
-            start={authorWorkspace.start}
-          />
-
-          <WorkflowCard steps={authorWorkspace.workflowSteps} />
+        <section className="mx-auto max-w-4xl">
+          <StartHereCard manuscriptId={id} start={authorWorkspace.start} />
         </section>
 
-        <section className="space-y-4">
-          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
-            <div>
-              <p className="text-sm font-semibold text-accent">Prioriteringar</p>
-              <h2 className="text-2xl font-semibold tracking-normal text-ink">
-                {authorWorkspace.prioritySectionTitle}
-              </h2>
-            </div>
-            <p className="max-w-2xl text-sm leading-6 text-slate-600">
-              Börja med korten i ordning. De samlar flera observationer till större
-              redigeringsgrepp, så du slipper jaga rad-för-rad innan riktningen är satt.
+        <section className="mx-auto max-w-5xl space-y-5">
+          <div className="mx-auto max-w-2xl text-center">
+            <h2 className="text-2xl font-semibold tracking-normal text-ink">
+              {authorWorkspace.prioritySectionTitle}
+            </h2>
+            <p className="mt-3 text-sm leading-6 text-slate-600">
+              När du har börjat med huvudrekommendationen kan du gå vidare till
+              nästa redigeringskort i ordning.
             </p>
           </div>
 
           {authorWorkspace.priorityCards.length === 0 ? (
-            <section className="rounded-lg border border-line bg-white p-5 shadow-panel">
+            <section className="rounded-lg border border-[#ebe7dc] bg-white p-7 shadow-[0_10px_30px_rgba(24,33,47,0.05)]">
               <h3 className="text-lg font-semibold">Inga öppna prioriteringar ännu</h3>
               <p className="mt-2 text-sm leading-6 text-slate-600">
                 När analysen har hittat återkommande mönster visas de här som
-                redigeringskort. Tills dess kan du kontrollera manusets delar eller
-                öppna alla observationer under detaljerna.
+                lugna redigeringskort.
               </p>
             </section>
           ) : (
-            <div className="grid gap-4 xl:grid-cols-2">
+            <div className="grid gap-5 lg:grid-cols-3">
               {authorWorkspace.priorityCards.map((priority) => (
                 <PriorityCard
                   key={priority.id}
@@ -149,34 +123,29 @@ export default async function ManuscriptWorkspacePage({
           )}
         </section>
 
-        <details
-          id="alla-observationer"
-          className="rounded-lg border border-line bg-white shadow-panel"
-        >
-          <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-accent hover:underline">
-            {authorWorkspace.details.summaryLabel} och alla observationer
-          </summary>
-          <div className="space-y-6 border-t border-line px-5 py-5">
-            <section className="grid gap-4 lg:grid-cols-[360px_minmax(0,1fr)]">
-              <ReadinessPanel
-                readiness={workspace.readiness}
-                pipeline={pipelineReadiness}
-                rewriteDraftsComplete={rewriteDraftsComplete}
-              />
+        <section id="detaljer" className="mx-auto max-w-5xl space-y-4 pb-10">
+          <div className="text-center">
+            <h2 className="text-xl font-semibold tracking-normal text-ink">
+              {authorWorkspace.details.summaryLabel}
+            </h2>
+            <p className="mt-2 text-sm leading-6 text-slate-600">
+              Underlaget finns kvar här när du vill granska mer.
+            </p>
+          </div>
 
-              <RewritePlanPanel items={workspace.rewritePlanItems} />
-            </section>
-
-            <section className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
+          <div className="space-y-3">
+            <DetailsSection title={authorWorkspace.details.allObservationsLabel}>
               <RawObservationPanel
                 keyIssues={workspace.keyIssues}
                 issueGroups={workspace.issueGroups}
               />
+            </DetailsSection>
 
+            <DetailsSection title={authorWorkspace.details.sectionsLabel}>
               <StructureReviewPanel
                 rows={workspace.structureRows}
-                title={authorWorkspace.details.structureLabel}
-                description="Här kan du öppna varje importerad del och kontrollera hur manuset delades upp."
+                title="Manusets delar"
+                description="Öppna en del för att se den i arbetsytan."
                 sectionColumnLabel="Manusdel"
                 wordColumnLabel="Ord"
                 issueColumnLabel="Obs."
@@ -184,11 +153,44 @@ export default async function ManuscriptWorkspacePage({
                 emptyLabel="Inga manusdelar finns importerade ännu."
                 getHref={(row) => `/manuscripts/${id}/chapters/${row.id}/workspace`}
               />
-            </section>
+            </DetailsSection>
+
+            <DetailsSection title={authorWorkspace.details.rewritePlanLabel}>
+              <RewritePlanPanel items={workspace.rewritePlanItems} />
+            </DetailsSection>
+
+            <DetailsSection title={authorWorkspace.details.importedStructureLabel}>
+              <ImportedStructurePanel manuscriptId={id} />
+            </DetailsSection>
+
+            <DetailsSection title={authorWorkspace.details.rawDataLabel}>
+              <ReadinessPanel
+                readiness={workspace.readiness}
+                pipeline={pipelineReadiness}
+                rewriteDraftsComplete={rewriteDraftsComplete}
+                globalSummary={workspace.globalSummary}
+              />
+            </DetailsSection>
           </div>
-        </details>
+        </section>
       </div>
     </main>
+  );
+}
+
+function WorkspaceNav({ manuscriptId }: { manuscriptId: string }) {
+  return (
+    <nav
+      aria-label="Manusnavigering"
+      className="flex flex-wrap gap-1 rounded-lg border border-[#ebe7dc] bg-white p-1 shadow-panel"
+    >
+      <span className="inline-flex min-h-9 items-center rounded-md bg-ink px-4 py-2 text-sm font-semibold text-white">
+        Arbetsyta
+      </span>
+      <NavLink href={`/manuscripts/${manuscriptId}/audit`}>Rapport</NavLink>
+      <NavLink href={`/manuscripts/${manuscriptId}/structure`}>Struktur</NavLink>
+      <NavLink href="#detaljer">Detaljer</NavLink>
+    </nav>
   );
 }
 
@@ -200,69 +202,51 @@ function StartHereCard({
   start: {
     heading: string;
     title: string;
-    whyThisComesFirst: string;
-    affectedParts: string[];
+    explanation: string;
+    whyItMatters: string;
     firstConcreteStep: string;
-    whatToIgnoreForNow: string;
+    affectedPartsPreview: string;
     targetSectionId: string | null;
     primaryEnabled: boolean;
+    primaryButtonLabel: string;
   };
 }) {
   return (
-    <section className="rounded-lg border border-accent/30 bg-white p-5 shadow-panel sm:p-6">
-      <div className="flex items-center gap-2">
-        <Sparkles size={18} aria-hidden="true" className="text-accent" />
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-accent">
-          {start.heading}
-        </h2>
-      </div>
-      <h3 className="mt-4 text-2xl font-semibold tracking-normal text-ink">
+    <section className="rounded-lg border border-accent/20 bg-white p-7 shadow-[0_24px_70px_rgba(24,33,47,0.12)] ring-1 ring-accent/10 sm:p-9">
+      <p className="text-sm font-semibold uppercase tracking-wide text-accent">
+        {start.heading}
+      </p>
+      <h2 className="mt-4 max-w-3xl text-3xl font-semibold tracking-normal text-ink sm:text-4xl">
         {start.title}
-      </h3>
-      <div className="mt-5 grid gap-4 md:grid-cols-2">
-        <EditorialFact label="Varför detta kommer först" value={start.whyThisComesFirst} />
-        <EditorialFact label="Berörda delar" value={start.affectedParts.join(", ")} />
-        <EditorialFact label="Första konkreta steg" value={start.firstConcreteStep} />
-        <EditorialFact label="Vänta med" value={start.whatToIgnoreForNow} />
+      </h2>
+      <p className="mt-4 max-w-2xl text-base leading-7 text-slate-700">
+        {start.explanation}
+      </p>
+
+      <div className="mt-8 grid gap-6 border-t border-[#ebe7dc] pt-6 md:grid-cols-3">
+        <EditorialFact label="Varför det spelar roll" value={start.whyItMatters} />
+        <EditorialFact label="Första steg" value={start.firstConcreteStep} />
+        <EditorialFact label="Berörda delar" value={start.affectedPartsPreview} />
       </div>
-      <div className="mt-6">
+
+      <div className="mt-8">
         {start.primaryEnabled && start.targetSectionId ? (
           <Link
             href={`/manuscripts/${manuscriptId}/chapters/${start.targetSectionId}/workspace`}
-            className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-accent px-5 py-2 text-sm font-semibold text-white shadow-panel"
+            className="focus-ring inline-flex min-h-11 items-center justify-center gap-2 rounded-md bg-accent px-5 py-2 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(31,122,109,0.22)]"
           >
-            Börja arbeta
+            {start.primaryButtonLabel}
             <ArrowRight size={16} aria-hidden="true" />
           </Link>
         ) : (
           <span
             aria-disabled="true"
-            className="inline-flex min-h-11 items-center justify-center rounded-md border border-line bg-paper px-5 py-2 text-sm font-semibold text-slate-400"
+            className="inline-flex min-h-11 items-center justify-center rounded-md border border-[#ebe7dc] bg-[#f7f5ef] px-5 py-2 text-sm font-semibold text-slate-400"
           >
-            Börja arbeta
+            {start.primaryButtonLabel}
           </span>
         )}
       </div>
-    </section>
-  );
-}
-
-function WorkflowCard({ steps }: { steps: string[] }) {
-  return (
-    <section className="rounded-lg border border-line bg-white p-5 shadow-panel sm:p-6">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-        Arbetsgång
-      </h2>
-      <ol className="mt-4 space-y-4">
-        {steps.map((step, index) => (
-          <li key={step} className="flex gap-3">
-            <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full border border-line bg-paper text-sm font-semibold text-accent">
-              {index + 1}
-            </span>
-            <span className="pt-1 text-sm leading-6 text-slate-700">{step}</span>
-          </li>
-        ))}
-      </ol>
     </section>
   );
 }
@@ -275,44 +259,57 @@ function PriorityCard({
   priority: {
     title: string;
     importanceLabel: string;
-    affectedParts: string[];
     whyItMatters: string;
     recommendedAction: string;
     targetSectionId: string | null;
   };
 }) {
   return (
-    <article className="rounded-lg border border-line bg-white p-5 shadow-panel">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <ImportanceBadge label={priority.importanceLabel} />
-          <h3 className="mt-3 text-xl font-semibold tracking-normal text-ink">
-            {priority.title}
-          </h3>
-        </div>
-      </div>
-      <div className="mt-4 space-y-4">
-        <EditorialFact label="Berörda delar" value={priority.affectedParts.join(", ")} />
+    <article className="flex min-h-[310px] flex-col rounded-lg border border-[#ebe7dc] bg-white p-6 shadow-[0_10px_30px_rgba(24,33,47,0.05)]">
+      <ImportanceBadge label={priority.importanceLabel} />
+      <h3 className="mt-4 text-xl font-semibold tracking-normal text-ink">
+        {priority.title}
+      </h3>
+      <div className="mt-5 space-y-4">
         <EditorialFact label="Varför det spelar roll" value={priority.whyItMatters} />
-        <EditorialFact label="Rekommenderad åtgärd" value={priority.recommendedAction} />
+        <EditorialFact label="Gör nu" value={priority.recommendedAction} />
       </div>
-      <div className="mt-5 flex flex-wrap gap-2">
+      <div className="mt-auto pt-6">
         {priority.targetSectionId ? (
           <Link
             href={`/manuscripts/${manuscriptId}/chapters/${priority.targetSectionId}/workspace`}
-            className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-line bg-paper px-3 py-2 text-sm font-semibold text-ink hover:border-accent hover:text-accent"
+            className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-[#d9d4c8] bg-white px-3 py-2 text-sm font-semibold text-ink hover:border-accent hover:text-accent"
           >
             Visa i texten
             <ArrowRight size={15} aria-hidden="true" />
           </Link>
         ) : (
-          <DisabledAction label="Visa i texten" />
+          <span
+            aria-disabled="true"
+            className="inline-flex min-h-9 items-center justify-center rounded-md border border-[#ebe7dc] bg-[#f7f5ef] px-3 py-2 text-sm font-semibold text-slate-400"
+          >
+            Visa i texten
+          </span>
         )}
-        <DisabledAction label="Spara till senare" />
-        <DisabledAction label="Markera som löst" />
-        <DisabledAction label="Få förslag" />
       </div>
     </article>
+  );
+}
+
+function DetailsSection({
+  children,
+  title
+}: {
+  children: ReactNode;
+  title: string;
+}) {
+  return (
+    <details className="rounded-lg border border-[#ebe7dc] bg-white shadow-panel">
+      <summary className="cursor-pointer px-5 py-4 text-sm font-semibold text-ink hover:text-accent">
+        {title}
+      </summary>
+      <div className="border-t border-[#ebe7dc] p-4">{children}</div>
+    </details>
   );
 }
 
@@ -345,21 +342,13 @@ function RawObservationPanel({
   }>;
 }) {
   return (
-    <section className="border border-line bg-white shadow-panel">
-      <div className="border-b border-line px-4 py-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-          Alla observationer
-        </h2>
-        <p className="mt-1 text-sm leading-6 text-slate-500">
-          Rå observationer finns kvar här för granskning och spårbarhet.
-        </p>
-      </div>
+    <section className="space-y-5">
       {keyIssues.length === 0 && issueGroups.length === 0 ? (
-        <p className="px-4 py-6 text-sm text-slate-500">
+        <p className="text-sm text-slate-500">
           Inga öppna observationer finns att visa ännu.
         </p>
       ) : (
-        <div className="space-y-5 px-4 py-4">
+        <>
           {keyIssues.length > 0 ? (
             <div>
               <h3 className="text-sm font-semibold">Observationer med högst vikt</h3>
@@ -394,7 +383,7 @@ function RawObservationPanel({
               </div>
             </div>
           ) : null}
-        </div>
+        </>
       )}
     </section>
   );
@@ -411,35 +400,48 @@ function RewritePlanPanel({
   }>;
 }) {
   return (
-    <section className="border border-line bg-white shadow-panel">
-      <div className="border-b border-line px-4 py-3">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-          Redigeringsplan
-        </h2>
-      </div>
-      <div className="divide-y divide-line">
-        {items.length === 0 ? (
-          <p className="px-4 py-6 text-sm text-slate-500">
-            Ingen redigeringsplan finns sparad ännu.
-          </p>
-        ) : (
-          items.map((item) => (
-            <div key={item.key} className="px-4 py-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm font-semibold">{item.title}</span>
-                {item.priority ? (
-                  <span className="border border-line bg-paper px-2 py-1 text-xs text-slate-600">
-                    Prio {item.priority}
-                  </span>
-                ) : null}
-              </div>
-              {item.plan ? (
-                <p className="mt-2 text-sm leading-6 text-slate-700">{item.plan}</p>
+    <section className="divide-y divide-line border-y border-line">
+      {items.length === 0 ? (
+        <p className="py-5 text-sm text-slate-500">
+          Ingen redigeringsplan finns sparad ännu.
+        </p>
+      ) : (
+        items.map((item) => (
+          <div key={item.key} className="py-4">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-sm font-semibold">{item.title}</span>
+              {item.priority ? (
+                <span className="border border-line bg-paper px-2 py-1 text-xs text-slate-600">
+                  Prio {item.priority}
+                </span>
               ) : null}
             </div>
-          ))
-        )}
+            {item.plan ? (
+              <p className="mt-2 text-sm leading-6 text-slate-700">{item.plan}</p>
+            ) : null}
+          </div>
+        ))
+      )}
+    </section>
+  );
+}
+
+function ImportedStructurePanel({ manuscriptId }: { manuscriptId: string }) {
+  return (
+    <section className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <h3 className="text-sm font-semibold">Importerad struktur</h3>
+        <p className="mt-1 text-sm leading-6 text-slate-600">
+          Öppna strukturvyn om du vill kontrollera hur manuset delades upp vid import.
+        </p>
       </div>
+      <Link
+        href={`/manuscripts/${manuscriptId}/structure`}
+        className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 rounded-md border border-[#d9d4c8] bg-white px-4 py-2 text-sm font-semibold text-ink hover:border-accent hover:text-accent"
+      >
+        Öppna strukturvyn
+        <ArrowRight size={15} aria-hidden="true" />
+      </Link>
     </section>
   );
 }
@@ -447,7 +449,8 @@ function RewritePlanPanel({
 function ReadinessPanel({
   readiness,
   pipeline,
-  rewriteDraftsComplete
+  rewriteDraftsComplete,
+  globalSummary
 }: {
   readiness: {
     sectionsDetected: number;
@@ -466,13 +469,17 @@ function ReadinessPanel({
     optionalRewriteDraftsPending: boolean;
   };
   rewriteDraftsComplete: boolean;
+  globalSummary: string | null;
 }) {
   return (
-    <section className="border border-line bg-white p-4 shadow-panel">
-      <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-        Analysen är redo
-      </h2>
-      <div className="mt-3 divide-y divide-line border-y border-line text-sm">
+    <section className="space-y-4">
+      {globalSummary ? (
+        <div>
+          <h3 className="text-sm font-semibold">Sparad helhetsbedömning</h3>
+          <p className="mt-2 text-sm leading-6 text-slate-700">{globalSummary}</p>
+        </div>
+      ) : null}
+      <div className="divide-y divide-line border-y border-line text-sm">
         <ReadinessRow label="Manusets delar" value={String(readiness.sectionsDetected)} />
         <ReadinessRow label="Observationer" value={String(readiness.issuesFound)} />
         <ReadinessRow
@@ -503,7 +510,7 @@ function ReadinessPanel({
         />
       </div>
       {pipeline.actionableError ? (
-        <p className="mt-3 text-sm text-danger">{pipeline.actionableError}</p>
+        <p className="text-sm text-danger">{pipeline.actionableError}</p>
       ) : null}
     </section>
   );
@@ -556,39 +563,18 @@ function EditorialFact({ label, value }: { label: string; value: string }) {
 
 function ImportanceBadge({ label }: { label: string }) {
   return (
-    <span className="inline-flex min-h-7 items-center rounded-full border border-accent/30 bg-[#edf7f2] px-3 text-xs font-semibold text-accent">
+    <span className="inline-flex min-h-7 w-fit items-center rounded-full border border-accent/20 bg-[#f2faf6] px-3 text-xs font-semibold text-accent">
       {label}
     </span>
   );
 }
 
-function DisabledAction({ label }: { label: string }) {
-  return (
-    <button
-      type="button"
-      disabled
-      className="inline-flex min-h-9 cursor-not-allowed items-center justify-center rounded-md border border-line bg-paper px-3 py-2 text-sm font-semibold text-slate-400"
-    >
-      {label}
-    </button>
-  );
-}
-
-function SecondaryLink({
-  children,
-  href,
-  icon
-}: {
-  children: ReactNode;
-  href: string;
-  icon?: ReactNode;
-}) {
+function NavLink({ children, href }: { children: ReactNode; href: string }) {
   return (
     <Link
       href={href}
-      className="focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md border border-line bg-paper px-3 py-2 text-sm font-semibold text-ink hover:border-accent hover:text-accent"
+      className="focus-ring inline-flex min-h-9 items-center rounded-md px-4 py-2 text-sm font-semibold text-slate-600 hover:bg-paper hover:text-ink"
     >
-      {icon}
       {children}
     </Link>
   );

@@ -391,12 +391,30 @@ test("author workspace maps aggregated priorities into author-facing cards", () 
   });
   const authorWorkspace = buildAuthorWorkspaceViewModel(workspace);
 
-  assert.equal(authorWorkspace.hero.title, "Här är det viktigaste att arbeta med");
+  assert.equal(authorWorkspace.hero.statusLabel, "Analysen är klar");
+  assert.match(authorWorkspace.hero.body, /Analysen lyfter 2 prioriterade redigeringsområden/);
   assert.equal(authorWorkspace.start.heading, "Börja här");
   assert.equal(
     authorWorkspace.start.title,
     "Förtydliga vilket hinder, val eller vilken press som driver de berörda delarna."
   );
+  assert.equal(
+    authorWorkspace.start.explanation,
+    "Det här är den tydligaste första redigeringsrörelsen utifrån de samlade observationerna."
+  );
+  assert.equal(
+    authorWorkspace.start.whyItMatters,
+    "Scener utan tydlig press, konflikt eller insats tappar framåtrörelse och gör senare stegring svagare."
+  );
+  assert.equal(
+    authorWorkspace.start.firstConcreteStep,
+    "Välj första fulla scenen och skriv ut hinder, insats och beslutsslag innan du ändrar texten."
+  );
+  assert.equal(
+    authorWorkspace.start.affectedPartsPreview,
+    "Del 2: Warehouse, Del 3: The call, Del 4: Aftermath"
+  );
+  assert.equal(authorWorkspace.start.primaryButtonLabel, "Visa första berörda del");
   assert.equal(authorWorkspace.start.primaryEnabled, true);
   assert.equal(authorWorkspace.start.targetSectionId, "s2");
   assert.equal(authorWorkspace.priorityCards.length, 2);
@@ -404,7 +422,6 @@ test("author workspace maps aggregated priorities into author-facing cards", () 
     id: workspace.editorialPriorities[0].priorityId,
     title: "Dramatiskt tryck saknas i flera avsnitt",
     importanceLabel: "Hög viktighet",
-    affectedParts: ["Del 2: Warehouse", "Del 3: The call", "Del 4: Aftermath"],
     whyItMatters:
       "Scener utan tydlig press, konflikt eller insats tappar framåtrörelse och gör senare stegring svagare.",
     recommendedAction:
@@ -432,13 +449,20 @@ test("author workspace keeps raw findings secondary instead of primary", () => {
     workspace.issueGroups.reduce((total, group) => total + group.count, 0),
     4
   );
-  assert.equal(authorWorkspace.details.summaryLabel, "Visa detaljer");
-  assert.equal(authorWorkspace.details.rawFindingsLabel, "Alla observationer");
+  assert.equal(authorWorkspace.details.summaryLabel, "Detaljer");
+  assert.equal(authorWorkspace.details.allObservationsLabel, "Alla observationer");
+  assert.equal(authorWorkspace.details.sectionsLabel, "Manusets delar");
+  assert.equal(authorWorkspace.details.rewritePlanLabel, "Redigeringsplan");
+  assert.equal(authorWorkspace.details.importedStructureLabel, "Importerad struktur");
+  assert.equal(authorWorkspace.details.rawDataLabel, "Rådata och detaljer");
   assert.doesNotMatch(
     mainLabels,
     /Workspace readiness|Pipeline|Raw findings|Next Best Editorial Action|Detected sections|Severity|Findings/
   );
-  assert.doesNotMatch(mainLabels, /Alla observationer|Analysen är redo/);
+  assert.doesNotMatch(
+    mainLabels,
+    /Alla observationer|Analysen är redo|Redigeringsplan|Importerad struktur|Rådata/
+  );
 });
 
 test("author workspace renders helpful fallback when analysis data is missing", () => {
@@ -458,10 +482,11 @@ test("author workspace renders helpful fallback when analysis data is missing", 
   const authorWorkspace = buildAuthorWorkspaceViewModel(workspace);
 
   assert.equal(workspace.nextActionDisplay, null);
-  assert.equal(authorWorkspace.hero.title, "Analysen behöver mer underlag");
-  assert.match(authorWorkspace.hero.body, /viktigaste prioritet och nästa steg/);
+  assert.equal(authorWorkspace.hero.statusLabel, "Analysen inväntar underlag");
+  assert.match(authorWorkspace.hero.body, /helhetsbild, första rekommendation/);
   assert.equal(authorWorkspace.start.heading, "Börja här");
   assert.equal(authorWorkspace.start.primaryEnabled, false);
+  assert.equal(authorWorkspace.start.primaryButtonLabel, "Visa första berörda del");
   assert.equal(
     authorWorkspace.start.title,
     "Analysen saknar ännu en tydlig första prioritet"
