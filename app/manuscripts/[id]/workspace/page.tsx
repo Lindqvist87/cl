@@ -116,7 +116,16 @@ export default async function ManuscriptWorkspacePage({
               ) : (
                 <div className="space-y-5 px-4 py-4">
                   <div>
-                    <h3 className="text-sm font-semibold">Top 5 highest priority issues</h3>
+                    <h3 className="text-sm font-semibold">Top Editorial Priorities</h3>
+                    <div className="mt-3 space-y-3">
+                      {workspace.editorialPriorities.slice(0, 8).map((priority) => (
+                        <PrioritySummary key={priority.priorityId} priority={priority} />
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-sm font-semibold">Raw finding detail</h3>
                     <div className="mt-3 divide-y divide-line border-y border-line">
                       {workspace.keyIssues.map((issue) => (
                         <IssueSummary key={issue.id} issue={issue} />
@@ -125,7 +134,7 @@ export default async function ManuscriptWorkspacePage({
                   </div>
 
                   <div>
-                    <h3 className="text-sm font-semibold">Grouped by issue type</h3>
+                    <h3 className="text-sm font-semibold">Raw findings grouped by issue type</h3>
                     <div className="mt-3 space-y-3">
                       {workspace.issueGroups.map((group) => (
                         <section key={group.issueType} className="border border-line bg-paper p-3">
@@ -211,9 +220,9 @@ export default async function ManuscriptWorkspacePage({
                     {workspace.nextActionDisplay.selectedSection}
                   </p>
                 </div>
-                <NextActionFact label="Reason" value={workspace.nextActionDisplay.reason} />
+                <NextActionFact label="Why this is first" value={workspace.nextActionDisplay.reason} />
                 <NextActionFact
-                  label="Severity"
+                  label="Raw severity"
                   value={`S${workspace.nextActionDisplay.severity}`}
                 />
                 <NextActionFact
@@ -221,13 +230,20 @@ export default async function ManuscriptWorkspacePage({
                   value={String(workspace.nextActionDisplay.issueCount)}
                 />
                 <NextActionFact
-                  label="Suggested first step"
+                  label="First concrete step"
                   value={workspace.nextActionDisplay.suggestedFirstStep}
                 />
-                {nextAction.affectedChapters.length > 0 ? (
-                  <p className="text-xs text-slate-500">
-                    Affects {nextAction.affectedChapters.join(", ")}
-                  </p>
+                {workspace.nextActionDisplay.whatToIgnoreForNow ? (
+                  <NextActionFact
+                    label="What to ignore for now"
+                    value={workspace.nextActionDisplay.whatToIgnoreForNow}
+                  />
+                ) : null}
+                {workspace.nextActionDisplay.affectedSections.length > 0 ? (
+                  <NextActionFact
+                    label="Affected sections"
+                    value={workspace.nextActionDisplay.affectedSections.join(", ")}
+                  />
                 ) : null}
                 <Link
                   href={`/manuscripts/${id}/chapters/${nextAction.targetChapter.id}/workspace`}
@@ -367,6 +383,58 @@ function IssueSummary({
         <p className="mt-1 text-sm text-slate-600">{issue.recommendation}</p>
       ) : null}
     </div>
+  );
+}
+
+function PrioritySummary({
+  priority
+}: {
+  priority: {
+    title: string;
+    displayPriority: string;
+    rawSeverityRange: string;
+    issueCount: number;
+    affectedSectionLabels: string[];
+    evidenceSummary: string;
+    editorialImpact: string;
+    recommendedAction: string;
+    shouldActNow: boolean;
+  };
+}) {
+  const affected =
+    priority.affectedSectionLabels.length > 0
+      ? priority.affectedSectionLabels.slice(0, 4).join(", ")
+      : "Manuscript level";
+  const remaining = Math.max(0, priority.affectedSectionLabels.length - 4);
+
+  return (
+    <section className="border border-line bg-paper p-3">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <PriorityBadge priority={priority.displayPriority} />
+            <span className="text-xs text-slate-500">{priority.rawSeverityRange} raw</span>
+            {priority.shouldActNow ? (
+              <span className="text-xs font-semibold text-accent">Act now</span>
+            ) : null}
+          </div>
+          <h4 className="mt-2 text-sm font-semibold">{priority.title}</h4>
+        </div>
+        <div className="text-right text-xs text-slate-500">
+          <div>{priority.issueCount} issue{priority.issueCount === 1 ? "" : "s"}</div>
+          <div>
+            {priority.affectedSectionLabels.length || "Manuscript"} section
+            {priority.affectedSectionLabels.length === 1 ? "" : "s"}
+          </div>
+        </div>
+      </div>
+      <p className="mt-2 text-sm leading-6 text-slate-700">{priority.editorialImpact}</p>
+      <p className="mt-2 text-sm leading-6 text-slate-700">{priority.recommendedAction}</p>
+      <p className="mt-2 text-xs leading-5 text-slate-500">
+        Affects {affected}{remaining > 0 ? ` and ${remaining} more` : ""}
+      </p>
+      <p className="mt-1 text-xs leading-5 text-slate-500">{priority.evidenceSummary}</p>
+    </section>
   );
 }
 

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { transitionDecisionStatus } from "../lib/editorial/decisions";
+import { aggregateEditorialFindingPriorities } from "../lib/editorial/findingAggregation";
 import { nextBestEditorialAction } from "../lib/editorial/nextAction";
 import {
   aggregateEditorialWorkspaceData,
@@ -31,6 +32,52 @@ const findings = [
     problem: "Character motivation contradicts the prior chapter.",
     recommendation: "Align the motivation with the established promise.",
     rewriteInstruction: "Rewrite the motivation beat before changing later scenes."
+  }
+];
+
+const aggregationChapters = [
+  { id: "s1", order: 1, title: "I", status: "PENDING", wordCount: 1 },
+  { id: "s2", order: 2, title: "Warehouse", status: "PENDING", wordCount: 1800 },
+  { id: "s3", order: 3, title: "The call", status: "PENDING", wordCount: 1600 },
+  { id: "s4", order: 4, title: "Aftermath", status: "PENDING", wordCount: 1700 }
+];
+
+const systemicConflictFindings = [
+  {
+    id: "short-s5",
+    chapterId: "s1",
+    issueType: "Character",
+    severity: 5,
+    problem: "No character is present in this section.",
+    evidence: "I",
+    recommendation: "Confirm whether this is a heading or merge it into the next section."
+  },
+  {
+    id: "conflict-1",
+    chapterId: "s2",
+    issueType: "Conflict",
+    severity: 3,
+    problem: "No clear conflict drives the scene.",
+    evidence: "The scene observes the room without a visible pressure point.",
+    recommendation: "Add an obstacle and a choice."
+  },
+  {
+    id: "conflict-2",
+    chapterId: "s3",
+    issueType: "Conflict",
+    severity: 3,
+    problem: "No conflict or stakes shape the exchange.",
+    evidence: "The call repeats information without forcing a decision.",
+    recommendation: "Make the call force a commitment."
+  },
+  {
+    id: "conflict-3",
+    chapterId: "s4",
+    issueType: "Conflict",
+    severity: 3,
+    problem: "No dramatic pressure changes the aftermath.",
+    evidence: "Characters process events without a new risk.",
+    recommendation: "Tie the aftermath to a consequence."
   }
 ];
 
@@ -146,13 +193,131 @@ test("workspace data aggregation rolls up issues decisions and next action", () 
     analysisStatus: "COMPLETED"
   });
   assert.equal(workspace.issueGroups.length, 1);
+  assert.equal(workspace.editorialPriorities.length, 1);
   assert.equal(workspace.issueGroups[0].issueType, "Pacing");
   assert.equal(workspace.chapterRows.find((chapter) => chapter.id === "c2")?.issueCount, 0);
   assert.equal(workspace.structureRows.find((section) => section.id === "c2")?.issueCount, 1);
   assert.equal(workspace.rewritePlanItems.length, 1);
   assert.equal(workspace.nextAction?.targetChapter.id, "c1");
   assert.equal(workspace.nextActionDisplay?.selectedSection, "Section 1: Opening");
-  assert.equal(workspace.nextActionDisplay?.suggestedFirstStep, "Move the inciting pressure earlier.");
+  assert.equal(
+    workspace.nextActionDisplay?.suggestedFirstStep,
+    "Identify the first irreversible pressure beat and decide whether it can appear in the opening sequence."
+  );
+});
+
+test("repeated findings aggregate into one editorial priority with examples", () => {
+  const priorities = aggregateEditorialFindingPriorities({
+    chapters: aggregationChapters,
+    findings: [
+      {
+        id: "char-1",
+        chapterId: "s2",
+        issueType: "Character",
+        severity: 4,
+        problem: "No clear character anchors the scene.",
+        recommendation: "Name the viewpoint owner."
+      },
+      {
+        id: "char-2",
+        chapterId: "s3",
+        issueType: "Character",
+        severity: 4,
+        problem: "No protagonist or viewpoint controls the exchange.",
+        recommendation: "Clarify whose desire shapes the beat."
+      },
+      {
+        id: "char-3",
+        chapterId: "s4",
+        issueType: "Character",
+        severity: 3,
+        problem: "The section lacks a character anchor.",
+        recommendation: "Assign the section to a character arc."
+      }
+    ]
+  });
+
+  assert.equal(priorities.length, 1);
+  assert.equal(priorities[0].title, "Sections without clear character anchoring");
+  assert.equal(priorities[0].issueCount, 3);
+  assert.deepEqual(priorities[0].rawFindingIds, ["char-1", "char-2", "char-3"]);
+  assert.equal(priorities[0].representativeFindings.length, 3);
+});
+
+test("short title-only section issues do not dominate top priority alone", () => {
+  const priorities = aggregateEditorialFindingPriorities({
+    chapters: aggregationChapters,
+    findings: systemicConflictFindings
+  });
+
+  assert.equal(priorities[0].title, "Repeated missing conflict or dramatic pressure");
+  assert.equal(priorities[0].displayPriority, "high");
+  assert.equal(priorities[0].rawSeverityRange, "S3");
+  assert.equal(priorities[1].title, "Possible false splits and fragment sections");
+  assert.equal(priorities[1].displayPriority, "low");
+  assert.equal(priorities[1].rawSeverityRange, "S5");
+  assert.equal(priorities[1].hasFragmentContext, true);
+});
+
+test("systemic issue outranks isolated severe issue in display priority", () => {
+  const priorities = aggregateEditorialFindingPriorities({
+    chapters: aggregationChapters,
+    findings: systemicConflictFindings
+  });
+
+  assert.equal(priorities[0].issueCount, 3);
+  assert.equal(priorities[0].rawSeverityMax, 3);
+  assert.equal(priorities[1].issueCount, 1);
+  assert.equal(priorities[1].rawSeverityMax, 5);
+  assert.ok(priorities[0].displayScore > priorities[1].displayScore);
+});
+
+test("workspace next best action uses aggregated priority", () => {
+  const workspace = aggregateEditorialWorkspaceData({
+    manuscript: {
+      id: "m1",
+      title: "Draft",
+      status: "UPLOADED"
+    },
+    chapters: aggregationChapters,
+    findings: systemicConflictFindings,
+    decisions: []
+  });
+
+  assert.equal(workspace.nextAction?.sourcePriorityId, workspace.editorialPriorities[0].priorityId);
+  assert.equal(workspace.nextAction?.targetChapter.id, "s2");
+  assert.equal(
+    workspace.nextAction?.actionTitle,
+    "Clarify what pressure, obstacle, or choice drives the affected sections."
+  );
+  assert.match(workspace.nextActionDisplay?.reason ?? "", /display priority high/);
+  assert.equal(
+    workspace.nextActionDisplay?.whatToIgnoreForNow,
+    "Do not tune prose rhythm or minor continuity rows until the scene pressure is legible."
+  );
+});
+
+test("raw findings remain available beside aggregated priorities", () => {
+  const workspace = aggregateEditorialWorkspaceData({
+    manuscript: {
+      id: "m1",
+      title: "Draft",
+      status: "UPLOADED"
+    },
+    chapters: aggregationChapters,
+    findings: systemicConflictFindings,
+    decisions: []
+  });
+
+  assert.equal(workspace.keyIssues.length, 4);
+  assert.equal(
+    workspace.issueGroups.reduce((total, group) => total + group.count, 0),
+    4
+  );
+  assert.deepEqual(
+    workspace.editorialPriorities.flatMap((priority) => priority.rawFindingIds).sort(),
+    systemicConflictFindings.map((finding) => finding.id).sort()
+  );
 });
 
 test("workspace data aggregation includes lightweight structure review rows", () => {
