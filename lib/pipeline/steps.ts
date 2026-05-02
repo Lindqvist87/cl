@@ -1,4 +1,4 @@
-export const FULL_MANUSCRIPT_PIPELINE_STEPS = [
+export const CORE_MANUSCRIPT_PIPELINE_STEPS = [
   "parseAndNormalizeManuscript",
   "splitIntoChapters",
   "splitIntoChunks",
@@ -10,11 +10,25 @@ export const FULL_MANUSCRIPT_PIPELINE_STEPS = [
   "runWholeBookAudit",
   "compareAgainstCorpus",
   "compareAgainstTrendSignals",
-  "createRewritePlan",
+  "createRewritePlan"
+] as const;
+
+export const OPTIONAL_MANUSCRIPT_PIPELINE_STEPS = [
   "generateChapterRewriteDrafts"
 ] as const;
 
-export type ManuscriptPipelineStep = (typeof FULL_MANUSCRIPT_PIPELINE_STEPS)[number];
+export const FULL_MANUSCRIPT_PIPELINE_STEPS = CORE_MANUSCRIPT_PIPELINE_STEPS;
+
+export const MANUSCRIPT_PIPELINE_STEPS = [
+  ...CORE_MANUSCRIPT_PIPELINE_STEPS,
+  ...OPTIONAL_MANUSCRIPT_PIPELINE_STEPS
+] as const;
+
+export type CoreManuscriptPipelineStep =
+  (typeof CORE_MANUSCRIPT_PIPELINE_STEPS)[number];
+export type OptionalManuscriptPipelineStep =
+  (typeof OPTIONAL_MANUSCRIPT_PIPELINE_STEPS)[number];
+export type ManuscriptPipelineStep = (typeof MANUSCRIPT_PIPELINE_STEPS)[number];
 
 export type PipelineCheckpoint = {
   completedSteps?: string[];
@@ -46,6 +60,35 @@ export function isStepComplete(
   step: ManuscriptPipelineStep
 ) {
   return Boolean(checkpoint.completedSteps?.includes(step));
+}
+
+export function isManuscriptPipelineStep(
+  step: unknown
+): step is ManuscriptPipelineStep {
+  return (
+    typeof step === "string" &&
+    MANUSCRIPT_PIPELINE_STEPS.includes(step as ManuscriptPipelineStep)
+  );
+}
+
+export function isCoreManuscriptPipelineStep(
+  step: unknown
+): step is CoreManuscriptPipelineStep {
+  return (
+    typeof step === "string" &&
+    CORE_MANUSCRIPT_PIPELINE_STEPS.includes(step as CoreManuscriptPipelineStep)
+  );
+}
+
+export function isOptionalManuscriptPipelineStep(
+  step: unknown
+): step is OptionalManuscriptPipelineStep {
+  return (
+    typeof step === "string" &&
+    OPTIONAL_MANUSCRIPT_PIPELINE_STEPS.includes(
+      step as OptionalManuscriptPipelineStep
+    )
+  );
 }
 
 export function markStepStarted(
@@ -111,12 +154,12 @@ export function markStepComplete(
 export function pipelineProgress(checkpoint: unknown) {
   const normalized = normalizeCheckpoint(checkpoint);
   const completed = normalized.completedSteps?.filter((step) =>
-    FULL_MANUSCRIPT_PIPELINE_STEPS.includes(step as ManuscriptPipelineStep)
+    CORE_MANUSCRIPT_PIPELINE_STEPS.includes(step as CoreManuscriptPipelineStep)
   ).length ?? 0;
 
   return {
     completed,
-    total: FULL_MANUSCRIPT_PIPELINE_STEPS.length,
-    percent: Math.round((completed / FULL_MANUSCRIPT_PIPELINE_STEPS.length) * 100)
+    total: CORE_MANUSCRIPT_PIPELINE_STEPS.length,
+    percent: Math.round((completed / CORE_MANUSCRIPT_PIPELINE_STEPS.length) * 100)
   };
 }

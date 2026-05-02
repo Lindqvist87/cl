@@ -41,7 +41,7 @@ test("pipeline display derives cumulative summarizeChunks progress", () => {
 
   assert.equal(display.currentStep, "summarizeChunks");
   assert.equal(display.completedSteps, 4);
-  assert.equal(display.totalSteps, 13);
+  assert.equal(display.totalSteps, 12);
   assert.equal(display.currentJobStatus, PIPELINE_JOB_STATUS.QUEUED);
   assert.equal(display.analyzedCount, 53);
   assert.equal(display.remainingCount, 30);
@@ -58,6 +58,48 @@ test("pipeline display derives cumulative summarizeChunks progress", () => {
     label: "53 / 83 chunks summarized",
     remainingLabel: "30 remaining"
   });
+});
+
+test("pipeline display separates core completion from optional rewrite drafts", () => {
+  const completedCoreSteps = [
+    "parseAndNormalizeManuscript",
+    "splitIntoChapters",
+    "splitIntoChunks",
+    "createEmbeddingsForChunks",
+    "summarizeChunks",
+    "summarizeChapters",
+    "createManuscriptProfile",
+    "runChapterAudits",
+    "runWholeBookAudit",
+    "compareAgainstCorpus",
+    "compareAgainstTrendSignals",
+    "createRewritePlan"
+  ];
+  const display = buildPipelineStatusDisplay({
+    checkpoint: {
+      completedSteps: completedCoreSteps
+    },
+    jobs: [
+      ...completedCoreSteps.map((step, index) => ({
+        type: step,
+        status: PIPELINE_JOB_STATUS.COMPLETED,
+        createdAt: `2026-05-01T10:${String(index).padStart(2, "0")}:00.000Z`
+      })),
+      {
+        type: "generateChapterRewriteDrafts",
+        status: PIPELINE_JOB_STATUS.QUEUED,
+        createdAt: "2026-05-01T10:20:00.000Z"
+      }
+    ]
+  });
+
+  assert.equal(display.complete, true);
+  assert.equal(display.coreAnalysisComplete, true);
+  assert.equal(display.optionalRewriteDraftsPending, true);
+  assert.equal(display.currentStep, null);
+  assert.equal(display.nextStep, null);
+  assert.equal(display.completedSteps, 12);
+  assert.equal(display.totalSteps, 12);
 });
 
 test("pipeline display derives runChapterAudits completion from total minus remaining", () => {

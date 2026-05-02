@@ -29,7 +29,8 @@ export default async function ManuscriptPage({
       },
       reports: { orderBy: { createdAt: "desc" }, take: 1 },
       runs: { orderBy: { createdAt: "desc" }, take: 1 },
-      rewrites: { orderBy: { createdAt: "desc" }, take: 1 },
+      rewritePlans: { orderBy: { createdAt: "desc" }, take: 1 },
+      rewrites: { orderBy: { createdAt: "desc" } },
       findings: { take: 1 },
       pipelineJobs: { orderBy: { createdAt: "asc" }, take: 60 }
     }
@@ -42,7 +43,14 @@ export default async function ManuscriptPage({
   const report = manuscript.reports[0];
   const structured = report?.structured as AuditReportJson | undefined;
   const latestRun = manuscript.runs[0];
+  const latestRewritePlan = manuscript.rewritePlans[0];
   const latestRewrite = manuscript.rewrites[0];
+  const rewriteDraftCount = new Set(
+    manuscript.rewrites
+      .filter((rewrite) => ["DRAFT", "ACCEPTED"].includes(rewrite.status))
+      .map((rewrite) => rewrite.chapterId)
+  ).size;
+  const rewriteDraftsComplete = rewriteDraftCount >= manuscript.chapterCount;
   const pipelineStatus = buildPipelineStatusDisplay({
     run: latestRun,
     jobs: manuscript.pipelineJobs,
@@ -137,8 +145,24 @@ export default async function ManuscriptPage({
             diagnosticsRefreshManuscriptId={manuscript.id}
             refreshPageOnComplete={false}
           />
+          {latestRewritePlan && !rewriteDraftsComplete ? (
+            <PipelineActionButton
+              endpoint={`/api/admin/manuscripts/${manuscript.id}/generate-rewrite-drafts`}
+              label="Generate chapter rewrite drafts"
+              runningLabel="Generating..."
+              variant="secondary"
+              diagnosticsRefreshManuscriptId={manuscript.id}
+              refreshPageOnComplete={false}
+            />
+          ) : null}
         </div>
       </div>
+
+      {latestRewritePlan && !rewriteDraftsComplete ? (
+        <section className="border border-line bg-blue-50 px-4 py-3 text-sm font-semibold text-accent shadow-panel">
+          Rewrite plan ready. Chapter rewrite drafts can be generated when needed.
+        </section>
+      ) : null}
 
       <section className="grid gap-3 sm:grid-cols-4">
         <Stat label="Words" value={manuscript.wordCount.toLocaleString()} />

@@ -1,5 +1,9 @@
 import {
-  FULL_MANUSCRIPT_PIPELINE_STEPS,
+  CORE_MANUSCRIPT_PIPELINE_STEPS,
+  MANUSCRIPT_PIPELINE_STEPS,
+  isCoreManuscriptPipelineStep,
+  isManuscriptPipelineStep,
+  isOptionalManuscriptPipelineStep,
   normalizeCheckpoint,
   type ManuscriptPipelineStep
 } from "@/lib/pipeline/steps";
@@ -60,6 +64,8 @@ export type PipelineStatusDisplay = {
   remainingLabel: string | null;
   stepProgress: PipelineStepProgressDisplay | null;
   lockStatus: PipelineLockStatusDisplay | null;
+  coreAnalysisComplete: boolean;
+  optionalRewriteDraftsPending: boolean;
 };
 
 export type PipelineStepProgressDisplay = {
@@ -104,7 +110,6 @@ export type PipelineDiagnosticsPollingSnapshot = {
   } | null;
 };
 
-const STEP_SET = new Set<string>(FULL_MANUSCRIPT_PIPELINE_STEPS);
 const ACTIVE_JOB_STATUSES = new Set<string>([
   PIPELINE_JOB_STATUS.RUNNING,
   PIPELINE_JOB_STATUS.RETRYING,
@@ -123,19 +128,29 @@ export function buildPipelineStatusDisplay(input: {
   const checkpoint = normalizeCheckpoint(
     input.checkpoint ?? input.run?.checkpoint ?? {}
   );
-  const completedStepSet = new Set(
-    (checkpoint.completedSteps ?? []).filter((step) => STEP_SET.has(step))
+  const completedCoreStepSet = new Set(
+    (checkpoint.completedSteps ?? []).filter(isCoreManuscriptPipelineStep)
   );
-  const completedSteps = completedStepSet.size;
-  const totalSteps = FULL_MANUSCRIPT_PIPELINE_STEPS.length;
+  const completedSteps = completedCoreStepSet.size;
+  const totalSteps = CORE_MANUSCRIPT_PIPELINE_STEPS.length;
   const orderedJobs = sortPipelineJobs(jobs);
   const activeJob = orderedJobs.find(
-    (job) => isPipelineStep(job.type) && ACTIVE_JOB_STATUSES.has(job.status)
+    (job) =>
+      isCoreManuscriptPipelineStep(job.type) && ACTIVE_JOB_STATUSES.has(job.status)
+  );
+  const optionalRewriteDraftJob = orderedJobs.find(
+    (job) =>
+      isOptionalManuscriptPipelineStep(job.type) &&
+      ACTIVE_JOB_STATUSES.has(job.status)
   );
   const currentStep =
-    (isPipelineStep(checkpoint.currentStep) ? checkpoint.currentStep : null) ??
-    (activeJob && isPipelineStep(activeJob.type) ? activeJob.type : null) ??
-    FULL_MANUSCRIPT_PIPELINE_STEPS.find((step) => !completedStepSet.has(step)) ??
+    (isCoreManuscriptPipelineStep(checkpoint.currentStep)
+      ? checkpoint.currentStep
+      : null) ??
+    (activeJob && isCoreManuscriptPipelineStep(activeJob.type)
+      ? activeJob.type
+      : null) ??
+    CORE_MANUSCRIPT_PIPELINE_STEPS.find((step) => !completedCoreStepSet.has(step)) ??
     null;
   const currentJob =
     currentStep ? orderedJobs.find((job) => job.type === currentStep) : undefined;
@@ -151,14 +166,18 @@ export function buildPipelineStatusDisplay(input: {
     remaining: remainingCount,
     total: stepTotal
   });
-  const nextStep = nextStepFor(currentStep, completedStepSet);
+  const nextStep = nextStepFor(currentStep, completedCoreStepSet);
+  const coreAnalysisComplete = completedSteps === totalSteps && totalSteps > 0;
+  const optionalRewriteDraftsPending = Boolean(optionalRewriteDraftJob);
   const complete =
     booleanValue(progressRecord.complete) ??
-    (completedSteps === totalSteps && totalSteps > 0) ??
+    coreAnalysisComplete ??
     false;
   const nextBlockedStep =
     orderedJobs.find(
-      (job) => isPipelineStep(job.type) && job.status === PIPELINE_JOB_STATUS.BLOCKED
+      (job) =>
+        isCoreManuscriptPipelineStep(job.type) &&
+        job.status === PIPELINE_JOB_STATUS.BLOCKED
     )?.type ?? null;
   const stepProgressLabel = progressLabelForStep(currentStep, {
     analyzed: analyzedCount,
@@ -208,10 +227,13 @@ export function buildPipelineStatusDisplay(input: {
       (currentJob?.status === PIPELINE_JOB_STATUS.RUNNING ? currentJob : null) ??
         orderedJobs.find(
           (job) =>
-            isPipelineStep(job.type) && job.status === PIPELINE_JOB_STATUS.RUNNING
+            isManuscriptPipelineStep(job.type) &&
+            job.status === PIPELINE_JOB_STATUS.RUNNING
         ) ??
         null
-    )
+    ),
+    coreAnalysisComplete,
+    optionalRewriteDraftsPending
   };
 }
 
@@ -311,14 +333,10 @@ function sortPipelineJobs(jobs: PipelineDisplayJob[]) {
 }
 
 function stepOrder(type: string) {
-  const index = FULL_MANUSCRIPT_PIPELINE_STEPS.indexOf(
+  const index = MANUSCRIPT_PIPELINE_STEPS.indexOf(
     type as ManuscriptPipelineStep
   );
   return index === -1 ? Number.MAX_SAFE_INTEGER : index;
-}
-
-function isPipelineStep(value: unknown): value is ManuscriptPipelineStep {
-  return typeof value === "string" && STEP_SET.has(value);
 }
 
 function recordForStep(value: unknown, step: ManuscriptPipelineStep) {
@@ -451,14 +469,14 @@ function nextStepFor(
   completedStepSet: Set<string>
 ) {
   if (currentStep) {
-    const index = FULL_MANUSCRIPT_PIPELINE_STEPS.indexOf(
-      currentStep as ManuscriptPipelineStep
+    const index = CORE_MANUSCRIPT_PIPELINE_STEPS.indexOf(
+      currentStep as (typeof CORE_MANUSCRIPT_PIPELINE_STEPS)[number]
     );
 
-    return index >= 0 ? FULL_MANUSCRIPT_PIPELINE_STEPS[index + 1] ?? null : null;
+    return index >= 0 ? CORE_MANUSCRIPT_PIPELINE_STEPS[index + 1] ?? null : null;
   }
 
-  return FULL_MANUSCRIPT_PIPELINE_STEPS.find(
+  return CORE_MANUSCRIPT_PIPELINE_STEPS.find(
     (step) => !completedStepSet.has(step)
   ) ?? null;
 }

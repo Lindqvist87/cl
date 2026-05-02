@@ -58,9 +58,11 @@ test("stable manuscript analysis chain reaches workspace-ready output idempotent
   delete process.env.OPENAI_API_KEY;
 
   try {
-    const { ensureManuscriptPipelineJobs, runReadyPipelineJobs } = await import(
-      "../lib/pipeline/pipelineJobs"
-    );
+    const {
+      ensureChapterRewriteDraftsJob,
+      ensureManuscriptPipelineJobs,
+      runReadyPipelineJobs
+    } = await import("../lib/pipeline/pipelineJobs");
     const { evaluateWorkspaceReadiness } = await import(
       "../lib/pipeline/workspaceReadiness"
     );
@@ -125,7 +127,7 @@ test("stable manuscript analysis chain reaches workspace-ready output idempotent
         true
       );
       assert.equal(db.rewritePlans.length, 1);
-      assert.equal(db.rewrites.length, 2);
+      assert.equal(db.rewrites.length, 0);
       assert.equal(db.manuscript.analysisStatus, AnalysisStatus.COMPLETED);
 
       const readiness = evaluateWorkspaceReadiness({
@@ -135,6 +137,8 @@ test("stable manuscript analysis chain reaches workspace-ready output idempotent
         outputs: db.outputs as Array<{ passType: string; output?: unknown; rawText?: string | null }>,
         profile: db.profile,
         rewritePlans: db.rewritePlans,
+        chapterRewrites: db.rewrites as Array<{ id: string; chapterId?: string | null; status?: string | null }>,
+        findings: db.findings as Array<{ id: string }>,
         jobs: db.jobs,
         checkpoint: db.run?.checkpoint,
         globalSummary:
@@ -145,6 +149,9 @@ test("stable manuscript analysis chain reaches workspace-ready output idempotent
 
       assert.equal(readiness.state, "completed_with_usable_output");
       assert.equal(readiness.workspaceReady, true);
+      assert.equal(readiness.coreAnalysisComplete, true);
+      assert.equal(readiness.optionalRewriteDraftsPending, true);
+      assert.equal(readiness.contract.chapterRewriteDrafts, "missing");
       assert.equal(readiness.contract.blockedJobsWithCompleteDependencies, 0);
       assert.deepEqual(readiness.contract.missingSteps, []);
 
@@ -160,6 +167,30 @@ test("stable manuscript analysis chain reaches workspace-ready output idempotent
       assert.equal(repeated.jobsRun, 0);
       assert.equal(repeated.state, "done");
       assert.equal(db.runs.length, 1);
+
+      await ensureChapterRewriteDraftsJob(db.manuscript.id);
+      const firstDraftBatch = await runReadyPipelineJobs({
+        manuscriptId: db.manuscript.id,
+        maxJobs: 1,
+        maxSeconds: 10,
+        maxItemsPerStep: 1,
+        workerType: "MANUAL",
+        workerId: "test:e2e:rewrite-drafts-1"
+      });
+      const secondDraftBatch = await runReadyPipelineJobs({
+        manuscriptId: db.manuscript.id,
+        maxJobs: 1,
+        maxSeconds: 10,
+        maxItemsPerStep: 1,
+        workerType: "MANUAL",
+        workerId: "test:e2e:rewrite-drafts-2"
+      });
+
+      assert.equal(firstDraftBatch.results[0]?.type, "generateChapterRewriteDrafts");
+      assert.equal(firstDraftBatch.results[0]?.status, "queued");
+      assert.equal(secondDraftBatch.results[0]?.type, "generateChapterRewriteDrafts");
+      assert.equal(secondDraftBatch.results[0]?.status, "completed");
+      assert.equal(db.rewrites.length, 2);
     });
   } finally {
     restoreEnv("OPENAI_API_KEY", oldApiKey);

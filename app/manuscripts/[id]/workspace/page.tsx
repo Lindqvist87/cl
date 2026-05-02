@@ -48,6 +48,12 @@ export default async function ManuscriptWorkspacePage({
   });
   const pipelineReadiness = await getWorkspaceReadinessForManuscript(id);
   const nextAction = workspace.nextAction;
+  const rewriteDraftCount = new Set(
+    manuscript.rewrites
+      .filter((rewrite) => ["DRAFT", "ACCEPTED"].includes(rewrite.status))
+      .map((rewrite) => rewrite.chapterId)
+  ).size;
+  const rewriteDraftsComplete = rewriteDraftCount >= manuscript.chapterCount;
 
   return (
     <div className="space-y-6">
@@ -158,21 +164,28 @@ export default async function ManuscriptWorkspacePage({
                   step creates this after the manuscript audit and comparison steps.
                 </p>
               ) : (
-                workspace.rewritePlanItems.map((item) => (
-                  <div key={item.key} className="px-4 py-4">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <span className="text-sm font-semibold">{item.title}</span>
-                      {item.priority ? (
-                        <span className="border border-line bg-paper px-2 py-1 text-xs">
-                          Priority {item.priority}
-                        </span>
+                <>
+                  {!rewriteDraftsComplete ? (
+                    <p className="px-4 py-3 text-sm font-semibold text-accent">
+                      Rewrite plan ready. Chapter rewrite drafts can be generated when needed.
+                    </p>
+                  ) : null}
+                  {workspace.rewritePlanItems.map((item) => (
+                    <div key={item.key} className="px-4 py-4">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="text-sm font-semibold">{item.title}</span>
+                        {item.priority ? (
+                          <span className="border border-line bg-paper px-2 py-1 text-xs">
+                            Priority {item.priority}
+                          </span>
+                        ) : null}
+                      </div>
+                      {item.plan ? (
+                        <p className="mt-2 text-sm leading-6 text-slate-700">{item.plan}</p>
                       ) : null}
                     </div>
-                    {item.plan ? (
-                      <p className="mt-2 text-sm leading-6 text-slate-700">{item.plan}</p>
-                    ) : null}
-                  </div>
-                ))
+                  ))}
+                </>
               )}
             </div>
           </section>
@@ -182,6 +195,7 @@ export default async function ManuscriptWorkspacePage({
           <ReadinessPanel
             readiness={workspace.readiness}
             pipeline={pipelineReadiness}
+            rewriteDraftsComplete={rewriteDraftsComplete}
           />
 
           <section className="border border-line bg-white p-4 shadow-panel">
@@ -242,7 +256,8 @@ export default async function ManuscriptWorkspacePage({
 
 function ReadinessPanel({
   readiness,
-  pipeline
+  pipeline,
+  rewriteDraftsComplete
 }: {
   readiness: {
     sectionsDetected: number;
@@ -257,7 +272,10 @@ function ReadinessPanel({
     workspaceReady: boolean;
     usableWholeBookOutput: boolean;
     actionableError: string | null;
+    coreAnalysisComplete: boolean;
+    optionalRewriteDraftsPending: boolean;
   };
+  rewriteDraftsComplete: boolean;
 }) {
   return (
     <section className="border border-line bg-white p-4 shadow-panel">
@@ -289,7 +307,16 @@ function ReadinessPanel({
           label="Workspace output"
           value={pipeline.workspaceReady ? "Ready" : "Not ready"}
         />
+        <ReadinessRow
+          label="Rewrite drafts"
+          value={rewriteDraftsComplete ? "Generated" : "Deferred"}
+        />
       </div>
+      {!rewriteDraftsComplete && readiness.rewritePlanAvailable ? (
+        <p className="mt-3 text-sm font-semibold text-accent">
+          Rewrite plan ready. Chapter rewrite drafts can be generated when needed.
+        </p>
+      ) : null}
       {pipeline.actionableError ? (
         <p className="mt-3 text-sm text-danger">{pipeline.actionableError}</p>
       ) : null}

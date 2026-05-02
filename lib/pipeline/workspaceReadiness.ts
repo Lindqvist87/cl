@@ -2,6 +2,7 @@ import { AnalysisPassType } from "@prisma/client";
 import { dependencyIdsFromJson, PIPELINE_JOB_STATUS } from "@/lib/pipeline/jobRules";
 import {
   FULL_MANUSCRIPT_PIPELINE_STEPS,
+  isOptionalManuscriptPipelineStep,
   normalizeCheckpoint
 } from "@/lib/pipeline/steps";
 import { prisma } from "@/lib/prisma";
@@ -30,6 +31,9 @@ export type WorkspaceReadinessContract = {
   corpusComparison: WorkspaceArtifactState;
   trendComparison: WorkspaceArtifactState;
   rewritePlan: WorkspaceArtifactState;
+  globalSummary: WorkspaceArtifactState;
+  findings: WorkspaceArtifactState;
+  chapterRewriteDrafts: WorkspaceArtifactState;
   completedSteps: string[];
   missingSteps: string[];
   blockedJobsWithCompleteDependencies: number;
@@ -40,6 +44,8 @@ export type WorkspaceReadinessContract = {
 export type WorkspaceReadinessSummary = {
   state: WorkspacePipelineState;
   workspaceReady: boolean;
+  coreAnalysisComplete: boolean;
+  optionalRewriteDraftsPending: boolean;
   usableWholeBookOutput: boolean;
   actionableError: string | null;
   contract: WorkspaceReadinessContract;
@@ -84,6 +90,8 @@ export type WorkspaceReadinessSnapshot = {
   outputs: ReadinessOutput[];
   profile?: unknown | null;
   rewritePlans: unknown[];
+  chapterRewrites?: Array<{ id: string; chapterId?: string | null; status?: string | null }>;
+  findings?: Array<{ id: string }>;
   jobs: ReadinessJob[];
   checkpoint?: unknown;
   globalSummary?: string | null;
@@ -126,6 +134,17 @@ export async function getWorkspaceReadinessForManuscript(
         take: 1,
         select: { id: true }
       },
+      rewrites: {
+        select: {
+          id: true,
+          chapterId: true,
+          status: true
+        }
+      },
+      findings: {
+        select: { id: true },
+        take: 1
+      },
       runs: {
         orderBy: { createdAt: "desc" },
         take: 1,
@@ -154,6 +173,8 @@ export async function getWorkspaceReadinessForManuscript(
     outputs: manuscript.outputs,
     profile: manuscript.profile,
     rewritePlans: manuscript.rewritePlans,
+    chapterRewrites: manuscript.rewrites,
+    findings: manuscript.findings,
     jobs: manuscript.pipelineJobs,
     checkpoint: manuscript.runs[0]?.checkpoint,
     globalSummary: manuscript.reports[0]?.executiveSummary ?? null
@@ -177,9 +198,17 @@ export function evaluateWorkspaceReadiness(
   const usableWholeBookOutput =
     outputState([wholeBookOutput]) === "available" ||
     Boolean(snapshot.globalSummary?.trim());
-  const failedJobs = snapshot.jobs.filter(
+  const relevantJobs = snapshot.jobs.filter(
+    (job) => !isOptionalManuscriptPipelineStep(job.type)
+  );
+  const failedJobs = relevantJobs.filter(
     (job) => job.status === PIPELINE_JOB_STATUS.FAILED
   );
+  const globalSummaryAvailable = Boolean(snapshot.globalSummary?.trim());
+  const chapterRewriteDraftCount = countGeneratedChapterRewriteDrafts(snapshot);
+  const chapterRewriteDraftsComplete =
+    snapshot.chapters.length > 0 &&
+    chapterRewriteDraftCount >= snapshot.chapters.length;
   const contract: WorkspaceReadinessContract = {
     parsedManuscriptData: Boolean(
       snapshot.manuscript.originalText?.trim() ||
@@ -215,29 +244,56 @@ export function evaluateWorkspaceReadiness(
       outputForPass(snapshot.outputs, AnalysisPassType.TREND_COMPARISON)
     ]),
     rewritePlan: snapshot.rewritePlans.length > 0 ? "available" : "missing",
+    globalSummary: globalSummaryAvailable ? "available" : "missing",
+    findings:
+      (snapshot.findings?.length ?? 0) > 0 ||
+      outputsForPass(snapshot.outputs, AnalysisPassType.CHAPTER_AUDIT).length > 0
+        ? "available"
+        : "missing",
+    chapterRewriteDrafts: chapterRewriteDraftState({
+      total: snapshot.chapters.length,
+      available: chapterRewriteDraftCount
+    }),
     completedSteps,
     missingSteps,
     blockedJobsWithCompleteDependencies:
-      countBlockedJobsWithCompleteDependencies(snapshot.jobs),
+      countBlockedJobsWithCompleteDependencies(relevantJobs),
     failedJobs: failedJobs.length,
     failedJobsWithoutError: failedJobs.filter((job) => !job.error?.trim()).length
   };
   const analysisStatus = snapshot.manuscript.analysisStatus ?? "NOT_STARTED";
+  const requiredArtifactsReady =
+    contract.wholeBookAudit === "available" &&
+    contract.globalSummary === "available" &&
+    contract.findings === "available" &&
+    contract.rewritePlan === "available";
+  const coreAnalysisComplete =
+    contract.missingSteps.length === 0 && requiredArtifactsReady;
+  const optionalRewriteDraftsPending =
+    contract.rewritePlan === "available" &&
+    snapshot.chapters.length > 0 &&
+    !chapterRewriteDraftsComplete;
   const actionableError =
     failedJobs[0]?.error ??
-    (analysisStatus === "FAILED" ? "Pipeline failed. Review failed jobs." : null);
+    (!requiredArtifactsReady && analysisStatus === "FAILED"
+      ? "Pipeline failed. Review failed jobs."
+      : null);
   const state = determineWorkspacePipelineState({
     analysisStatus,
     failedJobs: contract.failedJobs,
     missingSteps: contract.missingSteps.length,
     usableWholeBookOutput,
     rewritePlanAvailable: contract.rewritePlan === "available",
+    requiredArtifactsReady,
+    coreAnalysisComplete,
     actionableError
   });
 
   return {
     state,
     workspaceReady: state === "completed_with_usable_output",
+    coreAnalysisComplete,
+    optionalRewriteDraftsPending,
     usableWholeBookOutput,
     actionableError,
     contract
@@ -250,21 +306,25 @@ export function determineWorkspacePipelineState(input: {
   missingSteps?: number;
   usableWholeBookOutput: boolean;
   rewritePlanAvailable: boolean;
+  requiredArtifactsReady?: boolean;
+  coreAnalysisComplete?: boolean;
   actionableError?: string | null;
 }): WorkspacePipelineState {
   if (
-    input.analysisStatus === "FAILED" ||
     (input.failedJobs ?? 0) > 0 ||
     Boolean(input.actionableError)
   ) {
     return "failed_with_actionable_error";
   }
 
-  if (input.analysisStatus !== "COMPLETED" || (input.missingSteps ?? 0) > 0) {
+  if (
+    !input.coreAnalysisComplete &&
+    (input.analysisStatus !== "COMPLETED" || (input.missingSteps ?? 0) > 0)
+  ) {
     return "pipeline_still_running";
   }
 
-  if (!input.usableWholeBookOutput) {
+  if (!input.usableWholeBookOutput || !input.requiredArtifactsReady) {
     return "completed_without_whole_book_output";
   }
 
@@ -333,6 +393,28 @@ function countSkippedChunks(snapshot: WorkspaceReadinessSnapshot) {
   );
 
   return snapshot.chunks.filter((chunk) => skippedIds.has(chunk.id)).length;
+}
+
+function countGeneratedChapterRewriteDrafts(snapshot: WorkspaceReadinessSnapshot) {
+  const draftedChapterIds = new Set(
+    (snapshot.chapterRewrites ?? [])
+      .filter((rewrite) => ["DRAFT", "ACCEPTED"].includes(rewrite.status ?? ""))
+      .map((rewrite) => rewrite.chapterId)
+      .filter(Boolean)
+  );
+
+  return draftedChapterIds.size;
+}
+
+function chapterRewriteDraftState(input: {
+  total: number;
+  available: number;
+}): WorkspaceArtifactState {
+  if (input.total === 0) {
+    return "empty";
+  }
+
+  return input.available >= input.total ? "available" : "missing";
 }
 
 function outputForPass(outputs: ReadinessOutput[], passType: AnalysisPassType) {

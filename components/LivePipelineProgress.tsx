@@ -51,13 +51,16 @@ export function LivePipelineProgress({
     Boolean(status.lastError && !liveShouldPoll);
   const primaryPercent = status.stepProgress?.percent;
   const hasStepProgress = status.stepProgress !== null;
+  const rewriteDraftsDeferred =
+    status.coreAnalysisComplete && status.optionalRewriteDraftsPending;
   const liveStatusText = liveStatusLabel({
     isRefreshing,
     shouldPoll: liveShouldPoll,
     fetchError,
     diagnostics,
     isBlockedByError,
-    autoRunnerActive
+    autoRunnerActive,
+    rewriteDraftsDeferred
   });
 
   const refreshDiagnostics = useCallback(async () => {
@@ -162,7 +165,9 @@ export function LivePipelineProgress({
                 : formatStepName(status.currentStep)}
             </h2>
             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-base font-semibold">
-              {status.stepProgress?.label ? (
+              {rewriteDraftsDeferred ? (
+                <span>Rewrite plan ready. Chapter rewrite drafts can be generated when needed.</span>
+              ) : status.stepProgress?.label ? (
                 <span>{status.stepProgress.label}</span>
               ) : status.stepProgress?.remainingLabel ? (
                 <span>{status.stepProgress.remainingLabel}</span>
@@ -424,6 +429,7 @@ function liveStatusLabel(input: {
   diagnostics: PipelineDiagnosticsResponse | null;
   isBlockedByError: boolean;
   autoRunnerActive: boolean;
+  rewriteDraftsDeferred: boolean;
 }) {
   if (input.isRefreshing) {
     return "Refreshing...";
@@ -439,6 +445,10 @@ function liveStatusLabel(input: {
 
   if (input.isBlockedByError) {
     return "Live updates paused because the pipeline is blocked by error.";
+  }
+
+  if (input.rewriteDraftsDeferred) {
+    return "Rewrite plan ready. Chapter rewrite drafts can be generated when needed.";
   }
 
   return input.shouldPoll ? "Live updates active" : "Live updates paused";

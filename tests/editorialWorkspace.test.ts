@@ -102,7 +102,8 @@ test("workspace data aggregation rolls up issues decisions and next action", () 
     manuscript: {
       id: "m1",
       title: "Draft",
-      status: "UPLOADED"
+      status: "UPLOADED",
+      analysisStatus: "COMPLETED"
     },
     chapters,
     findings,
@@ -117,6 +118,7 @@ test("workspace data aggregation rolls up issues decisions and next action", () 
         updatedAt: new Date("2026-04-30T10:00:00Z")
       }
     ],
+    rewrites: [],
     rewritePlans: [
       {
         id: "rp1",
@@ -141,7 +143,7 @@ test("workspace data aggregation rolls up issues decisions and next action", () 
     globalSummaryAvailable: false,
     rewritePlanAvailable: true,
     decisionsStored: true,
-    analysisStatus: "NOT_STARTED"
+    analysisStatus: "COMPLETED"
   });
   assert.equal(workspace.issueGroups.length, 1);
   assert.equal(workspace.issueGroups[0].issueType, "Pacing");
@@ -150,6 +152,7 @@ test("workspace data aggregation rolls up issues decisions and next action", () 
   assert.equal(workspace.rewritePlanItems.length, 1);
   assert.equal(workspace.nextAction?.targetChapter.id, "c1");
   assert.equal(workspace.nextActionDisplay?.selectedSection, "Section 1: Opening");
+  assert.equal(workspace.nextActionDisplay?.suggestedFirstStep, "Move the inciting pressure earlier.");
 });
 
 test("workspace data aggregation includes lightweight structure review rows", () => {

@@ -532,7 +532,9 @@ function lastStepFromCheckpoint(
 
 function stepOrNull(value: unknown): ManuscriptPipelineStep | null {
   return typeof value === "string" &&
-    FULL_MANUSCRIPT_PIPELINE_STEPS.includes(value as ManuscriptPipelineStep)
+    FULL_MANUSCRIPT_PIPELINE_STEPS.includes(
+      value as (typeof FULL_MANUSCRIPT_PIPELINE_STEPS)[number]
+    )
     ? (value as ManuscriptPipelineStep)
     : null;
 }

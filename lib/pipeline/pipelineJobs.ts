@@ -22,6 +22,7 @@ import {
   runPipelineStep
 } from "@/lib/pipeline/manuscriptPipeline";
 import {
+  pipelineStepJobKey,
   plannedPipelineJobs
 } from "@/lib/pipeline/jobPlanner";
 import {
@@ -44,6 +45,7 @@ import {
 import {
   FULL_MANUSCRIPT_PIPELINE_STEPS,
   isStepComplete,
+  MANUSCRIPT_PIPELINE_STEPS,
   markStepComplete,
   markStepProgress,
   markStepStarted,
@@ -253,6 +255,61 @@ export async function ensureChapterRewriteJob(input: {
   });
 }
 
+export async function ensureChapterRewriteDraftsJob(manuscriptId: string) {
+  const run = await findOrCreatePipelineRun(manuscriptId);
+  const checkpoint = normalizeCheckpoint(run.checkpoint);
+  const rewritePlanComplete = isStepComplete(checkpoint, "createRewritePlan");
+
+  if (!rewritePlanComplete) {
+    throw new Error("Create the rewrite plan before generating chapter rewrite drafts.");
+  }
+
+  const idempotencyKey = pipelineStepJobKey(
+    manuscriptId,
+    "generateChapterRewriteDrafts"
+  );
+  const existing = await prisma.pipelineJob.findUnique({
+    where: { idempotencyKey }
+  });
+
+  if (existing) {
+    if (
+      existing.status === PIPELINE_JOB_STATUS.FAILED ||
+      existing.status === PIPELINE_JOB_STATUS.CANCELLED
+    ) {
+      return prisma.pipelineJob.update({
+        where: { id: existing.id },
+        data: {
+          status: PIPELINE_JOB_STATUS.RETRYING,
+          error: null,
+          readyAt: new Date(),
+          lockedAt: null,
+          lockedBy: null,
+          lockExpiresAt: null
+        }
+      });
+    }
+
+    return existing;
+  }
+
+  return prisma.pipelineJob.create({
+    data: {
+      manuscriptId,
+      type: "generateChapterRewriteDrafts",
+      status: PIPELINE_JOB_STATUS.QUEUED,
+      idempotencyKey,
+      dependencyIds: jsonInput([]),
+      maxAttempts: maxAttemptsForJobType("generateChapterRewriteDrafts"),
+      metadata: jsonInput({
+        step: "generateChapterRewriteDrafts",
+        order: FULL_MANUSCRIPT_PIPELINE_STEPS.length + 1,
+        pipeline: "REWRITE_ONLY"
+      })
+    }
+  });
+}
+
 export async function runReadyPipelineJobs(options: RunReadyJobsOptions = {}) {
   const workerType = options.workerType ?? "MANUAL";
   const maxJobs = positiveInt(options.maxJobs, 1);
@@ -409,7 +466,7 @@ export async function runPipelineJob(
   }
 
   try {
-    const result = FULL_MANUSCRIPT_PIPELINE_STEPS.includes(
+    const result = MANUSCRIPT_PIPELINE_STEPS.includes(
       locked.type as ManuscriptPipelineStep
     )
       ? await runManuscriptPipelineStepJob(

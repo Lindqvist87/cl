@@ -20,6 +20,7 @@ import {
 } from "../lib/pipeline/jobRules";
 import {
   ensureManuscriptPipelineJobs,
+  ensureChapterRewriteDraftsJob,
   pipelineJobScopeWhere,
   runPipelineJob,
   runReadyPipelineJobs
@@ -111,7 +112,7 @@ test("stuck manuscript with no jobs gets resumable jobs from checkpoint", async 
       const ensured = await ensureManuscriptPipelineJobs(manuscriptId, "RESUME");
 
       assert.equal(ensured.run.id, run.id);
-      assert.equal(jobs.length, 13);
+      assert.equal(jobs.length, 12);
       assert.deepEqual(
         jobs.slice(0, 4).map((job) => job.status),
         Array(4).fill(PIPELINE_JOB_STATUS.COMPLETED)
@@ -128,13 +129,54 @@ test("stuck manuscript with no jobs gets resumable jobs from checkpoint", async 
           "runWholeBookAudit",
           "compareAgainstCorpus",
           "compareAgainstTrendSignals",
-          "createRewritePlan",
-          "generateChapterRewriteDrafts"
+          "createRewritePlan"
         ]
       );
       assert.equal(
         jobs.slice(5).every((job) => job.status === PIPELINE_JOB_STATUS.BLOCKED),
         true
+      );
+    }
+  );
+});
+
+test("rewrite draft step is planned only when explicitly requested", async () => {
+  const manuscriptId = "manuscript-rewrite-drafts-manual";
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks",
+      "createEmbeddingsForChunks",
+      "summarizeChunks",
+      "summarizeChapters",
+      "createManuscriptProfile",
+      "runChapterAudits",
+      "runWholeBookAudit",
+      "compareAgainstCorpus",
+      "compareAgainstTrendSignals",
+      "createRewritePlan"
+    ]
+  });
+  const jobs: MutableJob[] = [];
+
+  await withPatchedPrisma(
+    manuscriptRunnerPatches({ manuscriptId, run, jobs }),
+    async () => {
+      await ensureManuscriptPipelineJobs(manuscriptId, "RESUME");
+
+      assert.equal(
+        jobs.some((job) => job.type === "generateChapterRewriteDrafts"),
+        false
+      );
+
+      const rewriteDraftJob = await ensureChapterRewriteDraftsJob(manuscriptId);
+
+      assert.equal(rewriteDraftJob.type, "generateChapterRewriteDrafts");
+      assert.equal(rewriteDraftJob.status, PIPELINE_JOB_STATUS.QUEUED);
+      assert.equal(
+        jobs.filter((job) => job.type === "generateChapterRewriteDrafts").length,
+        1
       );
     }
   );
