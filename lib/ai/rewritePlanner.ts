@@ -1,4 +1,5 @@
 import { hasEditorModelKey, requestEditorJson } from "@/lib/ai/editorModel";
+import { modelConfigForRole } from "@/lib/ai/modelConfig";
 import type { RewritePlanResult } from "@/lib/ai/analysisTypes";
 import { stubUsageLog } from "@/lib/ai/usage";
 
@@ -32,6 +33,7 @@ export async function planRewrite(input: RewritePlannerInput) {
   }
 
   return requestEditorJson<RewritePlanResult>({
+    ...modelConfigForRole("chiefEditor"),
     system: [
       "You are a senior rewrite strategist for a manuscript intelligence pipeline.",
       "Return strict JSON only.",

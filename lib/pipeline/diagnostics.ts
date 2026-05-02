@@ -18,6 +18,7 @@ import {
 } from "@/lib/pipeline/steps";
 import { buildPipelineStatusDisplay } from "@/lib/pipeline/display";
 import { getWorkspaceReadinessForManuscript } from "@/lib/pipeline/workspaceReadiness";
+import { getModelRoleDiagnostics } from "@/lib/ai/modelConfig";
 import { prisma } from "@/lib/prisma";
 
 export type PipelineJobDiagnostic = {
@@ -124,6 +125,7 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
         }
       : null,
     pipelineStatus,
+    modelRoles: getModelRoleDiagnostics(),
     currentStep,
     completedSteps: Array.from(completedSteps),
     remainingJobCount: remainingJobs.length,

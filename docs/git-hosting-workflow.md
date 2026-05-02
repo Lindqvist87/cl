@@ -42,8 +42,10 @@ Set these in the hosting provider:
 ```bash
 DATABASE_URL="postgresql://..."
 OPENAI_API_KEY="..."
-OPENAI_AUDIT_MODEL="gpt-5.4-mini"
-OPENAI_REWRITE_MODEL="gpt-5.5"
+AUDIT_MODEL="gpt-5.4-mini"
+AUDIT_REASONING_EFFORT="medium"
+CHIEF_EDITOR_MODEL="gpt-5.4"
+CHIEF_EDITOR_REASONING_EFFORT="high"
 OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
 ENABLE_INNGEST_WORKER="true"
 INNGEST_EVENT_KEY="<Inngest event key>"

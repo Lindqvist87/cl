@@ -1,4 +1,5 @@
 import { hasEditorModelKey, requestEditorJson } from "@/lib/ai/editorModel";
+import { modelConfigForRole } from "@/lib/ai/modelConfig";
 import type { ChapterAnalysisResult } from "@/lib/ai/analysisTypes";
 import { stubUsageLog } from "@/lib/ai/usage";
 import { countWords } from "@/lib/text/wordCount";
@@ -20,6 +21,7 @@ export async function analyzeChapter(input: ChapterInput) {
   }
 
   return requestEditorJson<ChapterAnalysisResult>({
+    ...modelConfigForRole("audit"),
     system: [
       "You are a senior developmental editor auditing one chapter.",
       "Return strict JSON only.",

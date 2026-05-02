@@ -1,4 +1,5 @@
 import { hasEditorModelKey, requestEditorJson } from "@/lib/ai/editorModel";
+import { modelConfigForRole } from "@/lib/ai/modelConfig";
 import type { TrendComparisonResult } from "@/lib/ai/analysisTypes";
 import { stubUsageLog } from "@/lib/ai/usage";
 
@@ -29,6 +30,7 @@ export async function compareTrends(input: TrendComparisonInput) {
   }
 
   return requestEditorJson<TrendComparisonResult>({
+    ...modelConfigForRole("chiefEditor"),
     system: [
       "You are a careful publishing trend analyst.",
       "Return strict JSON only.",

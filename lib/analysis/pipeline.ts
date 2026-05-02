@@ -6,6 +6,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { AUDIT_PASSES } from "@/lib/analysis/passes";
 import { hasOpenAIKey, requestStructuredJson, getConfiguredModel } from "@/lib/analysis/openai";
+import { modelConfigForRole } from "@/lib/ai/modelConfig";
 import {
   buildChunkAnalysisPrompt,
   buildFinalReportPrompt,
@@ -230,7 +231,8 @@ async function analyzeChunk(input: {
   };
   memory: ManuscriptMemory;
 }) {
-  const model = getConfiguredModel();
+  const modelConfig = modelConfigForRole("audit");
+  const model = getConfiguredModel(modelConfig.model);
 
   if (!hasOpenAIKey()) {
     const json = stubChunkOutput({
@@ -262,7 +264,8 @@ async function analyzeChunk(input: {
 
   return requestStructuredJson<JsonRecord>({
     ...prompt,
-    model
+    model,
+    reasoningEffort: modelConfig.reasoningEffort
   });
 }
 
@@ -305,7 +308,8 @@ async function synthesizePass(input: {
     memory: input.memory,
     chunkOutputs
   });
-  const model = getConfiguredModel();
+  const modelConfig = modelConfigForRole("chiefEditor");
+  const model = getConfiguredModel(modelConfig.model);
   const result = hasOpenAIKey()
     ? await requestStructuredJson<JsonRecord>({
         ...buildPassSynthesisPrompt({
@@ -314,7 +318,8 @@ async function synthesizePass(input: {
           chunkSummaries: summaries,
           memory: input.memory
         }),
-        model
+        model,
+        reasoningEffort: modelConfig.reasoningEffort
       })
     : {
         json: stubPassSynthesis({
@@ -384,7 +389,8 @@ async function getPassSynthesisInputs(input: {
     }
 
     const sourceSummaries = chunkSummaries.slice(start, start + batchSize);
-    const model = getConfiguredModel();
+    const modelConfig = modelConfigForRole("audit");
+    const model = getConfiguredModel(modelConfig.model);
     const result = hasOpenAIKey()
       ? await requestStructuredJson<JsonRecord>({
           ...buildPassSynthesisPrompt({
@@ -393,7 +399,8 @@ async function getPassSynthesisInputs(input: {
             chunkSummaries: sourceSummaries,
             memory: input.memory
           }),
-          model
+          model,
+          reasoningEffort: modelConfig.reasoningEffort
         })
       : {
           json: stubPassSynthesis({
@@ -456,7 +463,8 @@ async function generateFinalReport(input: {
   });
 
   const passSummaries = passOutputs.map((output) => toJsonRecord(output.output));
-  const model = getConfiguredModel();
+  const modelConfig = modelConfigForRole("chiefEditor");
+  const model = getConfiguredModel(modelConfig.model);
   const result = hasOpenAIKey()
     ? await requestStructuredJson<AuditReportJson>({
         ...buildFinalReportPrompt({
@@ -469,7 +477,8 @@ async function generateFinalReport(input: {
           chapterTitles: input.chapterTitles,
           memory: input.memory
         }),
-        model
+        model,
+        reasoningEffort: modelConfig.reasoningEffort
       })
     : {
         json: stubReport({

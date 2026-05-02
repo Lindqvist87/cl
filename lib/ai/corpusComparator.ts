@@ -1,4 +1,5 @@
 import { hasEditorModelKey, requestEditorJson } from "@/lib/ai/editorModel";
+import { modelConfigForRole } from "@/lib/ai/modelConfig";
 import type { CorpusComparisonResult } from "@/lib/ai/analysisTypes";
 import { stubUsageLog } from "@/lib/ai/usage";
 
@@ -270,6 +271,7 @@ export async function compareCorpus(
   }
 
   return requestEditorJson<CorpusComparisonResult>({
+    ...modelConfigForRole("chiefEditor"),
     system: CORPUS_COMPARISON_SYSTEM_PROMPT,
     user: serializeCorpusComparisonInput(input),
     retries: options.retries
