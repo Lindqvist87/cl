@@ -6,7 +6,12 @@ import {
 } from "@prisma/client";
 import { analyzeChapter } from "@/lib/ai/chapterAnalyzer";
 import { analyzeManuscriptChunk } from "@/lib/ai/chunkAnalyzer";
-import { compareCorpus } from "@/lib/ai/corpusComparator";
+import {
+  buildBoundedCorpusComparisonInput,
+  compareCorpus,
+  DEFAULT_CORPUS_COMPARISON_LIMITS,
+  isCorpusRequestTooLargeError
+} from "@/lib/ai/corpusComparator";
 import {
   createEmbedding,
   EDITOR_PROMPT_VERSION,
@@ -57,6 +62,19 @@ export type PipelineStepRunResult = Record<string, unknown> & {
   complete?: boolean;
   remaining?: number;
 };
+
+type CorpusComparisonRunner = typeof compareCorpus;
+
+let corpusComparisonRunner: CorpusComparisonRunner = compareCorpus;
+
+export function setCorpusComparisonRunnerForTest(runner: CorpusComparisonRunner) {
+  const previous = corpusComparisonRunner;
+  corpusComparisonRunner = runner;
+
+  return () => {
+    corpusComparisonRunner = previous;
+  };
+}
 
 export async function runFullManuscriptPipeline(manuscriptId: string) {
   const run = await findOrCreatePipelineRun(manuscriptId);
@@ -732,7 +750,22 @@ async function compareAgainstCorpus(manuscriptId: string, runId: string) {
   });
   const profiles = profileCandidates
     .filter((profile) => profile.book.benchmarkReady && canUseForCorpusBenchmark(profile.book))
-    .slice(0, 20);
+    .sort(
+      (a, b) =>
+        corpusProfileRank(
+          b.book,
+          manuscriptLanguage,
+          manuscript.targetGenre,
+          selectedCorpusBookIds
+        ) -
+        corpusProfileRank(
+          a.book,
+          manuscriptLanguage,
+          manuscript.targetGenre,
+          selectedCorpusBookIds
+        )
+    )
+    .slice(0, DEFAULT_CORPUS_COMPARISON_LIMITS.maxBenchmarkProfiles);
   const promptProfiles = profiles.map((profile) => ({
     bookId: profile.book.id,
     title: profile.book.title,
@@ -744,13 +777,13 @@ async function compareAgainstCorpus(manuscriptId: string, runId: string) {
   }));
   const sameLanguageProfiles = promptProfiles.filter((profile) =>
     sameNormalizedValue(profile.language, manuscriptLanguage)
-  );
+  ).map((profile) => profileReferenceForPrompt(profile, "same_language"));
   const sameGenreProfiles = promptProfiles.filter((profile) =>
     sameGenre(profile.genre, manuscript.targetGenre)
-  );
+  ).map((profile) => profileReferenceForPrompt(profile, "same_genre"));
   const selectedProfiles = promptProfiles.filter((profile) =>
     selectedCorpusBookIds.includes(profilesKey(profile))
-  );
+  ).map((profile) => profileReferenceForPrompt(profile, "selected_by_manuscript"));
   const chunkCandidates = await prisma.corpusChunk.findMany({
     take: 60,
     orderBy: { createdAt: "desc" },
@@ -759,7 +792,7 @@ async function compareAgainstCorpus(manuscriptId: string, runId: string) {
   const chunks = chunkCandidates
     .filter((chunk) => chunk.book.benchmarkReady && canUseForChunkContext(chunk.book))
     .sort((a, b) => corpusChunkRank(b.book, manuscriptLanguage, manuscript.targetGenre) - corpusChunkRank(a.book, manuscriptLanguage, manuscript.targetGenre))
-    .slice(0, 12);
+    .slice(0, DEFAULT_CORPUS_COMPARISON_LIMITS.maxCorpusChunks);
 
   if (profiles.length === 0 && chunks.length === 0) {
     return saveSkippedComparisonOutput({
@@ -787,28 +820,101 @@ async function compareAgainstCorpus(manuscriptId: string, runId: string) {
       }
     }
   });
-  const result = await compareCorpus({
+  const chunkSimilarityBasis =
+    storedCorpusEmbeddings > 0 && manuscriptEmbeddingReady > 0
+      ? "embedding-ready chunks plus profile filters"
+      : "profile-filtered chunks; embeddings unavailable or incomplete";
+  const wholeBookOutput = await findOutput(
+    runId,
+    AnalysisPassType.WHOLE_BOOK_AUDIT,
+    "manuscript",
+    manuscriptId
+  );
+  const corpusContext = buildBoundedCorpusComparisonInput({
     manuscriptTitle: manuscript.title,
     targetGenre: manuscript.targetGenre,
     manuscriptLanguage,
     manuscriptProfile: toJsonRecord(manuscript.profile),
+    wholeBookAudit: toJsonRecord(wholeBookOutput?.output),
     rightsStatusCounts: rightsStatusCounts(profiles.map((profile) => profile.book)),
     benchmarkProfiles: promptProfiles,
     sameLanguageProfiles,
     sameGenreProfiles,
     selectedProfiles,
-    chunkSimilarityBasis:
-      storedCorpusEmbeddings > 0 && manuscriptEmbeddingReady > 0
-        ? "embedding-ready chunks plus profile filters"
-        : "profile-filtered chunks; embeddings unavailable or incomplete",
+    chunkSimilarityBasis,
     similarChunks: chunks.map((chunk) => ({
       bookTitle: chunk.book.title,
       author: chunk.book.author,
       rightsStatus: chunk.book.rightsStatus,
       summary: chunk.summary,
+      excerpt: chunk.text,
       metrics: chunk.metrics
     }))
   });
+  const corpusContextMetadata = {
+    estimatedInputCharacters: corpusContext.estimatedInputCharacters,
+    includedProfileCount: corpusContext.includedProfileCount,
+    includedChunkCount: corpusContext.includedChunkCount,
+    includedWholeBookNoteCount: corpusContext.includedWholeBookNoteCount,
+    maxBudget: corpusContext.maxBudget,
+    limits: DEFAULT_CORPUS_COMPARISON_LIMITS
+  };
+
+  if (corpusContext.overBudget) {
+    return saveSkippedComparisonOutput({
+      runId,
+      manuscriptId,
+      passType: AnalysisPassType.CORPUS_COMPARISON,
+      reason: "corpus_context_too_large",
+      summary:
+        "Corpus comparison was skipped because the bounded context package was still too large for a safe model request.",
+      metadata: corpusContextMetadata,
+      inputSummary: {
+        ...corpusContextMetadata,
+        benchmarkProfileCount: corpusContext.includedProfileCount,
+        sameLanguageProfileCount: sameLanguageProfiles.length,
+        sameGenreProfileCount: sameGenreProfiles.length,
+        selectedProfileCount: selectedProfiles.length,
+        similarChunkCount: corpusContext.includedChunkCount,
+        chunkSimilarityBasis,
+        rightsStatusCounts: rightsStatusCounts(profiles.map((profile) => profile.book))
+      }
+    });
+  }
+
+  let result;
+  try {
+    result = await corpusComparisonRunner(corpusContext.input, { retries: 0 });
+  } catch (error) {
+    if (!isCorpusRequestTooLargeError(error)) {
+      throw error;
+    }
+
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    return saveSkippedComparisonOutput({
+      runId,
+      manuscriptId,
+      passType: AnalysisPassType.CORPUS_COMPARISON,
+      reason: "corpus_request_too_large",
+      summary:
+        "Corpus comparison was skipped after the model rejected the bounded request as too large.",
+      metadata: {
+        ...corpusContextMetadata,
+        errorMessage
+      },
+      inputSummary: {
+        ...corpusContextMetadata,
+        errorMessage,
+        benchmarkProfileCount: corpusContext.includedProfileCount,
+        sameLanguageProfileCount: sameLanguageProfiles.length,
+        sameGenreProfileCount: sameGenreProfiles.length,
+        selectedProfileCount: selectedProfiles.length,
+        similarChunkCount: corpusContext.includedChunkCount,
+        chunkSimilarityBasis,
+        rightsStatusCounts: rightsStatusCounts(profiles.map((profile) => profile.book))
+      }
+    });
+  }
 
   await saveFindings({
     runId,
@@ -827,20 +933,21 @@ async function compareAgainstCorpus(manuscriptId: string, runId: string) {
     rawText: result.rawText,
     usage: result.usage,
     inputSummary: {
-      benchmarkProfileCount: profiles.length,
+      ...corpusContextMetadata,
+      benchmarkProfileCount: corpusContext.includedProfileCount,
       sameLanguageProfileCount: sameLanguageProfiles.length,
       sameGenreProfileCount: sameGenreProfiles.length,
       selectedProfileCount: selectedProfiles.length,
-      similarChunkCount: chunks.length,
-      chunkSimilarityBasis:
-        storedCorpusEmbeddings > 0 && manuscriptEmbeddingReady > 0
-          ? "embedding-ready chunks plus profile filters"
-          : "profile-filtered chunks; embeddings unavailable or incomplete",
+      similarChunkCount: corpusContext.includedChunkCount,
+      chunkSimilarityBasis,
       rightsStatusCounts: rightsStatusCounts(profiles.map((profile) => profile.book))
     }
   });
 
-  return { benchmarkProfileCount: profiles.length };
+  return {
+    benchmarkProfileCount: corpusContext.includedProfileCount,
+    estimatedInputCharacters: corpusContext.estimatedInputCharacters
+  };
 }
 
 async function compareAgainstTrendSignals(manuscriptId: string, runId: string) {
@@ -1178,6 +1285,7 @@ async function saveSkippedComparisonOutput(input: {
   passType: AnalysisPassType;
   reason: string;
   summary: string;
+  metadata?: Record<string, unknown>;
   inputSummary?: Record<string, unknown>;
 }) {
   const output = {
@@ -1185,6 +1293,7 @@ async function saveSkippedComparisonOutput(input: {
     skipped: true,
     reason: input.reason,
     summary: input.summary,
+    metadata: input.metadata ?? {},
     findings: []
   };
 
@@ -1392,6 +1501,28 @@ function profileForPrompt(profile: unknown) {
   return metrics;
 }
 
+function profileReferenceForPrompt(
+  profile: {
+    bookId?: string;
+    title: string;
+    author?: string | null;
+    rightsStatus: string;
+    genre?: string | null;
+    language?: string | null;
+  },
+  matchReason: string
+) {
+  return {
+    bookId: profile.bookId,
+    title: profile.title,
+    author: profile.author,
+    rightsStatus: profile.rightsStatus,
+    genre: profile.genre,
+    language: profile.language,
+    matchReason
+  };
+}
+
 function sameNormalizedValue(a?: string | null, b?: string | null) {
   if (!a || !b) return false;
   return a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -1406,6 +1537,19 @@ function sameGenre(a?: string | null, b?: string | null) {
 
 function profilesKey(profile: { bookId?: string }) {
   return profile.bookId ?? "";
+}
+
+function corpusProfileRank(
+  book: { id?: string; language?: string | null; genre?: string | null },
+  manuscriptLanguage?: string | null,
+  targetGenre?: string | null,
+  selectedCorpusBookIds: string[] = []
+) {
+  let score = 0;
+  if (book.id && selectedCorpusBookIds.includes(book.id)) score += 4;
+  if (sameNormalizedValue(book.language, manuscriptLanguage)) score += 2;
+  if (sameGenre(book.genre, targetGenre)) score += 2;
+  return score;
 }
 
 function corpusChunkRank(
