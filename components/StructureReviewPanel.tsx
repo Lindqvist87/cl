@@ -7,11 +7,23 @@ import {
 export function StructureReviewPanel({
   getHref,
   rows,
-  title = "Structure Review"
+  title = "Structure Review",
+  description = DETECTED_SECTION_HELP_TEXT,
+  sectionColumnLabel = "Detected section",
+  wordColumnLabel = "Words",
+  issueColumnLabel = "Issues",
+  typeColumnLabel = "Current type",
+  emptyLabel = "No detected sections are available yet."
 }: {
   getHref?: (row: StructureReviewRow) => string;
   rows: StructureReviewRow[];
   title?: string;
+  description?: string;
+  sectionColumnLabel?: string;
+  wordColumnLabel?: string;
+  issueColumnLabel?: string;
+  typeColumnLabel?: string;
+  emptyLabel?: string;
 }) {
   return (
     <section className="border border-line bg-white shadow-panel">
@@ -20,20 +32,20 @@ export function StructureReviewPanel({
           {title}
         </h2>
         <p className="mt-1 text-xs leading-5 text-slate-500">
-          {DETECTED_SECTION_HELP_TEXT}
+          {description}
         </p>
       </div>
       <div className="max-h-[520px] overflow-auto">
         <div className="grid grid-cols-[1fr_80px_70px_86px] gap-3 border-b border-line px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
-          <div>Detected section</div>
-          <div className="text-right">Words</div>
-          <div className="text-right">Issues</div>
-          <div>Current type</div>
+          <div>{sectionColumnLabel}</div>
+          <div className="text-right">{wordColumnLabel}</div>
+          <div className="text-right">{issueColumnLabel}</div>
+          <div>{typeColumnLabel}</div>
         </div>
         <div className="divide-y divide-line">
           {rows.length === 0 ? (
             <p className="px-4 py-6 text-sm text-slate-500">
-              No detected sections are available yet.
+              {emptyLabel}
             </p>
           ) : (
             rows.map((row) => {
