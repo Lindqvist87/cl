@@ -34,6 +34,7 @@ export function LivePipelineProgress({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
   const [manualNotice, setManualNotice] = useState<string | null>(null);
+  const [autoRunnerActive, setAutoRunnerActive] = useState(false);
 
   const pollingSnapshot = useMemo<PipelineDiagnosticsPollingSnapshot>(
     () => ({
@@ -43,18 +44,20 @@ export function LivePipelineProgress({
     [diagnostics, status]
   );
   const shouldPoll = shouldPollPipelineDiagnostics(pollingSnapshot);
+  const liveShouldPoll = shouldPoll || autoRunnerActive;
   const isBlockedByError =
     diagnostics?.state === "blocked_by_error" ||
     status.currentJobStatus === "FAILED" ||
-    Boolean(status.lastError && !shouldPoll);
+    Boolean(status.lastError && !liveShouldPoll);
   const primaryPercent = status.stepProgress?.percent;
   const hasStepProgress = status.stepProgress !== null;
   const liveStatusText = liveStatusLabel({
     isRefreshing,
-    shouldPoll,
+    shouldPoll: liveShouldPoll,
     fetchError,
     diagnostics,
-    isBlockedByError
+    isBlockedByError,
+    autoRunnerActive
   });
 
   const refreshDiagnostics = useCallback(async () => {
@@ -98,7 +101,7 @@ export function LivePipelineProgress({
   }, [refreshDiagnostics]);
 
   useEffect(() => {
-    if (!shouldPoll) {
+    if (!liveShouldPoll) {
       return;
     }
 
@@ -107,7 +110,7 @@ export function LivePipelineProgress({
     }, 5000);
 
     return () => window.clearInterval(interval);
-  }, [refreshDiagnostics, shouldPoll]);
+  }, [refreshDiagnostics, liveShouldPoll]);
 
   useEffect(() => {
     function handleRefresh(event: Event) {
@@ -118,6 +121,7 @@ export function LivePipelineProgress({
         return;
       }
 
+      setAutoRunnerActive(detail.autoRunnerActive === true);
       setManualNotice(manualNoticeFromResult(detail.result));
       void refreshDiagnostics();
     }
@@ -186,7 +190,7 @@ export function LivePipelineProgress({
             className={`inline-flex min-h-8 items-center px-3 text-sm font-semibold ${
               isBlockedByError
                 ? "bg-danger text-white"
-                : shouldPoll
+                : liveShouldPoll
                   ? "bg-accent text-white"
                   : "border border-line bg-white text-slate-700"
             }`}
@@ -346,16 +350,33 @@ function manualNoticeFromResult(result: unknown) {
         .find((job) => typeof job.type === "string")
     : null;
   const blockingJob = recordFromUnknown(record.blockingJob);
+  const stoppedReason =
+    typeof record.stoppedReason === "string" ? record.stoppedReason : null;
+
+  if (typeof record.message === "string" && record.message) {
+    return record.message;
+  }
 
   if (typeof recovered?.type === "string") {
-    return `Recovered stale ${recovered.type}. Click Run next batch again to continue.`;
+    return `Recovered stale ${recovered.type}. Run until pause again to continue.`;
   }
 
   if (
     record.reason === "stale_running_job_recovered" &&
     typeof blockingJob.type === "string"
   ) {
-    return `Recovered stale ${blockingJob.type}. Click Run next batch again to continue.`;
+    return `Recovered stale ${blockingJob.type}. Run until pause again to continue.`;
+  }
+
+  if (
+    stoppedReason === "active_running_lock" &&
+    typeof blockingJob.type === "string"
+  ) {
+    return `Paused because ${blockingJob.type} is locked until ${
+      typeof blockingJob.lockExpiresAt === "string"
+        ? blockingJob.lockExpiresAt
+        : "the active lock expires"
+    }.`;
   }
 
   return null;
@@ -402,9 +423,14 @@ function liveStatusLabel(input: {
   fetchError: string | null;
   diagnostics: PipelineDiagnosticsResponse | null;
   isBlockedByError: boolean;
+  autoRunnerActive: boolean;
 }) {
   if (input.isRefreshing) {
     return "Refreshing...";
+  }
+
+  if (input.autoRunnerActive) {
+    return "Run until pause active";
   }
 
   if (input.fetchError && !input.diagnostics) {

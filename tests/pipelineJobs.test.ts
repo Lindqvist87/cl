@@ -401,10 +401,11 @@ test("manual manuscript runner response includes an operator-readable lock reaso
     async () => {
       const result = await manuscriptAdminJobRunner.run(manuscriptId, {});
 
-      assert.equal(result.jobsRun, 0);
-      assert.equal(result.reason, "waiting_for_lock_expiry");
+      assert.equal(result.batchesRun, 1);
+      assert.equal(result.totalJobsRun, 0);
+      assert.equal(result.stoppedReason, "active_running_lock");
       assert.equal(result.blockingJob?.type, "runChapterAudits");
-      assert.match(result.message ?? "", /0 jobs ran because runChapterAudits/);
+      assert.match(result.message ?? "", /Paused because runChapterAudits/);
       assert.match(result.message ?? "", /locked until/);
     }
   );
