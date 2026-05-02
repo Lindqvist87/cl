@@ -4,4 +4,5 @@ export const PIPELINE_DIAGNOSTICS_REFRESH_EVENT =
 export type PipelineDiagnosticsRefreshDetail = {
   manuscriptId: string;
   result?: unknown;
+  autoRunnerActive?: boolean;
 };

@@ -131,9 +131,9 @@ export default async function ManuscriptPage({
           />
           <PipelineActionButton
             endpoint={`/api/admin/manuscripts/${manuscript.id}/run-jobs`}
-            label="Run manual fallback batch"
+            label="Run until pause"
             runningLabel="Running..."
-            variant="secondary"
+            variant="primary"
             diagnosticsRefreshManuscriptId={manuscript.id}
             refreshPageOnComplete={false}
           />
