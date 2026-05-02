@@ -244,6 +244,83 @@ test("repeated findings aggregate into one editorial priority with examples", ()
   assert.equal(priorities[0].representativeFindings.length, 3);
 });
 
+test("near duplicate priorities with the same normalized title merge into one", () => {
+  const priorities = aggregateEditorialFindingPriorities({
+    chapters: aggregationChapters,
+    findings: [
+      {
+        id: "move-section",
+        chapterId: "s2",
+        issueType: "Movement",
+        severity: 3,
+        problem: "No clear movement changes the scene.",
+        recommendation: "Define the scene turn before polishing."
+      },
+      {
+        id: "move-chunk",
+        chapterId: "s3",
+        chunkId: "chunk-1",
+        issueType: "Movement",
+        severity: 3,
+        problem: "The chunk has little scene movement.",
+        recommendation: "Define the scene turn before polishing."
+      }
+    ]
+  });
+
+  assert.equal(priorities.length, 1);
+  assert.equal(priorities[0].title, "Sections with little scene movement");
+  assert.equal(priorities[0].issueCount, 2);
+  assert.deepEqual(priorities[0].rawFindingIds.sort(), ["move-chunk", "move-section"]);
+  assert.deepEqual(priorities[0].affectedSectionIds, ["s2", "s3"]);
+});
+
+test("corpus benchmark prefix is stripped from display title and guidance", () => {
+  const priorities = aggregateEditorialFindingPriorities({
+    chapters: aggregationChapters,
+    findings: [
+      {
+        id: "corpus-architecture",
+        chapterId: "s2",
+        issueType: "corpus-benchmark",
+        severity: 4,
+        problem:
+          "corpus-benchmark: Chapter architecture is fragmented compared with benchmark openings.",
+        recommendation:
+          "corpus-benchmark: Consolidate split beats into clearer chapter architecture."
+      }
+    ]
+  });
+
+  assert.equal(priorities.length, 1);
+  assert.equal(priorities[0].title, "Fragmented chapter architecture");
+  assert.equal(
+    priorities[0].recommendedAction,
+    "Consolidate split beats into clearer chapter architecture."
+  );
+  assert.equal(priorities[0].title.includes("corpus-benchmark"), false);
+});
+
+test("raw issue type remains available as priority metadata", () => {
+  const priorities = aggregateEditorialFindingPriorities({
+    chapters: aggregationChapters,
+    findings: [
+      {
+        id: "corpus-architecture",
+        chapterId: "s2",
+        issueType: "corpus-benchmark",
+        severity: 4,
+        problem: "corpus-benchmark: Chapter architecture is fragmented.",
+        recommendation: "corpus-benchmark: Merge accidental fragment beats."
+      }
+    ]
+  });
+
+  assert.equal(priorities[0].issueType, "corpus-benchmark");
+  assert.deepEqual(priorities[0].rawIssueTypes, ["corpus-benchmark"]);
+  assert.equal(priorities[0].representativeFindings[0].issueType, "corpus-benchmark");
+});
+
 test("short title-only section issues do not dominate top priority alone", () => {
   const priorities = aggregateEditorialFindingPriorities({
     chapters: aggregationChapters,

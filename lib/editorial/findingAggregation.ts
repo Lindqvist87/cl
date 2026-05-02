@@ -29,6 +29,7 @@ export type EditorialPriority = {
   priorityId: string;
   title: string;
   issueType: string;
+  rawIssueTypes: string[];
   severity: number;
   rawSeverityMax: number;
   rawSeverityRange: string;
@@ -306,9 +307,12 @@ export function aggregateEditorialFindingPriorities({
     groups.set(key, group);
   }
 
-  const priorities = Array.from(groups.values())
-    .map((group) => buildPriority(group, chapterById))
-    .sort(comparePriorities);
+  const priorities = mergeNearDuplicatePriorities(
+    Array.from(groups.values())
+      .map((group) => buildPriority(group, chapterById))
+      .sort(comparePriorities),
+    chapterById
+  ).sort(comparePriorities);
 
   return typeof limit === "number" ? priorities.slice(0, Math.max(0, limit)) : priorities;
 }
@@ -339,6 +343,9 @@ function buildPriority(
   const pattern = dominantPattern(classifications);
   const scope = dominantScope(classifications);
   const rawFindingIds = findings.map((finding) => finding.id);
+  const rawIssueTypes = unique(
+    findings.map((finding) => displayIssueType(finding.issueType))
+  ).sort((a, b) => a.localeCompare(b));
   const severities = findings.map((finding) => normalizeSeverity(finding.severity));
   const rawSeverityMax = Math.max(...severities);
   const rawSeverityMin = Math.min(...severities);
@@ -367,12 +374,21 @@ function buildPriority(
   const issueType = pattern.id === FALLBACK_PATTERN.id
     ? displayIssueType(findings[0]?.issueType)
     : pattern.issueType;
-  const title = titleForPriority(pattern, findings);
+  const title = titleForPriority(pattern, findings, rawIssueTypes);
+  const recommendedAction =
+    pattern.id === FALLBACK_PATTERN.id
+      ? cleanDisplayText(fallbackRecommendation(representativeFindings[0]), rawIssueTypes)
+      : pattern.action;
+  const firstConcreteStep =
+    pattern.id === FALLBACK_PATTERN.id
+      ? cleanDisplayText(fallbackFirstStep(representativeFindings[0]), rawIssueTypes)
+      : pattern.firstStep;
 
   return {
     priorityId: `priority-${slugify(group.key)}-${shortHash(rawFindingIds.join("|"))}`,
     title,
     issueType,
+    rawIssueTypes,
     severity: rawSeverityMax,
     rawSeverityMax,
     rawSeverityRange:
@@ -393,14 +409,8 @@ function buildPriority(
       hasFragmentContext
     }),
     editorialImpact: pattern.impact,
-    recommendedAction:
-      pattern.id === FALLBACK_PATTERN.id
-        ? fallbackRecommendation(representativeFindings[0])
-        : pattern.action,
-    firstConcreteStep:
-      pattern.id === FALLBACK_PATTERN.id
-        ? fallbackFirstStep(representativeFindings[0])
-        : pattern.firstStep,
+    recommendedAction,
+    firstConcreteStep,
     whatToIgnoreForNow: pattern.ignoreForNow,
     shouldActNow: shouldActNow(displayScore, pattern, affectedSectionIds.length),
     rawFindingIds,
@@ -563,6 +573,122 @@ function shouldActNow(
   );
 }
 
+function mergeNearDuplicatePriorities(
+  priorities: EditorialPriority[],
+  chapterById: Map<string, ChapterContext>
+) {
+  const merged: EditorialPriority[] = [];
+
+  for (const priority of priorities) {
+    const existingIndex = merged.findIndex((existing) =>
+      shouldMergePriorities(existing, priority)
+    );
+
+    if (existingIndex === -1) {
+      merged.push(priority);
+      continue;
+    }
+
+    merged[existingIndex] = mergePriorities(
+      merged[existingIndex],
+      priority,
+      chapterById
+    );
+  }
+
+  return merged;
+}
+
+function shouldMergePriorities(a: EditorialPriority, b: EditorialPriority) {
+  if (normalizeMergeKey(a.title) !== normalizeMergeKey(b.title)) {
+    return false;
+  }
+
+  if (normalizeMergeKey(a.issueType) === normalizeMergeKey(b.issueType)) {
+    return true;
+  }
+
+  if (
+    a.rawIssueTypes.some((issueType) =>
+      b.rawIssueTypes.map(normalizeMergeKey).includes(normalizeMergeKey(issueType))
+    )
+  ) {
+    return true;
+  }
+
+  return tokenOverlap(a.recommendedAction, b.recommendedAction) >= 0.5;
+}
+
+function mergePriorities(
+  a: EditorialPriority,
+  b: EditorialPriority,
+  chapterById: Map<string, ChapterContext>
+): EditorialPriority {
+  const base = comparePriorities(a, b) <= 0 ? a : b;
+  const rawFindingIds = unique([...a.rawFindingIds, ...b.rawFindingIds]);
+  const rawIssueTypes = unique([...a.rawIssueTypes, ...b.rawIssueTypes]).sort((left, right) =>
+    left.localeCompare(right)
+  );
+  const affectedSectionIds = unique([
+    ...a.affectedSectionIds,
+    ...b.affectedSectionIds
+  ]).sort((left, right) => sectionOrder(chapterById, left) - sectionOrder(chapterById, right));
+  const affectedSectionLabels = affectedSectionIds.map((sectionId) =>
+    sectionLabel(chapterById, sectionId)
+  );
+  const representativeFindings = uniqueById([
+    ...a.representativeFindings,
+    ...b.representativeFindings
+  ])
+    .sort((left, right) => compareRepresentativeFindings(chapterById, left, right))
+    .slice(0, 3);
+  const rawSeverityMax = Math.max(a.rawSeverityMax, b.rawSeverityMax);
+  const rawSeverityMin = Math.min(
+    severityRangeMin(a.rawSeverityRange),
+    severityRangeMin(b.rawSeverityRange)
+  );
+  const displayScore =
+    Math.max(a.displayScore, b.displayScore) +
+    Math.min(36, Math.log2(rawFindingIds.length + 1) * 8) +
+    Math.min(20, affectedSectionIds.length * 2);
+
+  return {
+    ...base,
+    priorityId: `priority-${slugify(base.title)}-${shortHash(rawFindingIds.slice().sort().join("|"))}`,
+    rawIssueTypes,
+    severity: rawSeverityMax,
+    rawSeverityMax,
+    rawSeverityRange:
+      rawSeverityMin === rawSeverityMax
+        ? `S${rawSeverityMax}`
+        : `S${rawSeverityMin}-S${rawSeverityMax}`,
+    displayPriority: displayPriorityForScore(displayScore),
+    displayScore: Math.round(displayScore),
+    affectedSectionIds,
+    affectedSectionLabels,
+    issueCount: rawFindingIds.length,
+    representativeFindings,
+    evidenceSummary: mergedEvidenceSummary({
+      issueCount: rawFindingIds.length,
+      affectedSectionLabels,
+      representatives: representativeFindings,
+      hasFragmentContext: a.hasFragmentContext || b.hasFragmentContext
+    }),
+    shouldActNow:
+      a.shouldActNow ||
+      b.shouldActNow ||
+      displayPriorityForScore(displayScore) === "critical" ||
+      displayPriorityForScore(displayScore) === "high",
+    rawFindingIds,
+    structuralPattern:
+      a.structuralPattern === b.structuralPattern
+        ? a.structuralPattern
+        : "merged-editorial-theme",
+    findingScope: a.findingScope === b.findingScope ? a.findingScope : "mixed",
+    hasFragmentContext: a.hasFragmentContext || b.hasFragmentContext
+  };
+}
+
 function comparePriorities(a: EditorialPriority, b: EditorialPriority) {
   return (
     b.displayScore - a.displayScore ||
@@ -639,20 +765,123 @@ function evidenceSummary({
   return `${issueCount} related finding${issueCount === 1 ? "" : "s"} across ${sectionSummary}.${fragmentNote}${exampleText}`;
 }
 
+function mergedEvidenceSummary({
+  issueCount,
+  affectedSectionLabels,
+  representatives,
+  hasFragmentContext
+}: {
+  issueCount: number;
+  affectedSectionLabels: string[];
+  representatives: EditorialPriorityRepresentativeFinding[];
+  hasFragmentContext: boolean;
+}) {
+  const sectionSummary =
+    affectedSectionLabels.length > 0
+      ? formatSectionList(affectedSectionLabels)
+      : "manuscript-level findings";
+  const examples = representatives
+    .map((finding) => truncate(finding.evidence || finding.problem, 110))
+    .filter(Boolean);
+  const fragmentNote = hasFragmentContext
+    ? " Some evidence comes from very short or title-like sections."
+    : "";
+  const exampleText = examples.length > 0 ? ` Examples: ${examples.join(" / ")}` : "";
+
+  return `${issueCount} related findings across ${sectionSummary}.${fragmentNote}${exampleText}`;
+}
+
 function titleForPriority(
   pattern: PatternDefinition,
-  findings: EditorialFindingInput[]
+  findings: EditorialFindingInput[],
+  rawIssueTypes: string[]
 ) {
   if (pattern.id !== FALLBACK_PATTERN.id) {
     return pattern.title;
   }
 
-  const issueType = displayIssueType(findings[0]?.issueType);
-  const repeatedProblem = truncate(findings[0]?.problem ?? "Editorial issue", 70);
+  const finding = findings[0];
+  const cleanedProblem = cleanDisplayText(
+    finding?.problem ?? "Editorial issue",
+    rawIssueTypes
+  );
+  const editorialTitle = editorialTitleFromText(
+    [cleanedProblem, finding?.recommendation, finding?.issueType].filter(Boolean).join(" ")
+  );
 
-  return findings.length > 1
-    ? `Repeated ${issueType.toLowerCase()}: ${repeatedProblem}`
-    : `${issueType}: ${repeatedProblem}`;
+  return editorialTitle ?? sentenceCase(truncate(cleanedProblem, 70));
+}
+
+function cleanDisplayText(value: string, rawIssueTypes: string[] = []) {
+  let cleaned = value.trim();
+  const internalPrefixes = [
+    "corpus-benchmark",
+    "corpus benchmark",
+    "benchmark",
+    "diagnostic",
+    "finding",
+    "issue"
+  ];
+  const prefixes = [...rawIssueTypes, ...internalPrefixes]
+    .map((prefix) => prefix.trim())
+    .filter(Boolean);
+
+  for (let index = 0; index < 4; index += 1) {
+    const before = cleaned;
+
+    for (const prefix of prefixes) {
+      cleaned = cleaned.replace(
+        new RegExp(`^\\s*${escapeRegExp(prefix)}\\s*[:\\-]\\s*`, "i"),
+        ""
+      );
+    }
+
+    if (cleaned === before) {
+      break;
+    }
+  }
+
+  return normalizeWhitespace(cleaned);
+}
+
+function editorialTitleFromText(value: string) {
+  const normalized = normalizeText(value);
+
+  if (
+    /\bchapter architecture\b/.test(normalized) &&
+    /\b(fragment|fragmented|split|splits|section|sections)\b/.test(normalized)
+  ) {
+    return "Fragmented chapter architecture";
+  }
+
+  if (
+    /\b(pov|point of view|viewpoint)\b/.test(normalized) &&
+    /\b(continuity|shift|shifts|handoff|unclear)\b/.test(normalized)
+  ) {
+    return "POV and continuity shifts are unclear";
+  }
+
+  if (
+    /\b(scene movement|emotional movement|character movement|no movement|little movement|without clear movement|lacks clear movement|low movement)\b/.test(
+      normalized
+    )
+  ) {
+    return "Sections with little scene movement";
+  }
+
+  if (
+    /\b(thriller ignition|engine starts too late|hook starts too late|stakes arrive too late|inciting pressure)\b/.test(
+      normalized
+    )
+  ) {
+    return "Thriller ignition arrives too late";
+  }
+
+  return undefined;
+}
+
+function sentenceCase(value: string) {
+  return value.replace(/^\w/, (char) => char.toUpperCase());
 }
 
 function fallbackRecommendation(
@@ -730,6 +959,18 @@ function displayIssueType(value?: string) {
   return text ? text : "Editorial";
 }
 
+function compareRepresentativeFindings(
+  chapterById: Map<string, ChapterContext>,
+  a: EditorialPriorityRepresentativeFinding,
+  b: EditorialPriorityRepresentativeFinding
+) {
+  return (
+    b.severity - a.severity ||
+    sectionOrder(chapterById, a.sectionId) - sectionOrder(chapterById, b.sectionId) ||
+    a.id.localeCompare(b.id)
+  );
+}
+
 function normalizeSeverity(value: number) {
   if (!Number.isFinite(value)) {
     return 1;
@@ -752,6 +993,29 @@ function severityBucket(value: number) {
   }
 
   return "s1-s2";
+}
+
+function severityRangeMin(range: string) {
+  const severities = Array.from(range.matchAll(/\d+/g)).map((match) => Number(match[0]));
+
+  return severities.length > 0 ? Math.min(...severities) : 1;
+}
+
+function normalizeMergeKey(value: string) {
+  return words(cleanDisplayText(value)).join("-") || "editorial";
+}
+
+function tokenOverlap(a: string, b: string) {
+  const left = new Set(words(a));
+  const right = new Set(words(b));
+
+  if (left.size === 0 || right.size === 0) {
+    return 0;
+  }
+
+  const shared = Array.from(left).filter((token) => right.has(token)).length;
+
+  return shared / Math.min(left.size, right.size);
 }
 
 function repeatedWordingKey(value: string) {
@@ -781,6 +1045,10 @@ function normalizeKey(value: string) {
   return words(value).join("-") || "editorial";
 }
 
+function normalizeWhitespace(value: string) {
+  return value.replace(/\s+/g, " ").trim();
+}
+
 function slugify(value: string) {
   return normalizeKey(value).slice(0, 96);
 }
@@ -799,12 +1067,20 @@ function unique<T>(values: T[]) {
   return Array.from(new Set(values));
 }
 
+function uniqueById<T extends { id: string }>(values: T[]) {
+  return Array.from(new Map(values.map((value) => [value.id, value])).values());
+}
+
 function truncate(value: string, maxLength: number) {
   if (value.length <= maxLength) {
     return value;
   }
 
   return `${value.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 function timestamp(value?: Date | string) {
