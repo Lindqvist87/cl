@@ -152,9 +152,9 @@ export function CorpusOnboardingForm() {
   }
 
   return (
-    <form onSubmit={onSubmit} className="border border-line bg-white shadow-panel">
+    <form onSubmit={onSubmit} className="active-card">
       <div className="border-b border-line p-4">
-        <label className="focus-ring inline-flex min-h-10 cursor-pointer items-center gap-2 bg-ink px-4 py-2 text-sm font-semibold text-white">
+        <label className="secondary-button cursor-pointer">
           <Upload size={18} aria-hidden="true" />
           Upload Books
           <input
@@ -226,7 +226,7 @@ export function CorpusOnboardingForm() {
                   }
                 />
                 <TextInput label="License" value={row.licenseType} onChange={(licenseType) => updateRow(row.id, { licenseType })} />
-                <label className="flex min-h-10 items-center gap-2 border border-line bg-paper px-3 text-sm text-slate-700">
+                <label className="flex min-h-10 items-center gap-2 rounded-md border border-line bg-paper-alt px-3 text-sm text-slate-700">
                   <input
                     type="checkbox"
                     checked={row.benchmarkAllowed}
@@ -258,7 +258,7 @@ export function CorpusOnboardingForm() {
         <button
           type="submit"
           disabled={isSubmitting || rows.length === 0 || Boolean(validationError)}
-          className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 bg-accent px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+          className="primary-button"
         >
           <Upload size={18} aria-hidden="true" />
           {isSubmitting ? "Creating Jobs..." : "Create Import Jobs"}
@@ -286,7 +286,7 @@ function TextInput({
         required={required}
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="focus-ring mt-1 min-h-10 w-full border border-line bg-paper px-3 text-sm"
+        className="focus-ring mt-1 min-h-10 w-full border border-line bg-paper-alt px-3 text-sm"
       />
     </label>
   );
@@ -309,7 +309,7 @@ function SelectInput<TValue extends string>({
       <select
         value={value}
         onChange={(event) => onChange(event.target.value as TValue)}
-        className="focus-ring mt-1 min-h-10 w-full border border-line bg-paper px-3 text-sm"
+        className="focus-ring mt-1 min-h-10 w-full border border-line bg-paper-alt px-3 text-sm"
       >
         {options.map((option) => (
           <option key={option.value} value={option.value}>

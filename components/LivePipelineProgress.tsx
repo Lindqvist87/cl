@@ -142,12 +142,12 @@ export function LivePipelineProgress({
   return (
     <section className="border border-line bg-white p-4 shadow-panel">
       <div
-        className={`border px-4 py-4 ${
+        className={`rounded-lg border px-4 py-4 ${
           isBlockedByError
-            ? "border-danger bg-red-50"
+            ? "border-danger bg-white"
             : fetchError && !diagnostics
-              ? "border-warn bg-amber-50"
-              : "border-accent bg-blue-50"
+              ? "border-warn bg-white"
+              : "border-accent/30 bg-white shadow-active"
         }`}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
@@ -157,11 +157,11 @@ export function LivePipelineProgress({
                 isBlockedByError ? "text-danger" : "text-accent"
               }`}
             >
-              Current live step
+              Current analysis step
             </div>
             <h2 className="mt-1 text-2xl font-semibold tracking-normal text-ink">
               {isBlockedByError
-                ? `Pipeline stopped at ${formatStepName(status.currentStep)}`
+                ? `Analysis paused at ${formatStepName(status.currentStep)}`
                 : formatStepName(status.currentStep)}
             </h2>
             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-base font-semibold">
@@ -187,7 +187,7 @@ export function LivePipelineProgress({
               <p className="mt-2 text-sm font-semibold text-danger">
                 {status.lastError ??
                   diagnostics?.manualRunner?.message ??
-                  "Pipeline is blocked by error."}
+                  "Analysis is blocked by error."}
               </p>
             ) : null}
           </div>
@@ -241,7 +241,7 @@ export function LivePipelineProgress({
       <div className="mt-5 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-            Overall Pipeline
+            Overall analysis progress
           </h3>
           <p className="mt-1 text-sm text-slate-500">
             {status.completedSteps} of {status.totalSteps} steps complete
@@ -255,12 +255,12 @@ export function LivePipelineProgress({
       <div
         className="mt-3 h-2 overflow-hidden bg-paper"
         role="progressbar"
-        aria-label="Overall pipeline progress"
+        aria-label="Overall analysis progress"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={status.percent}
       >
-        <div className="h-full bg-slate-500" style={{ width: `${status.percent}%` }} />
+        <div className="h-full bg-accent" style={{ width: `${status.percent}%` }} />
       </div>
 
       {status.lockStatus ? (
@@ -286,49 +286,56 @@ export function LivePipelineProgress({
         </div>
       ) : null}
 
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <PipelineDetail
-          label="Current step"
-          value={formatStepName(status.currentStep)}
-        />
-        <PipelineDetail
-          label="Current job status"
-          value={formatNullableStatus(status.currentJobStatus)}
-        />
-        <PipelineDetail
-          label="Completed steps"
-          value={`${status.completedSteps} / ${status.totalSteps}`}
-        />
-        <PipelineDetail
-          label="Current step remaining"
-          value={formatOptionalNumber(status.remainingCount)}
-        />
-        {typeof status.analyzedCount === "number" ? (
-          <PipelineDetail
-            label="Current step completed"
-            value={status.analyzedCount.toLocaleString()}
-          />
-        ) : null}
-        <PipelineDetail
-          label="Live diagnostics"
-          value={diagnostics || !fetchError ? "Available" : "Unavailable"}
-        />
-        <PipelineDetail label="Complete" value={String(status.complete)} />
-        <PipelineDetail
-          label="Last updated"
-          value={formatDisplayTime(status.lastUpdatedAt)}
-        />
-        <PipelineDetail
-          label="Next step"
-          value={formatStepName(status.nextStep)}
-        />
-      </div>
-      <div className="mt-3 border border-line bg-paper px-3 py-2 text-sm">
-        <div className="text-xs uppercase tracking-wide text-slate-500">
-          Last error
+      <details className="detail-toggle mt-4">
+        <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-ink hover:text-accent">
+          Technical details
+        </summary>
+        <div className="border-t border-line p-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <PipelineDetail
+              label="Current step"
+              value={formatStepName(status.currentStep)}
+            />
+            <PipelineDetail
+              label="Current job status"
+              value={formatNullableStatus(status.currentJobStatus)}
+            />
+            <PipelineDetail
+              label="Completed steps"
+              value={`${status.completedSteps} / ${status.totalSteps}`}
+            />
+            <PipelineDetail
+              label="Current step remaining"
+              value={formatOptionalNumber(status.remainingCount)}
+            />
+            {typeof status.analyzedCount === "number" ? (
+              <PipelineDetail
+                label="Current step completed"
+                value={status.analyzedCount.toLocaleString()}
+              />
+            ) : null}
+            <PipelineDetail
+              label="Live diagnostics"
+              value={diagnostics || !fetchError ? "Available" : "Unavailable"}
+            />
+            <PipelineDetail label="Complete" value={String(status.complete)} />
+            <PipelineDetail
+              label="Last updated"
+              value={formatDisplayTime(status.lastUpdatedAt)}
+            />
+            <PipelineDetail
+              label="Next step"
+              value={formatStepName(status.nextStep)}
+            />
+          </div>
+          <div className="mt-3 rounded-lg border border-line bg-paper-alt px-3 py-2 text-sm">
+            <div className="text-xs uppercase tracking-wide text-slate-500">
+              Last error
+            </div>
+            <div className="mt-1 text-slate-700">{status.lastError ?? "None"}</div>
+          </div>
         </div>
-        <div className="mt-1 text-slate-700">{status.lastError ?? "None"}</div>
-      </div>
+      </details>
       {fetchError && diagnostics ? (
         <p className="mt-3 text-xs text-danger">
           Live diagnostics refresh failed: {fetchError}
@@ -340,7 +347,7 @@ export function LivePipelineProgress({
 
 function PipelineDetail({ label, value }: { label: string; value: string }) {
   return (
-    <div className="border border-line bg-paper px-3 py-2">
+      <div className="rounded-lg border border-line bg-paper-alt px-3 py-2">
       <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
       <div className="mt-1 break-words text-sm font-semibold">{value}</div>
     </div>
@@ -444,7 +451,7 @@ function liveStatusLabel(input: {
   }
 
   if (input.isBlockedByError) {
-    return "Live updates paused because the pipeline is blocked by error.";
+    return "Live updates paused because analysis is blocked by error.";
   }
 
   if (input.rewriteDraftsDeferred) {

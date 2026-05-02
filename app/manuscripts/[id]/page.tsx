@@ -97,13 +97,13 @@ export default async function ManuscriptPage({
           ) : null}
           <div className="mt-3 flex flex-wrap gap-3 text-sm">
             <Link href={`/manuscripts/${manuscript.id}/structure`} className="font-semibold text-accent hover:underline">
-              Inspect imported structure
+              Review book structure
             </Link>
             <Link href={`/manuscripts/${manuscript.id}/audit`} className="text-accent hover:underline">
-              Audit
+              Editorial report
             </Link>
             <Link href={`/manuscripts/${manuscript.id}/workspace`} className="text-accent hover:underline">
-              Editorial Workspace
+              Editorial workspace
             </Link>
             <a href={`/api/manuscripts/${manuscript.id}/rewritten/markdown`} className="text-accent hover:underline">
               Full rewritten Markdown
@@ -122,10 +122,10 @@ export default async function ManuscriptPage({
         <div className="flex flex-col gap-2 sm:flex-row">
           <Link
             href={`/manuscripts/${manuscript.id}/structure`}
-            className="focus-ring inline-flex min-h-10 items-center justify-center gap-2 border border-line bg-paper px-4 py-2 text-sm font-semibold"
+            className="secondary-button"
           >
             <BookOpen size={16} aria-hidden="true" />
-            Inspect imported structure
+            Review structure
           </Link>
           <AuditButton
             manuscriptId={manuscript.id}
@@ -141,7 +141,7 @@ export default async function ManuscriptPage({
             endpoint={`/api/admin/manuscripts/${manuscript.id}/run-jobs`}
             label="Run until pause"
             runningLabel="Running..."
-            variant="primary"
+            variant="secondary"
             diagnosticsRefreshManuscriptId={manuscript.id}
             refreshPageOnComplete={false}
           />
@@ -159,42 +159,49 @@ export default async function ManuscriptPage({
       </div>
 
       {latestRewritePlan && !rewriteDraftsComplete ? (
-        <section className="border border-line bg-blue-50 px-4 py-3 text-sm font-semibold text-accent shadow-panel">
+        <section className="active-card px-4 py-3 text-sm font-semibold text-accent">
           Rewrite plan ready. Chapter rewrite drafts can be generated when needed.
         </section>
       ) : null}
 
       <section className="grid gap-3 sm:grid-cols-4">
         <Stat label="Words" value={manuscript.wordCount.toLocaleString()} />
-        <Stat label="Detected sections" value={String(manuscript.chapterCount)} />
+        <Stat label="Book structure" value={String(manuscript.chapterCount)} />
         <Stat label="Chunks" value={String(manuscript.chunkCount)} />
         <Stat label="Analysis" value={formatStatus(manuscript.analysisStatus)} />
       </section>
 
       <section className="grid gap-3 lg:grid-cols-[1.2fr_1fr]">
         <div className="border border-line bg-white p-4 shadow-panel">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-            Execution Mode
-          </h2>
-          <p className="mt-2 text-sm font-semibold">
-            {executionModeLabel({
-              inngestEnabled: inngestConfig.enabled,
-              hasCronFallback: false
-            })}
-          </p>
-          <p className="mt-1 text-xs text-slate-500">
-            Last Inngest event:{" "}
-            {lastInngestEvent
-              ? `${lastInngestEvent.eventName} at ${lastInngestEvent.createdAt.toLocaleString()}`
-              : "none recorded"}
-          </p>
-          {inngestConfig.warnings.length > 0 ? (
-            <ul className="mt-2 space-y-1 text-xs text-danger">
-              {inngestConfig.warnings.map((warning) => (
-                <li key={warning}>{warning}</li>
-              ))}
-            </ul>
-          ) : null}
+          <details>
+            <summary className="cursor-pointer text-sm font-semibold text-ink hover:text-accent">
+              Technical details
+            </summary>
+            <div className="mt-3">
+              <h2 className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                Execution mode
+              </h2>
+              <p className="mt-2 text-sm font-semibold">
+                {executionModeLabel({
+                  inngestEnabled: inngestConfig.enabled,
+                  hasCronFallback: false
+                })}
+              </p>
+              <p className="mt-1 text-xs text-slate-500">
+                Last Inngest event:{" "}
+                {lastInngestEvent
+                  ? `${lastInngestEvent.eventName} at ${lastInngestEvent.createdAt.toLocaleString()}`
+                  : "none recorded"}
+              </p>
+              {inngestConfig.warnings.length > 0 ? (
+                <ul className="mt-2 space-y-1 text-xs text-danger">
+                  {inngestConfig.warnings.map((warning) => (
+                    <li key={warning}>{warning}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          </details>
         </div>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
           <Stat label="Queued" value={String(jobCounts.queued)} />
@@ -211,13 +218,11 @@ export default async function ManuscriptPage({
       />
 
       {manuscript.pipelineJobs.length > 0 ? (
-        <section className="border border-line bg-white shadow-panel">
-          <div className="border-b border-line px-4 py-3">
-            <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Pipeline Jobs
-            </h2>
-          </div>
-          <div className="divide-y divide-line">
+        <details className="detail-toggle">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-ink hover:text-accent">
+            Technical job details
+          </summary>
+          <div className="divide-y divide-line border-t border-line">
             {manuscript.pipelineJobs.slice(0, 12).map((job) => (
               <div
                 key={job.id}
@@ -236,13 +241,13 @@ export default async function ManuscriptPage({
               </div>
             ))}
           </div>
-        </section>
+        </details>
       ) : null}
 
       <section className="grid gap-6 lg:grid-cols-[minmax(520px,0.9fr)_1fr]">
         <StructureReviewPanel
           rows={structureRows}
-          title="Detected Sections"
+          title="Book structure"
           getHref={(row) => `/manuscripts/${manuscript.id}/chapters/${row.id}/workspace`}
         />
 
@@ -255,8 +260,8 @@ export default async function ManuscriptPage({
             />
           ) : (
             <div className="border border-line bg-white p-6 text-sm text-slate-600 shadow-panel">
-              No audit report yet. Run the manuscript audit to generate the
-              executive summary, ranked issues, section notes, and rewrite
+              No editorial report yet. Start analysis to generate the
+              executive summary, issues to review, section notes, and rewrite
               strategy.
             </div>
           )}
@@ -265,7 +270,7 @@ export default async function ManuscriptPage({
             <section className="border border-line bg-white shadow-panel">
               <div className="border-b border-line px-4 py-3">
                 <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-                  Latest Chapter 1 Rewrite
+                  Latest chapter 1 rewrite
                 </h2>
               </div>
               <div className="max-h-[540px] overflow-auto whitespace-pre-wrap px-4 py-4 text-sm leading-7">
@@ -302,7 +307,7 @@ function ReportPanel({
       <div className="flex flex-col gap-3 border-b border-line px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-            Audit Report
+            Editorial report
           </h2>
           <p className="mt-1 text-xs text-slate-500">
             Generated {createdAt.toLocaleString()}
@@ -342,7 +347,7 @@ function ReportPanel({
         </div>
 
         <div>
-          <h3 className="text-lg font-semibold">Top 20 Issues</h3>
+          <h3 className="text-lg font-semibold">Issues to review</h3>
           <div className="mt-3 divide-y divide-line border border-line">
             {report.topIssues.map((issue, index) => (
               <div key={`${issue.title}-${index}`} className="grid gap-2 px-3 py-3 sm:grid-cols-[120px_1fr]">
@@ -360,7 +365,7 @@ function ReportPanel({
         </div>
 
         <div>
-          <h3 className="text-lg font-semibold">Section-by-Section Notes</h3>
+          <h3 className="text-lg font-semibold">Section notes</h3>
           <div className="mt-3 space-y-3">
             {report.chapterNotes.map((chapter) => (
               <div key={chapter.chapter} className="border border-line p-3">
@@ -397,7 +402,7 @@ function SeverityBadge({ severity }: { severity: string }) {
         ? "bg-warn text-white"
         : severity === "medium"
           ? "bg-accent text-white"
-          : "bg-slate-100 text-slate-700";
+          : "bg-paper-alt text-slate-700";
 
   return (
     <span

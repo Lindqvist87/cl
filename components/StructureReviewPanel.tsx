@@ -7,13 +7,13 @@ import {
 export function StructureReviewPanel({
   getHref,
   rows,
-  title = "Structure Review",
+  title = "Book structure",
   description = DETECTED_SECTION_HELP_TEXT,
-  sectionColumnLabel = "Detected section",
+  sectionColumnLabel = "Book section",
   wordColumnLabel = "Words",
   issueColumnLabel = "Issues",
   typeColumnLabel = "Current type",
-  emptyLabel = "No detected sections are available yet."
+  emptyLabel = "No book structure is available yet."
 }: {
   getHref?: (row: StructureReviewRow) => string;
   rows: StructureReviewRow[];

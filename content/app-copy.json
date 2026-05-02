@@ -1,27 +1,27 @@
 {
   "metadata": {
-    "title": "Manuscript Audit",
-    "description": "Chunked manuscript analysis and rewrite MVP"
+    "title": "Manuscript Intelligence",
+    "description": "Editorial analysis and revision workspace for manuscripts"
   },
   "shell": {
-    "brand": "Manuscript Audit",
+    "brand": "Manuscript Intelligence",
     "badge": "V2"
   },
   "dashboard": {
-    "title": "Manuscripts",
-    "intro": "Upload a full manuscript, split it into structured chunks, and run a resumable analysis, benchmark, trend, and rewrite pipeline.",
-    "sectionTitle": "Recent Manuscripts",
-    "emptyState": "No manuscripts uploaded yet.",
+    "title": "Starta nytt manus",
+    "intro": "Få en redaktionell översikt, prioriterade förbättringsområden och ett tydligt första steg.",
+    "sectionTitle": "Senaste manus",
+    "emptyState": "Inga manus har laddats upp ännu.",
     "metrics": {
-      "words": "Words",
-      "chapters": "Detected sections",
+      "words": "Ord",
+      "chapters": "Manusdelar",
       "status": "Status"
     }
   },
   "upload": {
-    "emptyFileError": "Choose a .txt or .docx manuscript.",
-    "failedError": "Upload failed.",
-    "idleLabel": "Upload Manuscript",
-    "busyLabel": "Uploading..."
+    "emptyFileError": "Välj en fil innan du laddar upp manuset.",
+    "failedError": "Uppladdningen kunde inte slutföras.",
+    "idleLabel": "Ladda upp manus",
+    "busyLabel": "Laddar upp..."
   }
 }

@@ -48,7 +48,7 @@ export default async function AdminCorpusPage() {
           </div>
           <Link
             href="/admin/corpus/onboarding"
-            className="focus-ring inline-flex min-h-10 items-center justify-center border border-line bg-white px-4 text-sm font-semibold text-ink shadow-panel hover:bg-paper"
+            className="primary-button"
           >
             Upload books
           </Link>

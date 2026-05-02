@@ -87,10 +87,10 @@ export function PipelineActionButton({
 
   const className =
     variant === "primary"
-      ? "bg-ink text-white"
+      ? "bg-accent text-white shadow-button hover:bg-accent-dark"
       : variant === "danger"
         ? "border border-danger bg-white text-danger"
-        : "border border-line bg-paper text-ink";
+        : "border border-line bg-white text-ink hover:border-accent/50 hover:text-accent";
 
   return (
     <div className="flex flex-col gap-1">
@@ -98,7 +98,7 @@ export function PipelineActionButton({
         type="button"
         onClick={runAction}
         disabled={isRunning}
-        className={`focus-ring inline-flex min-h-9 items-center justify-center gap-2 px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
+        className={`focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
       >
         <RotateCw size={16} aria-hidden="true" />
         {isRunning ? runningLabel ?? "Working..." : label}

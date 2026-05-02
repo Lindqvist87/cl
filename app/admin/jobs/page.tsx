@@ -36,9 +36,9 @@ export default async function AdminJobsPage({
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-normal">Pipeline Jobs</h1>
+        <h1 className="text-2xl font-semibold tracking-normal">Analysis jobs</h1>
         <p className="mt-1 text-sm text-slate-600">
-          Durable job state remains in Postgres; Inngest only kicks and resumes it.
+          Background analysis job state remains available here for admin review.
         </p>
       </div>
 
@@ -49,7 +49,7 @@ export default async function AdminJobsPage({
             href={`/admin/jobs?filter=${item}`}
             className={`focus-ring border px-3 py-2 text-sm font-semibold ${
               item === activeFilter
-                ? "border-ink bg-ink text-white"
+                ? "border-accent bg-accent text-white shadow-button"
                 : "border-line bg-white text-ink"
             }`}
           >
