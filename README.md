@@ -50,8 +50,10 @@ Open `http://localhost:3000`.
 ```bash
 DATABASE_URL="postgresql://postgres:postgres@localhost:5432/manuscript_audit?schema=public"
 OPENAI_API_KEY=""
-OPENAI_AUDIT_MODEL="gpt-5.4-mini"
-OPENAI_REWRITE_MODEL="gpt-5.5"
+AUDIT_MODEL="gpt-5.4-mini"
+AUDIT_REASONING_EFFORT="medium"
+CHIEF_EDITOR_MODEL="gpt-5.4"
+CHIEF_EDITOR_REASONING_EFFORT="high"
 OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
 ADMIN_JOB_TOKEN=""
 ENABLE_INNGEST_WORKER="false"
@@ -64,7 +66,11 @@ MAX_JOBS_PER_INNGEST_RUN="3"
 MAX_SECONDS_PER_INNGEST_RUN="25"
 ```
 
-`OPENAI_AUDIT_MODEL` drives v2 audit, corpus, trend, and planning calls. `OPENAI_REWRITE_MODEL` drives chapter rewrite calls. `OPENAI_EMBEDDING_MODEL` drives vector creation. `OPENAI_EDITOR_MODEL` is accepted only as a legacy audit-model fallback when `OPENAI_AUDIT_MODEL` is unset. `OPENAI_FAST_MODEL` is not read by this codebase.
+`AUDIT_MODEL` drives high-volume chunk and chapter analysis. `AUDIT_REASONING_EFFORT` controls the reasoning effort for those calls.
+
+`CHIEF_EDITOR_MODEL` drives whole-book audit, corpus/trend synthesis, rewrite planning, and chapter rewrite generation. `CHIEF_EDITOR_REASONING_EFFORT` controls the reasoning effort for those calls.
+
+Allowed reasoning effort values are `low`, `medium`, and `high`. Invalid values fall back to safe defaults. Exact model IDs must be available in the configured OpenAI project/account. `OPENAI_EMBEDDING_MODEL` drives vector creation. `OPENAI_AUDIT_MODEL`, `OPENAI_REWRITE_MODEL`, and `OPENAI_EDITOR_MODEL` remain compatibility fallbacks when the role-based variables are unset. `OPENAI_FAST_MODEL` is not read by this codebase.
 
 `ADMIN_JOB_TOKEN` protects manual job-control routes under `/api/jobs/*`. Send it as `Authorization: Bearer <token>` or `x-admin-job-token` when using the fallback runner scripts.
 
@@ -125,8 +131,10 @@ Use `/trends` to add public metadata signals. Trend rows are metadata and snippe
 ```bash
 DATABASE_URL="<Neon Postgres connection string>"
 OPENAI_API_KEY="<OpenAI API key>"
-OPENAI_AUDIT_MODEL="gpt-5.4-mini"
-OPENAI_REWRITE_MODEL="gpt-5.5"
+AUDIT_MODEL="gpt-5.4-mini"
+AUDIT_REASONING_EFFORT="medium"
+CHIEF_EDITOR_MODEL="gpt-5.4"
+CHIEF_EDITOR_REASONING_EFFORT="high"
 OPENAI_EMBEDDING_MODEL="text-embedding-3-small"
 ADMIN_JOB_TOKEN="<strong random token for manual job routes>"
 ENABLE_INNGEST_WORKER="true"

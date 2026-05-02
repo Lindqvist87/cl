@@ -1,4 +1,5 @@
 import { hasEditorModelKey, requestEditorJson } from "@/lib/ai/editorModel";
+import { modelConfigForRole } from "@/lib/ai/modelConfig";
 import type { WholeBookAnalysisResult } from "@/lib/ai/analysisTypes";
 import { stubUsageLog } from "@/lib/ai/usage";
 
@@ -23,6 +24,7 @@ export async function analyzeWholeBook(input: WholeBookInput) {
   }
 
   return requestEditorJson<WholeBookAnalysisResult>({
+    ...modelConfigForRole("chiefEditor"),
     system: [
       "You are a senior acquisition-minded manuscript editor.",
       "Return strict JSON only.",

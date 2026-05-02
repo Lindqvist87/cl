@@ -1,5 +1,15 @@
 import { env } from "@/lib/env";
-import { getOpenAIClient } from "@/lib/analysis/openai";
+import {
+  getOpenAIClient,
+  hasOpenAIKey
+} from "@/lib/analysis/openai";
+import {
+  auditModel,
+  auditReasoningEffort,
+  chiefEditorModel,
+  chiefEditorReasoningEffort,
+  type ReasoningEffort
+} from "@/lib/ai/modelConfig";
 import { usageLogFromOpenAIUsage, type AiUsageLog } from "@/lib/ai/usage";
 
 export const EDITOR_PROMPT_VERSION = "editor-v2-1";
@@ -8,6 +18,7 @@ type JsonRequest = {
   system: string;
   user: string;
   model?: string;
+  reasoningEffort?: ReasoningEffort;
   temperature?: number;
   retries?: number;
 };
@@ -20,11 +31,23 @@ export type EditorJsonResult<T> = {
 };
 
 export function getAuditModel() {
-  return env.OPENAI_AUDIT_MODEL || env.OPENAI_EDITOR_MODEL || "gpt-5.4-mini";
+  return auditModel;
 }
 
 export function getRewriteModel() {
-  return env.OPENAI_REWRITE_MODEL || "gpt-5.5";
+  return chiefEditorModel;
+}
+
+export function getChiefEditorModel() {
+  return chiefEditorModel;
+}
+
+export function getAuditReasoningEffort() {
+  return auditReasoningEffort;
+}
+
+export function getChiefEditorReasoningEffort() {
+  return chiefEditorReasoningEffort;
 }
 
 export function getEditorModel() {
@@ -32,13 +55,14 @@ export function getEditorModel() {
 }
 
 export function hasEditorModelKey() {
-  return Boolean(env.OPENAI_API_KEY);
+  return hasOpenAIKey();
 }
 
 export async function requestEditorJson<T>({
   system,
   user,
-  model = getAuditModel(),
+  model = auditModel,
+  reasoningEffort = auditReasoningEffort,
   temperature,
   retries = 2
 }: JsonRequest): Promise<EditorJsonResult<T>> {
@@ -49,6 +73,7 @@ export async function requestEditorJson<T>({
     try {
       const completion = await getOpenAIClient().chat.completions.create({
         model,
+        reasoning_effort: reasoningEffort,
         ...(temperature === undefined ? {} : { temperature }),
         response_format: { type: "json_object" },
         messages: [
