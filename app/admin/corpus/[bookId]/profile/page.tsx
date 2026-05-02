@@ -221,14 +221,9 @@ function ChapterCurve({
 
 function JsonPreview({ value }: { value: unknown }) {
   return (
-    <details className="detail-toggle">
-      <summary className="cursor-pointer px-3 py-2 text-xs font-semibold text-muted hover:text-accent">
-        Source detail
-      </summary>
-      <pre className="max-h-64 overflow-auto border-t border-line bg-paper p-3 text-xs leading-5 text-slate-700">
-        {JSON.stringify(value ?? {}, null, 2)}
-      </pre>
-    </details>
+    <pre className="max-h-64 overflow-auto bg-paper p-3 text-xs leading-5 text-slate-700">
+      {JSON.stringify(value ?? {}, null, 2)}
+    </pre>
   );
 }
 

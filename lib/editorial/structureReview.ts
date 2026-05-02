@@ -1,5 +1,5 @@
 export const DETECTED_SECTION_HELP_TEXT =
-  "Review how the manuscript is divided before moving deeper into revision.";
+  "Detected sections may include chapters, scenes, numbered passages, or untitled breaks.";
 
 export type StructureReviewType = "chapter" | "section" | "scene" | "unknown";
 

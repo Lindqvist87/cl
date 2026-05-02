@@ -12,11 +12,9 @@ export function PipelineActionButton({
   runningLabel,
   variant = "secondary",
   diagnosticsRefreshManuscriptId,
-  refreshPageOnComplete = true,
-  fullWidth = false
+  refreshPageOnComplete = true
 }: {
   endpoint: string;
-  fullWidth?: boolean;
   payload?: Record<string, unknown>;
   label: string;
   runningLabel?: string;
@@ -95,12 +93,12 @@ export function PipelineActionButton({
         : "border border-line bg-white text-ink hover:border-accent/50 hover:text-accent";
 
   return (
-    <div className={fullWidth ? "flex w-full flex-col gap-1" : "flex flex-col gap-1"}>
+    <div className="flex flex-col gap-1">
       <button
         type="button"
         onClick={runAction}
         disabled={isRunning}
-        className={`focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60 ${fullWidth ? "w-full" : ""} ${className}`}
+        className={`focus-ring inline-flex min-h-9 items-center justify-center gap-2 rounded-md px-3 py-2 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-60 ${className}`}
       >
         <RotateCw size={16} aria-hidden="true" />
         {isRunning ? runningLabel ?? "Working..." : label}

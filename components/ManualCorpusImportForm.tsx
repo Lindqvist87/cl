@@ -36,15 +36,6 @@ export function ManualCorpusImportForm() {
 
   return (
     <form ref={formRef} onSubmit={onSubmit} className="active-card p-5">
-      <div className="mb-5">
-        <p className="page-kicker">Reference intake</p>
-        <h2 className="mt-2 text-xl font-semibold tracking-normal text-ink">
-          Add reference text
-        </h2>
-        <p className="mt-2 text-sm leading-6 text-muted">
-          Add legally usable benchmark material for comparison and market context.
-        </p>
-      </div>
       <div className="grid gap-3 md:grid-cols-2">
         <input name="title" required placeholder="Title" className="focus-ring min-h-10 border border-line bg-paper-alt px-3 text-sm" />
         <input name="author" placeholder="Author" className="focus-ring min-h-10 border border-line bg-paper-alt px-3 text-sm" />
@@ -79,7 +70,7 @@ export function ManualCorpusImportForm() {
       <div className="mt-4 flex items-center gap-3">
         <button type="submit" disabled={isSubmitting} className="primary-button">
           <Upload size={18} aria-hidden="true" />
-          {isSubmitting ? "Importing..." : "Add reference text"}
+          {isSubmitting ? "Importing..." : "Import Corpus Book"}
         </button>
         {error ? <p className="text-sm text-danger">{error}</p> : null}
       </div>

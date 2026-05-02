@@ -8,20 +8,20 @@
     "badge": "V2"
   },
   "dashboard": {
-    "title": "Manuscripts",
-    "intro": "Upload a full manuscript and move through structure review, editorial analysis, and revision planning in one focused workspace.",
-    "sectionTitle": "Recent manuscripts",
-    "emptyState": "No manuscripts uploaded yet.",
+    "title": "Starta nytt manus",
+    "intro": "Få en redaktionell översikt, prioriterade förbättringsområden och ett tydligt första steg.",
+    "sectionTitle": "Senaste manus",
+    "emptyState": "Inga manus har laddats upp ännu.",
     "metrics": {
-      "words": "Words",
-      "chapters": "Book structure",
+      "words": "Ord",
+      "chapters": "Manusdelar",
       "status": "Status"
     }
   },
   "upload": {
-    "emptyFileError": "Choose a .txt or .docx manuscript.",
-    "failedError": "Upload failed.",
-    "idleLabel": "Upload manuscript",
-    "busyLabel": "Uploading..."
+    "emptyFileError": "Välj en fil innan du laddar upp manuset.",
+    "failedError": "Uppladdningen kunde inte slutföras.",
+    "idleLabel": "Ladda upp manus",
+    "busyLabel": "Laddar upp..."
   }
 }

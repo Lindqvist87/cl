@@ -9,10 +9,10 @@ export function StructureReviewPanel({
   rows,
   title = "Book structure",
   description = DETECTED_SECTION_HELP_TEXT,
-  sectionColumnLabel = "Manuscript outline",
-  wordColumnLabel = "Length",
-  issueColumnLabel = "Notes",
-  typeColumnLabel = "Role",
+  sectionColumnLabel = "Book section",
+  wordColumnLabel = "Words",
+  issueColumnLabel = "Issues",
+  typeColumnLabel = "Current type",
   emptyLabel = "No book structure is available yet."
 }: {
   getHref?: (row: StructureReviewRow) => string;
@@ -26,19 +26,25 @@ export function StructureReviewPanel({
   emptyLabel?: string;
 }) {
   return (
-    <section className="paper-card p-0">
-      <div className="border-b border-line px-5 py-4">
-        <h2 className="section-title">
+    <section className="border border-line bg-white shadow-panel">
+      <div className="border-b border-line px-4 py-3">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
           {title}
         </h2>
-        <p className="mt-1 text-sm leading-6 text-muted">
+        <p className="mt-1 text-xs leading-5 text-slate-500">
           {description}
         </p>
       </div>
-      <div className="max-h-[560px] overflow-auto p-3">
-        <div className="space-y-2">
+      <div className="max-h-[520px] overflow-auto">
+        <div className="grid grid-cols-[1fr_80px_70px_86px] gap-3 border-b border-line px-4 py-2 text-xs font-semibold uppercase tracking-wide text-slate-500">
+          <div>{sectionColumnLabel}</div>
+          <div className="text-right">{wordColumnLabel}</div>
+          <div className="text-right">{issueColumnLabel}</div>
+          <div>{typeColumnLabel}</div>
+        </div>
+        <div className="divide-y divide-line">
           {rows.length === 0 ? (
-            <p className="px-3 py-8 text-center text-sm text-slate-500">
+            <p className="px-4 py-6 text-sm text-slate-500">
               {emptyLabel}
             </p>
           ) : (
@@ -47,34 +53,25 @@ export function StructureReviewPanel({
               const href = getHref?.(row);
 
               return (
-                <article
+                <div
                   key={row.id}
-                  className="rounded-lg border border-line bg-paper-alt px-4 py-3 text-sm"
+                  className="grid grid-cols-[1fr_80px_70px_86px] gap-3 px-4 py-3 text-sm"
                 >
-                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold uppercase tracking-wide text-muted">
-                        {sectionColumnLabel}
-                      </div>
-                      {href ? (
-                        <Link href={href} className="mt-1 block font-semibold text-ink hover:text-accent">
-                          {titleText}
-                        </Link>
-                      ) : (
-                        <div className="mt-1 font-semibold">{titleText}</div>
-                      )}
-                    </div>
-                    <div className="flex flex-wrap gap-2">
-                      <PanelMetric label={wordColumnLabel} value={`${row.wordCount.toLocaleString()} words`} />
-                      <PanelMetric
-                        label={issueColumnLabel}
-                        value={row.issueCount > 0 ? `${row.issueCount} to review` : "Clear"}
-                        tone={row.issueCount > 0 ? "warn" : "neutral"}
-                      />
-                      <PanelMetric label={typeColumnLabel} value={formatSectionType(row.currentType)} />
-                    </div>
+                  <div className="min-w-0">
+                    {href ? (
+                      <Link href={href} className="font-semibold text-ink hover:text-accent hover:underline">
+                        {titleText}
+                      </Link>
+                    ) : (
+                      <div className="font-semibold">{titleText}</div>
+                    )}
                   </div>
-                </article>
+                  <div className="text-right text-slate-600">
+                    {row.wordCount.toLocaleString()}
+                  </div>
+                  <div className="text-right text-slate-600">{row.issueCount}</div>
+                  <div className="capitalize text-slate-600">{row.currentType}</div>
+                </div>
               );
             })
           )}
@@ -82,30 +79,4 @@ export function StructureReviewPanel({
       </div>
     </section>
   );
-}
-
-function PanelMetric({
-  label,
-  tone = "neutral",
-  value
-}: {
-  label: string;
-  tone?: "neutral" | "warn";
-  value: string;
-}) {
-  const toneClass =
-    tone === "warn"
-      ? "border-warn/25 bg-warn/5 text-warn"
-      : "border-line bg-white text-muted";
-
-  return (
-    <span className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-xs ${toneClass}`}>
-      <span>{label}</span>
-      <span className="font-semibold capitalize text-ink">{value}</span>
-    </span>
-  );
-}
-
-function formatSectionType(value: string) {
-  return value === "unknown" ? "To confirm" : value;
 }
