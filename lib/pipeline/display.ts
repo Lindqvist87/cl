@@ -312,12 +312,14 @@ export function shouldPollPipelineDiagnostics(
     return true;
   }
 
-  return new Set<string>([
+  const activeStatuses = new Set<string>([
     PIPELINE_JOB_STATUS.QUEUED,
     PIPELINE_JOB_STATUS.RUNNING,
     PIPELINE_JOB_STATUS.RETRYING,
     PIPELINE_JOB_STATUS.BLOCKED
-  ]).has(jobStatus ?? "");
+  ]);
+
+  return activeStatuses.has(jobStatus ?? "") || activeStatuses.has(runStatus ?? "");
 }
 
 function sortPipelineJobs(jobs: PipelineDisplayJob[]) {

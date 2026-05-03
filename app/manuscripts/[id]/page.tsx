@@ -178,6 +178,7 @@ export default async function ManuscriptPage({
       <LivePipelineProgress
         manuscriptId={manuscript.id}
         initialStatus={pipelineStatus}
+        analysisStatus={manuscript.analysisStatus}
         showTechnicalDetails={showAdminTools}
       />
 
