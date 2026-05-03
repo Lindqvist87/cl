@@ -97,6 +97,10 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
   const remainingJobs = diagnostics.filter((job) =>
     activeStatuses.has(job.status)
   );
+  const createEmbeddingsJob = diagnostics.find(
+    (job) => job.type === "createEmbeddingsForChunks"
+  );
+  const embeddingPhase = durableState.phaseByStep.createEmbeddingsForChunks;
   const failedJobs = diagnostics.filter(
     (job) => job.status === PIPELINE_JOB_STATUS.FAILED
   );
@@ -129,11 +133,16 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
   return {
     manuscriptId,
     durablePhase: durableState.currentPhase,
+    selectedDurablePhase: durableState.currentPhase,
     jobStatusPhase: durableState.jobStatusPhase,
     checkpointPhase: durableState.checkpointPhase,
     mismatchWarnings: durableState.mismatchWarnings,
     recoverable: durableState.recoverable,
     staleMetadataDetected: durableState.staleMetadataDetected,
+    embeddingTotal: embeddingPhase.total,
+    embeddingCompleted: embeddingPhase.completed,
+    embeddingRemaining: embeddingPhase.remaining,
+    createEmbeddingsJobStatus: createEmbeddingsJob?.status ?? null,
     currentPhaseProgress: durableState.currentPhaseState
       ? {
           phase: durableState.currentPhaseState.phase,
@@ -167,6 +176,13 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
       blockingJob: (zeroRunDetails.blockingJob ?? null) as PipelineBlockingJob | null
     },
     nextEligibleJob: nextEligibleJob
+      ? {
+          id: nextEligibleJob.id,
+          type: nextEligibleJob.type,
+          status: nextEligibleJob.status
+        }
+      : null,
+    nextRunnableJob: nextEligibleJob
       ? {
           id: nextEligibleJob.id,
           type: nextEligibleJob.type,

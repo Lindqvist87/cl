@@ -508,6 +508,14 @@ function progressGuidance(input: {
 function humanStepProgressLabel(
   progress: NonNullable<PipelineStatusDisplay["stepProgress"]>
 ) {
+  if (
+    progress.step === "createEmbeddingsForChunks" &&
+    typeof progress.completed === "number" &&
+    typeof progress.total === "number"
+  ) {
+    return `${progress.completed} av ${progress.total} textdelar förberedda`;
+  }
+
   const unit =
     progress.step === "summarizeChunks"
       ? "avsnitt"

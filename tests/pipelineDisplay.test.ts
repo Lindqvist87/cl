@@ -60,6 +60,56 @@ test("pipeline display derives cumulative summarizeChunks progress", () => {
   });
 });
 
+test("pipeline display shows createEmbeddingsForChunks durable chunk progress", () => {
+  const display = buildPipelineStatusDisplay({
+    checkpoint: {
+      completedSteps: [
+        "parseAndNormalizeManuscript",
+        "splitIntoChapters",
+        "splitIntoChunks"
+      ],
+      currentStep: "createEmbeddingsForChunks",
+      stepMetadata: {
+        createEmbeddingsForChunks: {
+          total: 139,
+          completed: 12,
+          remaining: 127,
+          complete: false
+        }
+      }
+    },
+    jobs: [
+      {
+        type: "createEmbeddingsForChunks",
+        status: PIPELINE_JOB_STATUS.QUEUED,
+        result: { total: 139, completed: 12, remaining: 127, complete: false },
+        createdAt: "2026-05-03T10:00:00.000Z"
+      },
+      {
+        type: "summarizeChunks",
+        status: PIPELINE_JOB_STATUS.BLOCKED,
+        createdAt: "2026-05-03T10:01:00.000Z"
+      }
+    ],
+    totals: { chunks: 139 }
+  });
+
+  assert.equal(display.currentStep, "createEmbeddingsForChunks");
+  assert.equal(display.currentJobStatus, PIPELINE_JOB_STATUS.QUEUED);
+  assert.equal(display.analyzedCount, 12);
+  assert.equal(display.remainingCount, 127);
+  assert.equal(display.stepProgressLabel, "12 / 139 chunks prepared");
+  assert.deepEqual(display.stepProgress, {
+    step: "createEmbeddingsForChunks",
+    completed: 12,
+    total: 139,
+    remaining: 127,
+    percent: 9,
+    label: "12 / 139 chunks prepared",
+    remainingLabel: "127 remaining"
+  });
+});
+
 test("pipeline display separates core completion from optional rewrite drafts", () => {
   const completedCoreSteps = [
     "parseAndNormalizeManuscript",

@@ -214,36 +214,50 @@ test("auto-continue stops when the pipeline is done", async () => {
   assert.equal(result.message, "Pipeline completed.");
 });
 
-test("auto-continue pauses after stale job recovery", async () => {
+test("auto-continue keeps going after stale job recovery when ready work remains", async () => {
   const recovered = blockingJobSummary({
     id: "stale-audits",
     type: "runChapterAudits",
     stale: true
   });
+  const batches = [
+    runReadyResult({
+      jobsRun: 0,
+      state: "more_work_remains",
+      reason: "stale_running_job_recovered",
+      remainingReadyJobs: 1,
+      recoveredStaleJobs: [recovered]
+    }),
+    runReadyResult({
+      jobsRun: 1,
+      state: "done",
+      unfinishedJobs: 0,
+      hasRemainingWork: false,
+      moreWorkRemains: false,
+      results: [jobResult("stale-audits")]
+    })
+  ];
 
   const result = await autoContinueManuscriptPipeline(
     { manuscriptId: "manuscript-stale", maxBatches: 5 },
     {
-      runReadyJobs: async () =>
-        runReadyResult({
-          jobsRun: 0,
-          state: "more_work_remains",
-          reason: "stale_running_job_recovered",
-          recoveredStaleJobs: [recovered]
-        }),
+      runReadyJobs: async () => {
+        const next = batches.shift();
+        assert.ok(next);
+        return next;
+      },
       getSnapshot: async () =>
         snapshot({
-          finalState: "more_work_remains",
-          nextEligibleJob: jobSummary("stale-audits", "runChapterAudits")
+          finalState: "done"
         })
     }
   );
 
-  assert.equal(result.batchesRun, 1);
-  assert.equal(result.totalJobsRun, 0);
-  assert.equal(result.stoppedReason, "recovered_stale_job_needs_next_run");
+  assert.equal(result.batchesRun, 2);
+  assert.equal(result.totalJobsRun, 1);
+  assert.equal(result.stoppedReason, "done");
   assert.equal(result.recoveredStaleJobs[0].type, "runChapterAudits");
-  assert.match(result.message, /Recovered stale runChapterAudits/);
+  assert.equal(result.message, "Pipeline completed.");
 });
 
 test("auto-continue response includes stoppedReason and batch summaries", async () => {

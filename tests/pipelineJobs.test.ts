@@ -62,6 +62,7 @@ test("direct audit route delegates to job-backed pipeline starter", () => {
   assert.match(source, /startManuscriptPipeline/);
   assert.doesNotMatch(source, /runFullManuscriptPipeline/);
   assert.doesNotMatch(startSource, /runFullManuscriptPipeline/);
+  assert.match(startSource, /autoContinueManuscriptPipeline/);
 });
 
 test("pipeline.started plans ordered jobs with dependencies", () => {
@@ -278,6 +279,130 @@ test("diagnostics report durable/checkpoint mismatch instead of hiding it", asyn
       assert.match(diagnostics.mismatchWarnings.join("\n"), /summarizeChunks/);
     }
   );
+});
+
+test("queued partial embeddings are durable current phase and runnable", async () => {
+  const manuscriptId = "manuscript-partial-embeddings-queued";
+  const oldApiKey = process.env.OPENAI_API_KEY;
+  const run = mutableRun(manuscriptId, checkpointBeforeEmbeddings());
+  const chunks = embeddingChunkFixtures(manuscriptId, 139, 12);
+  const jobs = embeddingPipelineJobs(manuscriptId);
+  const manuscriptSnapshot = manuscriptSnapshotForEmbeddings({
+    manuscriptId,
+    run,
+    chunks,
+    jobs
+  });
+
+  delete process.env.OPENAI_API_KEY;
+
+  try {
+    await withPatchedPrisma(
+      embeddingRunnerPatches({ manuscriptId, run, chunks, jobs, manuscriptSnapshot }),
+      async () => {
+        const durable = evaluateDurablePipelineState({
+          manuscript: manuscriptSnapshot,
+          chapters: manuscriptSnapshot.chapters,
+          chunks,
+          outputs: [],
+          checkpoint: run.checkpoint,
+          jobs
+        });
+
+        assert.equal(durable.currentPhase, "createEmbeddingsForChunks");
+        assert.equal(durable.phaseByStep.createEmbeddingsForChunks.total, 139);
+        assert.equal(durable.phaseByStep.createEmbeddingsForChunks.completed, 12);
+        assert.equal(durable.phaseByStep.createEmbeddingsForChunks.remaining, 127);
+
+        const diagnostics = await getManuscriptPipelineDiagnostics(manuscriptId);
+
+        assert.equal(diagnostics.selectedDurablePhase, "createEmbeddingsForChunks");
+        assert.equal(diagnostics.durablePhase, "createEmbeddingsForChunks");
+        assert.equal(diagnostics.embeddingTotal, 139);
+        assert.equal(diagnostics.embeddingCompleted, 12);
+        assert.equal(diagnostics.embeddingRemaining, 127);
+        assert.equal(
+          diagnostics.createEmbeddingsJobStatus,
+          PIPELINE_JOB_STATUS.QUEUED
+        );
+        assert.equal(diagnostics.nextRunnableJob?.type, "createEmbeddingsForChunks");
+        assert.equal(diagnostics.nextEligibleJob?.type, "createEmbeddingsForChunks");
+        assert.equal(diagnostics.pipelineStatus.currentStep, "createEmbeddingsForChunks");
+        assert.equal(diagnostics.pipelineStatus.analyzedCount, 12);
+        assert.equal(diagnostics.pipelineStatus.remainingCount, 127);
+
+        const result = await runReadyPipelineJobs({
+          manuscriptId,
+          maxJobs: 1,
+          maxSeconds: 5,
+          maxItemsPerStep: 4,
+          workerType: "MANUAL",
+          workerId: "manual:test-partial-embeddings"
+        });
+
+        assert.equal(result.jobsRun, 1);
+        assert.equal(result.results[0]?.type, "createEmbeddingsForChunks");
+        assert.equal(result.results[0]?.status, "queued");
+        assert.equal(countCompletedEmbeddings(chunks), 16);
+        assert.equal(
+          jobs.find((job) => job.type === "createEmbeddingsForChunks")?.status,
+          PIPELINE_JOB_STATUS.QUEUED
+        );
+        assert.equal(
+          jobs.find((job) => job.type === "summarizeChunks")?.status,
+          PIPELINE_JOB_STATUS.BLOCKED
+        );
+      }
+    );
+  } finally {
+    restoreEnv("OPENAI_API_KEY", oldApiKey);
+  }
+});
+
+test("auto-continue repeats queued partial embeddings across bounded batches", async () => {
+  const manuscriptId = "manuscript-partial-embeddings-auto-continue";
+  const oldApiKey = process.env.OPENAI_API_KEY;
+  const run = mutableRun(manuscriptId, checkpointBeforeEmbeddings());
+  const chunks = embeddingChunkFixtures(manuscriptId, 139, 12);
+  const jobs = embeddingPipelineJobs(manuscriptId);
+  const manuscriptSnapshot = manuscriptSnapshotForEmbeddings({
+    manuscriptId,
+    run,
+    chunks,
+    jobs
+  });
+
+  delete process.env.OPENAI_API_KEY;
+
+  try {
+    await withPatchedPrisma(
+      embeddingRunnerPatches({ manuscriptId, run, chunks, jobs, manuscriptSnapshot }),
+      async () => {
+        const result = await manuscriptAdminJobRunner.run(manuscriptId, {
+          maxBatches: 3,
+          maxJobsPerBatch: 1,
+          maxItemsPerStep: 50,
+          maxSeconds: 30
+        });
+
+        assert.equal(result.batchesRun, 3);
+        assert.equal(result.totalJobsRun, 3);
+        assert.equal(countCompletedEmbeddings(chunks), 139);
+        assert.equal(
+          jobs.find((job) => job.type === "createEmbeddingsForChunks")?.status,
+          PIPELINE_JOB_STATUS.COMPLETED
+        );
+        assert.equal(
+          jobs.find((job) => job.type === "summarizeChunks")?.status,
+          PIPELINE_JOB_STATUS.QUEUED
+        );
+        assert.equal(result.nextEligibleJob?.type, "summarizeChunks");
+        assert.equal(result.stoppedReason, "max_batches_reached");
+      }
+    );
+  } finally {
+    restoreEnv("OPENAI_API_KEY", oldApiKey);
+  }
 });
 
 test("stuck manuscript with no jobs gets resumable jobs from checkpoint", async () => {
@@ -1174,6 +1299,165 @@ test("ambiguous ready runner scope is rejected", () => {
   );
 });
 
+function checkpointBeforeEmbeddings() {
+  return {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks"
+    ],
+    currentStep: "createEmbeddingsForChunks"
+  };
+}
+
+function embeddingPipelineJobs(manuscriptId: string) {
+  const plans = plannedPipelineJobs(manuscriptId, checkpointBeforeEmbeddings());
+  const completedTypes = new Set([
+    "parseAndNormalizeManuscript",
+    "splitIntoChapters",
+    "splitIntoChunks"
+  ]);
+
+  return plans.map((plan, index) =>
+    mutableJob(`embedding-job-${index + 1}`, {
+      manuscriptId,
+      type: plan.type,
+      status: completedTypes.has(plan.type)
+        ? PIPELINE_JOB_STATUS.COMPLETED
+        : plan.type === "createEmbeddingsForChunks"
+          ? PIPELINE_JOB_STATUS.QUEUED
+          : PIPELINE_JOB_STATUS.BLOCKED,
+      idempotencyKey: plan.idempotencyKey,
+      dependencyIds: index === 0 ? [] : [`embedding-job-${index}`],
+      metadata: plan.metadata,
+      completedAt: completedTypes.has(plan.type)
+        ? new Date("2026-04-29T05:10:00Z")
+        : null
+    })
+  );
+}
+
+function embeddingChunkFixtures(
+  manuscriptId: string,
+  total: number,
+  completed: number
+) {
+  return Array.from({ length: total }, (_, index) => ({
+    id: `embedding-chunk-${index + 1}`,
+    manuscriptId,
+    chapterId: "chapter-1",
+    sceneId: null,
+    chunkIndex: index + 1,
+    text: `Embedding chunk ${index + 1} text.`,
+    wordCount: 4,
+    startParagraph: index + 1,
+    endParagraph: index + 1,
+    paragraphStart: index + 1,
+    paragraphEnd: index + 1,
+    tokenEstimate: 4,
+    tokenCount: 4,
+    metadata: null,
+    localMetrics:
+      index < completed ? { embeddingStatus: "stored" } : null,
+    summary: null,
+    embedding: null,
+    createdAt: new Date("2026-04-29T05:00:00Z")
+  }));
+}
+
+function manuscriptSnapshotForEmbeddings(input: {
+  manuscriptId: string;
+  run: MutableRun;
+  chunks: Array<Record<string, unknown>>;
+  jobs: MutableJob[];
+}) {
+  const chapter = {
+    id: "chapter-1",
+    manuscriptId: input.manuscriptId,
+    title: "Opening",
+    order: 1,
+    chapterIndex: 1,
+    text: "Opening chapter text.",
+    wordCount: 3,
+    summary: null,
+    status: "CHAPTER_READY"
+  };
+
+  return {
+    id: input.manuscriptId,
+    originalText: "Stored manuscript text.",
+    wordCount: 400,
+    analysisStatus: "RUNNING",
+    status: "PIPELINE_RUNNING",
+    chapterCount: 1,
+    chunkCount: input.chunks.length,
+    chapters: [chapter],
+    chunks: input.chunks,
+    outputs: [],
+    profile: null,
+    reports: [],
+    rewritePlans: [],
+    rewrites: [],
+    findings: [],
+    runs: [{ checkpoint: input.run.checkpoint }],
+    pipelineJobs: input.jobs
+  };
+}
+
+function embeddingRunnerPatches(input: {
+  manuscriptId: string;
+  run: MutableRun;
+  chunks: Array<Record<string, unknown>>;
+  jobs: MutableJob[];
+  manuscriptSnapshot: Record<string, unknown>;
+}): Array<[object, Record<string, unknown>]> {
+  return [
+    [
+      prisma.manuscript,
+      {
+        findUnique: async () => input.manuscriptSnapshot,
+        update: async (args: { data: Record<string, unknown> }) => {
+          Object.assign(input.manuscriptSnapshot, args.data);
+          return input.manuscriptSnapshot;
+        }
+      }
+    ],
+    [prisma.analysisRun, analysisRunPatch(input.run)],
+    [prisma.pipelineJob, pipelineJobPatch(input.jobs)],
+    [
+      prisma.manuscriptChunk,
+      {
+        findMany: async () => input.chunks,
+        update: async (args: {
+          where: { id: string };
+          data: Record<string, unknown>;
+        }) => {
+          const chunk = input.chunks.find(
+            (candidate) => candidate.id === args.where.id
+          );
+          assert.ok(chunk);
+          Object.assign(chunk, args.data);
+          return chunk;
+        }
+      }
+    ],
+    [
+      prisma.workerHeartbeat,
+      {
+        upsert: async (args: { update: Record<string, unknown> }) => args.update
+      }
+    ]
+  ];
+}
+
+function countCompletedEmbeddings(chunks: Array<Record<string, unknown>>) {
+  return chunks.filter((chunk) => {
+    const metrics = recordValue(chunk.localMetrics);
+    const status = metrics?.embeddingStatus;
+    return status === "stored" || status === "empty" || status === "skipped";
+  }).length;
+}
+
 function mutableRun(manuscriptId: string, checkpoint: unknown): MutableRun {
   const now = new Date("2026-04-29T05:00:00Z");
 
@@ -1438,7 +1722,7 @@ function summarizeChunkFixtures(manuscriptId: string, count: number) {
     tokenEstimate: 9,
     tokenCount: 9,
     metadata: null,
-    localMetrics: null,
+    localMetrics: { embeddingStatus: "stored" },
     summary: null,
     embedding: null,
     createdAt: new Date("2026-04-29T05:00:00Z"),

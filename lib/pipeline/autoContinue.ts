@@ -267,9 +267,10 @@ function stoppedReasonFromBatch(
   if (
     (batch.recoveredStaleJobs.length > 0 ||
       batch.reason === "stale_running_job_recovered") &&
-    batch.jobsRun === 0
+    batch.jobsRun === 0 &&
+    batch.remainingReadyJobs > 0
   ) {
-    return "recovered_stale_job_needs_next_run";
+    return null;
   }
 
   if (

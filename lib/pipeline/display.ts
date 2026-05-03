@@ -356,7 +356,10 @@ function totalForStep(
   record: Record<string, unknown>,
   totals?: PipelineDisplayTotals
 ) {
-  if (step === "summarizeChunks" && typeof totals?.chunks === "number") {
+  if (
+    (step === "createEmbeddingsForChunks" || step === "summarizeChunks") &&
+    typeof totals?.chunks === "number"
+  ) {
     return Math.max(0, totals.chunks);
   }
 
@@ -385,7 +388,9 @@ function analyzedForStep(
   counts: { remaining: number | null; total: number | null }
 ) {
   if (
-    (step === "summarizeChunks" || step === "runChapterAudits") &&
+    (step === "createEmbeddingsForChunks" ||
+      step === "summarizeChunks" ||
+      step === "runChapterAudits") &&
     typeof counts.total === "number" &&
     typeof counts.remaining === "number"
   ) {
@@ -397,6 +402,7 @@ function analyzedForStep(
   }
 
   return firstNumber(
+    record.completed,
     record.analyzed,
     record.audited,
     record.drafted,
@@ -409,6 +415,14 @@ function progressLabelForStep(
   step: string | null,
   counts: { analyzed: number | null; total: number | null; remaining: number | null }
 ) {
+  if (
+    step === "createEmbeddingsForChunks" &&
+    typeof counts.analyzed === "number" &&
+    typeof counts.total === "number"
+  ) {
+    return `${counts.analyzed} / ${counts.total} chunks prepared`;
+  }
+
   if (
     step === "summarizeChunks" &&
     typeof counts.analyzed === "number" &&
@@ -438,7 +452,11 @@ function stepProgressForStep(
     remainingLabel: string | null;
   }
 ): PipelineStepProgressDisplay | null {
-  if (step !== "summarizeChunks" && step !== "runChapterAudits") {
+  if (
+    step !== "createEmbeddingsForChunks" &&
+    step !== "summarizeChunks" &&
+    step !== "runChapterAudits"
+  ) {
     return null;
   }
 

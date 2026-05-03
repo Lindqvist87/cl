@@ -603,12 +603,14 @@ async function reopenCompletedManuscriptJobIfDurableOutputMissing(
 ) {
   if (
     !job.manuscriptId ||
-    !MANUSCRIPT_PIPELINE_STEPS.includes(job.type as ManuscriptPipelineStep)
+    !FULL_MANUSCRIPT_PIPELINE_STEPS.includes(
+      job.type as (typeof FULL_MANUSCRIPT_PIPELINE_STEPS)[number]
+    )
   ) {
     return null;
   }
 
-  const step = job.type as ManuscriptPipelineStep;
+  const step = job.type as (typeof FULL_MANUSCRIPT_PIPELINE_STEPS)[number];
   const run = await findOrCreatePipelineRun(job.manuscriptId);
   const durableState = await safeManuscriptDurablePipelineState({
     manuscriptId: job.manuscriptId,
@@ -988,6 +990,12 @@ async function acquirePipelineJobLock(jobId: string, workerId = "worker") {
 }
 
 async function dependenciesComplete(job: PipelineJob) {
+  const durableDependencyComplete =
+    await durableManuscriptDependencyComplete(job);
+  if (durableDependencyComplete !== null) {
+    return durableDependencyComplete;
+  }
+
   const dependencyIds = dependencyIdsFromJson(job.dependencyIds);
   if (dependencyIds.length === 0) {
     return true;
@@ -999,6 +1007,43 @@ async function dependenciesComplete(job: PipelineJob) {
   });
 
   return areDependenciesComplete(dependencyIds, dependencies);
+}
+
+async function durableManuscriptDependencyComplete(job: PipelineJob) {
+  if (
+    !job.manuscriptId ||
+    !FULL_MANUSCRIPT_PIPELINE_STEPS.includes(
+      job.type as (typeof FULL_MANUSCRIPT_PIPELINE_STEPS)[number]
+    )
+  ) {
+    return null;
+  }
+
+  const step = job.type as (typeof FULL_MANUSCRIPT_PIPELINE_STEPS)[number];
+  const stepIndex = FULL_MANUSCRIPT_PIPELINE_STEPS.indexOf(step);
+  if (stepIndex <= 0) {
+    return true;
+  }
+
+  const dependencyStep = FULL_MANUSCRIPT_PIPELINE_STEPS[stepIndex - 1];
+  const run = await prisma.analysisRun.findFirst({
+    where: {
+      manuscriptId: job.manuscriptId,
+      type: AnalysisRunType.FULL_AUDIT
+    },
+    orderBy: { createdAt: "desc" }
+  });
+  const durableState = await safeManuscriptDurablePipelineState({
+    manuscriptId: job.manuscriptId,
+    runId: run?.id,
+    checkpoint: run?.checkpoint
+  });
+
+  if (!durableState || durableState.evaluationIncomplete) {
+    return null;
+  }
+
+  return durableState.phaseByStep[dependencyStep]?.isComplete === true;
 }
 
 async function unblockReadyJobs(manuscriptId: string) {
