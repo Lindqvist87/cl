@@ -696,6 +696,172 @@ model ChapterRewrite {
   @@index([status])
 }
 
+model ManuscriptNode {
+  id             String   @id @default(cuid())
+  manuscriptId   String
+  parentId       String?
+  key            String   @unique
+  type           String
+  order          Int
+  title          String?
+  chapterId      String?
+  sceneId        String?
+  chunkId        String?
+  paragraphStart Int?
+  paragraphEnd   Int?
+  textHash       String?
+  wordCount      Int      @default(0)
+  summaryShort   String?
+  summaryLong    String?
+  metrics        Json?
+  metadata       Json?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@index([manuscriptId])
+  @@index([parentId])
+  @@index([type])
+  @@index([chapterId])
+  @@index([sceneId])
+  @@index([chunkId])
+  @@index([manuscriptId, type])
+  @@index([manuscriptId, order])
+}
+
+model CompilerArtifact {
+  id              String   @id @default(cuid())
+  manuscriptId    String
+  nodeId          String?
+  chapterId       String?
+  sceneId         String?
+  chunkId         String?
+  artifactType    String
+  model           String
+  reasoningEffort String
+  promptVersion   String
+  inputHash       String
+  output          Json
+  rawText         String?
+  status          String   @default("COMPLETED")
+  error           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@unique([manuscriptId, artifactType, inputHash])
+  @@index([manuscriptId])
+  @@index([nodeId])
+  @@index([chapterId])
+  @@index([sceneId])
+  @@index([chunkId])
+  @@index([artifactType])
+  @@index([manuscriptId, artifactType])
+  @@index([inputHash])
+}
+
+model NarrativeFact {
+  id                String   @id @default(cuid())
+  manuscriptId      String
+  nodeId            String?
+  chapterId         String?
+  sceneId           String?
+  factType          String
+  subject           String?
+  predicate         String?
+  object            String?
+  factText          String
+  status            String   @default("ACTIVE")
+  confidence        Float    @default(0.5)
+  sourceTextSnippet String?
+  metadata          Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([manuscriptId])
+  @@index([nodeId])
+  @@index([chapterId])
+  @@index([sceneId])
+  @@index([factType])
+  @@index([subject])
+  @@index([status])
+}
+
+model CharacterState {
+  id                String   @id @default(cuid())
+  manuscriptId      String
+  nodeId            String?
+  chapterId         String?
+  sceneId           String?
+  characterName     String
+  canonicalName     String?
+  goals             Json?
+  fears             Json?
+  knowledge         Json?
+  secrets           Json?
+  relationships     Json?
+  emotionalState    String?
+  deltaFromPrevious String?
+  confidence        Float    @default(0.5)
+  metadata          Json?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([manuscriptId])
+  @@index([canonicalName])
+  @@index([characterName])
+  @@index([chapterId])
+  @@index([sceneId])
+  @@index([nodeId])
+}
+
+model PlotEvent {
+  id                 String   @id @default(cuid())
+  manuscriptId       String
+  nodeId             String?
+  chapterId          String?
+  sceneId            String?
+  eventText          String
+  cause              String?
+  consequence        String?
+  opensThread        String?
+  closesThread       String?
+  stakes             String?
+  affectedCharacters Json?
+  confidence         Float    @default(0.5)
+  metadata           Json?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([manuscriptId])
+  @@index([chapterId])
+  @@index([sceneId])
+  @@index([nodeId])
+}
+
+model StyleFingerprint {
+  id                  String   @id @default(cuid())
+  manuscriptId        String
+  nodeId              String?
+  chapterId           String?
+  sceneId             String?
+  scopeType           String
+  povEstimate         String?
+  tenseEstimate       String?
+  narrativeDistance   String?
+  dialogueRatio       Float    @default(0)
+  avgSentenceLength   Float    @default(0)
+  dominantModes       Json?
+  voiceRules          Json?
+  metrics             Json?
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([manuscriptId])
+  @@index([nodeId])
+  @@index([chapterId])
+  @@index([sceneId])
+  @@index([scopeType])
+}
+
 model PipelineJob {
   id             String    @id @default(cuid())
   manuscriptId   String?

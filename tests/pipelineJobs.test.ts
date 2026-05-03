@@ -112,7 +112,7 @@ test("stuck manuscript with no jobs gets resumable jobs from checkpoint", async 
       const ensured = await ensureManuscriptPipelineJobs(manuscriptId, "RESUME");
 
       assert.equal(ensured.run.id, run.id);
-      assert.equal(jobs.length, 12);
+      assert.equal(jobs.length, 18);
       assert.deepEqual(
         jobs.slice(0, 4).map((job) => job.status),
         Array(4).fill(PIPELINE_JOB_STATUS.COMPLETED)
@@ -125,6 +125,12 @@ test("stuck manuscript with no jobs gets resumable jobs from checkpoint", async 
           "summarizeChunks",
           "summarizeChapters",
           "createManuscriptProfile",
+          "buildManuscriptNodes",
+          "compileSceneDigests",
+          "extractNarrativeMemory",
+          "compileChapterCapsules",
+          "compileWholeBookMap",
+          "createNextBestEditorialActions",
           "runChapterAudits",
           "runWholeBookAudit",
           "compareAgainstCorpus",
@@ -363,17 +369,15 @@ test("ready runner recovers stale running manuscript jobs before retrying them",
         workerId: "manual:test-stale-lock"
       });
 
-      assert.equal(result.jobsRun, 0);
-      assert.equal(result.reason, "stale_running_job_recovered");
-      assert.equal(result.blockingJob?.id, "stale-audits-job");
-      assert.equal(result.blockingJob?.stale, true);
-      assert.equal(jobs[0].status, PIPELINE_JOB_STATUS.RETRYING);
+      assert.equal(result.jobsRun, 1);
+      assert.equal(result.reason, undefined);
+      assert.equal(result.recoveredStaleJobs[0]?.id, "stale-audits-job");
+      assert.equal(result.recoveredStaleJobs[0]?.stale, true);
+      assert.equal(jobs[0].status, PIPELINE_JOB_STATUS.COMPLETED);
       assert.equal(jobs[0].lockedAt, null);
       assert.equal(jobs[0].lockedBy, null);
       assert.equal(jobs[0].lockExpiresAt, null);
-      assert.ok(jobs[0].readyAt instanceof Date);
       assert.equal(result.remainingReadyJobs, 1);
-      assert.match(result.message ?? "", /Recovered stale running job runChapterAudits/);
     }
   );
 });
@@ -854,7 +858,13 @@ function checkpointBeforeRunChapterAudits() {
       "createEmbeddingsForChunks",
       "summarizeChunks",
       "summarizeChapters",
-      "createManuscriptProfile"
+      "createManuscriptProfile",
+      "buildManuscriptNodes",
+      "compileSceneDigests",
+      "extractNarrativeMemory",
+      "compileChapterCapsules",
+      "compileWholeBookMap",
+      "createNextBestEditorialActions"
     ],
     currentStep: "runChapterAudits"
   };
@@ -870,6 +880,14 @@ function manuscriptRunnerPatches(input: {
       prisma.manuscript,
       {
         findUnique: async () => ({ id: input.manuscriptId }),
+        findUniqueOrThrow: async () => ({
+          id: input.manuscriptId,
+          title: "Test Manuscript",
+          targetGenre: "Fantasy",
+          targetAudience: "Adult",
+          chapters: [],
+          chunks: []
+        }),
         update: async (args: { data: Record<string, unknown> }) => ({
           id: input.manuscriptId,
           ...args.data

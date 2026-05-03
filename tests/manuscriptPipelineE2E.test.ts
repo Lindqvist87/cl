@@ -270,6 +270,13 @@ function createFakeDb() {
   const findings: Array<Record<string, unknown>> = [];
   const rewritePlans: Array<Record<string, unknown>> = [];
   const rewrites: Array<Record<string, unknown>> = [];
+  const nodes: Array<Record<string, unknown>> = [];
+  const artifacts: Array<Record<string, unknown>> = [];
+  const facts: Array<Record<string, unknown>> = [];
+  const characters: Array<Record<string, unknown>> = [];
+  const events: Array<Record<string, unknown>> = [];
+  const styles: Array<Record<string, unknown>> = [];
+  const decisions: Array<Record<string, unknown>> = [];
   let profile: Record<string, unknown> | null = null;
   let report: Record<string, unknown> | null = null;
 
@@ -283,6 +290,13 @@ function createFakeDb() {
     findings,
     rewritePlans,
     rewrites,
+    nodes,
+    artifacts,
+    facts,
+    characters,
+    events,
+    styles,
+    decisions,
     get run() {
       return runs[0] ?? null;
     },
@@ -341,7 +355,15 @@ function createPatches(db: FakeDb): Array<[object, Record<string, unknown>]> {
     [prisma.workerHeartbeat, { upsert: async (args: { update: unknown }) => args.update }],
     [prisma.manuscript, manuscriptDelegate(db)],
     [prisma.manuscriptChapter, manuscriptChapterDelegate(db)],
+    [prisma.scene, sceneDelegate(db)],
+    [prisma.paragraph, { count: async () => 0 }],
     [prisma.manuscriptChunk, manuscriptChunkDelegate(db)],
+    [prisma.manuscriptNode, manuscriptNodeDelegate(db)],
+    [prisma.compilerArtifact, compilerArtifactDelegate(db)],
+    [prisma.narrativeFact, memoryCollectionDelegate(db.facts)],
+    [prisma.characterState, memoryCollectionDelegate(db.characters)],
+    [prisma.plotEvent, memoryCollectionDelegate(db.events)],
+    [prisma.styleFingerprint, styleFingerprintDelegate(db)],
     [prisma.analysisOutput, analysisOutputDelegate(db)],
     [prisma.finding, findingDelegate(db)],
     [prisma.manuscriptProfile, manuscriptProfileDelegate(db)],
@@ -350,6 +372,7 @@ function createPatches(db: FakeDb): Array<[object, Record<string, unknown>]> {
     [prisma.corpusChunk, { findMany: async () => [] }],
     [prisma.trendSignal, { findMany: async () => [] }],
     [prisma.rewritePlan, rewritePlanDelegate(db)],
+    [prisma.editorialDecision, editorialDecisionDelegate(db)],
     [prisma.chapterRewrite, chapterRewriteDelegate(db)],
     [prisma, { $executeRawUnsafe: async () => 0 }]
   ];
@@ -422,7 +445,10 @@ function pipelineJobDelegate(db: FakeDb) {
 function manuscriptDelegate(db: FakeDb) {
   const manuscriptPayload = () => ({
     ...db.manuscript,
-    chapters: db.chapters,
+    chapters: db.chapters.map((chapter) => ({
+      ...chapter,
+      scenes: []
+    })),
     chunks: db.chunks,
     profile: db.profile,
     outputs: db.outputs,
@@ -444,10 +470,15 @@ function manuscriptDelegate(db: FakeDb) {
 
 function manuscriptChapterDelegate(db: FakeDb) {
   return {
+    findFirst: async (args: { where?: Record<string, unknown> } = {}) =>
+      db.chapters
+        .filter((chapter) => matchesWhere(chapter, args.where))
+        .sort((a, b) => Number(b.order) - Number(a.order))[0] ?? null,
     findMany: async (args: { include?: Record<string, unknown> } = {}) =>
       db.chapters.map((chapter) => ({
         ...chapter,
         paragraphs: [],
+        scenes: args.include?.scenes ? [] : undefined,
         chunks: args.include?.chunks
           ? db.chunks.filter((chunk) => chunk.chapterId === chapter.id)
           : undefined
@@ -471,6 +502,122 @@ function manuscriptChunkDelegate(db: FakeDb) {
       assert.ok(chunk);
       Object.assign(chunk, args.data);
       return chunk;
+    }
+  };
+}
+
+function sceneDelegate(_db: FakeDb) {
+  return {
+    findMany: async () => []
+  };
+}
+
+function manuscriptNodeDelegate(db: FakeDb) {
+  return {
+    findFirst: async (args: { where?: Record<string, unknown> } = {}) =>
+      db.nodes.find((node) => matchesWhere(node, args.where)) ?? null,
+    upsert: async (args: {
+      where: { key: string };
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    }) => {
+      const existing = db.nodes.find((node) => node.key === args.where.key);
+      if (existing) {
+        Object.assign(existing, args.update);
+        return existing;
+      }
+      const node = { id: `node-${db.nodes.length + 1}`, ...args.create };
+      db.nodes.push(node);
+      return node;
+    },
+    updateMany: async (args: {
+      where?: Record<string, unknown>;
+      data: Record<string, unknown>;
+    }) => {
+      const targets = db.nodes.filter((node) => matchesWhere(node, args.where));
+      for (const node of targets) {
+        Object.assign(node, args.data);
+      }
+      return { count: targets.length };
+    }
+  };
+}
+
+function compilerArtifactDelegate(db: FakeDb) {
+  return {
+    findFirst: async (args: { where?: Record<string, unknown> } = {}) =>
+      db.artifacts.find((artifact) => matchesWhere(artifact, args.where)) ?? null,
+    findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+      db.artifacts.filter((artifact) => matchesWhere(artifact, args.where)),
+    upsert: async (args: {
+      where: {
+        manuscriptId_artifactType_inputHash: {
+          manuscriptId: string;
+          artifactType: string;
+          inputHash: string;
+        };
+      };
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    }) => {
+      const key = args.where.manuscriptId_artifactType_inputHash;
+      const existing = db.artifacts.find(
+        (artifact) =>
+          artifact.manuscriptId === key.manuscriptId &&
+          artifact.artifactType === key.artifactType &&
+          artifact.inputHash === key.inputHash
+      );
+      if (existing) {
+        Object.assign(existing, args.update);
+        return existing;
+      }
+      const artifact = {
+        id: `artifact-${db.artifacts.length + 1}`,
+        status: "COMPLETED",
+        createdAt: new Date(),
+        ...args.create
+      };
+      db.artifacts.push(artifact);
+      return artifact;
+    }
+  };
+}
+
+function memoryCollectionDelegate(rows: Array<Record<string, unknown>>) {
+  return {
+    findMany: async (args: { where?: Record<string, unknown>; take?: number } = {}) =>
+      rows.filter((row) => matchesWhere(row, args.where)).slice(0, args.take),
+    deleteMany: async (args: { where?: Record<string, unknown> } = {}) => {
+      const before = rows.length;
+      const remaining = rows.filter((row) => !matchesWhere(row, args.where));
+      rows.splice(0, rows.length, ...remaining);
+      return { count: before - rows.length };
+    },
+    createMany: async (args: { data: Array<Record<string, unknown>> }) => {
+      rows.push(
+        ...args.data.map((row, index) => ({
+          id: `memory-${rows.length + index + 1}`,
+          ...row
+        }))
+      );
+      return { count: args.data.length };
+    }
+  };
+}
+
+function styleFingerprintDelegate(db: FakeDb) {
+  return {
+    findFirst: async (args: { where?: Record<string, unknown> } = {}) =>
+      db.styles.find((style) => matchesWhere(style, args.where)) ?? null,
+    deleteMany: async (args: { where?: Record<string, unknown> } = {}) => {
+      const before = db.styles.length;
+      db.styles = db.styles.filter((style) => !matchesWhere(style, args.where));
+      return { count: before - db.styles.length };
+    },
+    create: async (args: { data: Record<string, unknown> }) => {
+      const style = { id: `style-${db.styles.length + 1}`, ...args.data };
+      db.styles.push(style);
+      return style;
     }
   };
 }
@@ -607,6 +754,20 @@ function chapterRewriteDelegate(db: FakeDb) {
   };
 }
 
+function editorialDecisionDelegate(db: FakeDb) {
+  return {
+    createMany: async (args: { data: Array<Record<string, unknown>> }) => {
+      db.decisions.push(
+        ...args.data.map((decision, index) => ({
+          id: `decision-${db.decisions.length + index + 1}`,
+          ...decision
+        }))
+      );
+      return { count: args.data.length };
+    }
+  };
+}
+
 function mutableJob(id: string, data: Record<string, unknown>): FakeJob {
   const now = new Date();
 
@@ -707,6 +868,14 @@ function matchesField(actual: unknown, expected: unknown): boolean {
 
   if (record.lte instanceof Date) {
     return actual instanceof Date && actual <= record.lte;
+  }
+
+  if (typeof record.lt === "number") {
+    return typeof actual === "number" && actual < record.lt;
+  }
+
+  if (typeof record.gte === "number") {
+    return typeof actual === "number" && actual >= record.gte;
   }
 
   if (record.path && record.equals !== undefined) {

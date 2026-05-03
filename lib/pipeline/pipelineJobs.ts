@@ -330,16 +330,6 @@ export async function runReadyPipelineJobs(options: RunReadyJobsOptions = {}) {
   const recoveredStaleJobs = await releaseStaleLocks(scope);
   await unblockReadyJobsForScope(scope);
 
-  if (recoveredStaleJobs.length > 0) {
-    return buildRunReadyPipelineJobsResult({
-      scope,
-      workerType,
-      results,
-      readyJobIds,
-      recoveredStaleJobs
-    });
-  }
-
   while (results.length < maxJobs && Date.now() - startedAt < maxSeconds * 1000) {
     const nextJob = await findNextReadyJob(scope);
     if (!nextJob) {

@@ -1,11 +1,13 @@
 import { NextResponse } from "next/server";
 import { extractTextFromUpload } from "@/lib/parsing/extractText";
-import { parseManuscriptText } from "@/lib/parsing/chapterDetector";
-import { chunkParsedManuscript } from "@/lib/parsing/chunker";
-import { createStoredManuscript } from "@/lib/storage/manuscripts";
+import {
+  pipelineStartHttpStatus,
+  startManuscriptPipeline
+} from "@/lib/pipeline/startPipeline";
+import { createUploadedManuscriptShell } from "@/lib/storage/manuscripts";
 
 export const runtime = "nodejs";
-export const maxDuration = 60;
+export const maxDuration = 30;
 
 export async function POST(request: Request) {
   const formData = await request.formData();
@@ -17,11 +19,8 @@ export async function POST(request: Request) {
 
   try {
     const extracted = await extractTextFromUpload(file);
-    const parsed = parseManuscriptText(extracted.text, file.name);
-    const chunks = chunkParsedManuscript(parsed);
-    const manuscript = await createStoredManuscript({
-      parsed,
-      chunks,
+    const manuscript = await createUploadedManuscriptShell({
+      originalText: extracted.text,
       sourceFileName: file.name,
       sourceMimeType: extracted.mimeType,
       sourceFormat: extracted.format,
@@ -30,13 +29,25 @@ export async function POST(request: Request) {
       targetAudience: textField(formData, "targetAudience")
     });
 
-    return NextResponse.json({
+    const pipeline = await startManuscriptPipeline({
       manuscriptId: manuscript.id,
-      title: manuscript.title,
-      wordCount: manuscript.wordCount,
-      chapterCount: manuscript.chapterCount,
-      chunkCount: manuscript.chunkCount
+      mode: "FULL_PIPELINE",
+      requestedBy: "upload",
+      runInlineWhenInngestDisabled: false
     });
+
+    return NextResponse.json(
+      {
+        manuscriptId: manuscript.id,
+        title: manuscript.title,
+        wordCount: manuscript.wordCount,
+        status: manuscript.status,
+        executionMode: pipeline.executionMode,
+        message: "Import started",
+        pipeline
+      },
+      { status: pipelineStartHttpStatus(pipeline) }
+    );
   } catch (error) {
     const message =
       error instanceof Error ? error.message : "Unable to upload manuscript.";

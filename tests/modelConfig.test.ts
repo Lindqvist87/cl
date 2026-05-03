@@ -5,6 +5,8 @@ import {
   auditReasoningEffort,
   chiefEditorModel,
   chiefEditorReasoningEffort,
+  modelConfigForRole,
+  parseReasoningEffort,
   resolveModelConfig
 } from "../lib/ai/modelConfig";
 import { analyzeManuscriptChunk } from "../lib/ai/chunkAnalyzer";
@@ -36,7 +38,13 @@ test("model config preserves safe fallbacks when role env vars are missing", () 
   assert.equal(defaultConfig.auditModel, "gpt-5.4-mini");
   assert.equal(defaultConfig.auditReasoningEffort, "medium");
   assert.equal(defaultConfig.chiefEditorModel, "gpt-5.4");
-  assert.equal(defaultConfig.chiefEditorReasoningEffort, "high");
+  assert.equal(defaultConfig.chiefEditorReasoningEffort, "xhigh");
+  assert.equal(defaultConfig.roles.extraction.model, "gpt-5.4-nano");
+  assert.equal(defaultConfig.roles.extraction.reasoningEffort, "low");
+  assert.equal(defaultConfig.roles.sceneAnalysis.model, "gpt-5.4-mini");
+  assert.equal(defaultConfig.roles.sceneAnalysis.reasoningEffort, "medium");
+  assert.equal(defaultConfig.roles.wholeBookCompiler.model, "gpt-5.4");
+  assert.equal(defaultConfig.roles.wholeBookCompiler.reasoningEffort, "xhigh");
 
   const legacyConfig = resolveModelConfig({
     OPENAI_AUDIT_MODEL: "legacy-audit-model",
@@ -50,15 +58,18 @@ test("model config preserves safe fallbacks when role env vars are missing", () 
 test("invalid reasoning efforts fall back to safe defaults", () => {
   const config = resolveModelConfig({
     AUDIT_REASONING_EFFORT: "maximum",
-    CHIEF_EDITOR_REASONING_EFFORT: "expensive"
+    CHIEF_EDITOR_REASONING_EFFORT: "x-high"
   });
 
   assert.equal(config.auditReasoningEffort, "medium");
-  assert.equal(config.chiefEditorReasoningEffort, "high");
+  assert.equal(config.chiefEditorReasoningEffort, "xhigh");
+  assert.equal(parseReasoningEffort("xhigh", "low"), "xhigh");
+  assert.equal(parseReasoningEffort("x-high", "low"), "low");
 });
 
-test("audit calls use audit model configuration", async () => {
+test("chunk analysis calls use scene analysis model configuration", async () => {
   const requests: ChatRequest[] = [];
+  const sceneConfig = modelConfigForRole("sceneAnalysis");
   const restore = setOpenAIClientForTest(
     fakeOpenAIClient(requests, {
       summary: "Chunk summary.",
@@ -88,12 +99,27 @@ test("audit calls use audit model configuration", async () => {
       text: "A door opens into trouble."
     });
 
-    assert.equal(result.model, auditModel);
-    assert.equal(requests[0].model, auditModel);
-    assert.equal(requests[0].reasoning_effort, auditReasoningEffort);
+    assert.equal(result.model, sceneConfig.model);
+    assert.equal(requests[0].model, sceneConfig.model);
+    assert.equal(requests[0].reasoning_effort, sceneConfig.reasoningEffort);
   } finally {
     restore();
   }
+});
+
+test("new compiler roles resolve explicit env values and legacy fallbacks", () => {
+  const config = resolveModelConfig({
+    OPENAI_AUDIT_MODEL: "legacy-audit",
+    OPENAI_EDITOR_MODEL: "legacy-editor",
+    OPENAI_REWRITE_MODEL: "legacy-rewrite",
+    WHOLE_BOOK_COMPILER_REASONING_EFFORT: "xhigh"
+  });
+
+  assert.equal(config.roles.chapterCompiler.model, "legacy-rewrite");
+  assert.equal(config.roles.wholeBookCompiler.model, "legacy-rewrite");
+  assert.equal(config.roles.rewrite.model, "legacy-rewrite");
+  assert.equal(config.roles.wholeBookCompiler.reasoningEffort, "xhigh");
+  assert.notEqual(config.roles.wholeBookCompiler.reasoningEffort, "x-high");
 });
 
 test("chief editor calls use chief editor model configuration", async () => {

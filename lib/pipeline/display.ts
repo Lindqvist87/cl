@@ -34,6 +34,7 @@ export type PipelineDisplayRun = {
 export type PipelineDisplayTotals = {
   chunks?: number | null;
   chapters?: number | null;
+  scenes?: number | null;
   sections?: number | null;
   auditTargets?: number | null;
 };
@@ -376,6 +377,22 @@ function totalForStep(
     );
   }
 
+  if (
+    step === "compileSceneDigests" ||
+    step === "extractNarrativeMemory" ||
+    step === "compileChapterCapsules"
+  ) {
+    return firstNumber(
+      record.total,
+      record.totalCount,
+      record.sceneCount,
+      record.scenes,
+      record.chapterCount,
+      record.chapters,
+      step === "compileChapterCapsules" ? totals?.chapters : totals?.scenes
+    );
+  }
+
   return firstNumber(record.total, record.totalCount, record.chunkCount);
 }
 
@@ -385,7 +402,11 @@ function analyzedForStep(
   counts: { remaining: number | null; total: number | null }
 ) {
   if (
-    (step === "summarizeChunks" || step === "runChapterAudits") &&
+    (step === "summarizeChunks" ||
+      step === "runChapterAudits" ||
+      step === "compileSceneDigests" ||
+      step === "extractNarrativeMemory" ||
+      step === "compileChapterCapsules") &&
     typeof counts.total === "number" &&
     typeof counts.remaining === "number"
   ) {
@@ -399,6 +420,8 @@ function analyzedForStep(
   return firstNumber(
     record.analyzed,
     record.audited,
+    record.compiled,
+    record.refreshed,
     record.drafted,
     record.summarized,
     record.stored
@@ -425,6 +448,21 @@ function progressLabelForStep(
     return `${counts.analyzed} / ${counts.total} section audits completed`;
   }
 
+  if (
+    (step === "compileSceneDigests" ||
+      step === "extractNarrativeMemory" ||
+      step === "compileChapterCapsules") &&
+    typeof counts.analyzed === "number" &&
+    typeof counts.total === "number"
+  ) {
+    const unit =
+      step === "compileChapterCapsules"
+        ? "chapters compiled"
+        : "memory items compiled";
+
+    return `${counts.analyzed} / ${counts.total} ${unit}`;
+  }
+
   return null;
 }
 
@@ -438,7 +476,13 @@ function stepProgressForStep(
     remainingLabel: string | null;
   }
 ): PipelineStepProgressDisplay | null {
-  if (step !== "summarizeChunks" && step !== "runChapterAudits") {
+  if (
+    step !== "summarizeChunks" &&
+    step !== "runChapterAudits" &&
+    step !== "compileSceneDigests" &&
+    step !== "extractNarrativeMemory" &&
+    step !== "compileChapterCapsules"
+  ) {
     return null;
   }
 

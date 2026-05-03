@@ -37,7 +37,7 @@ export type PipelineJobDiagnostic = {
 
 export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
   const now = new Date();
-  const [manuscript, run, jobs, readiness] = await Promise.all([
+  const [manuscript, run, jobs, readiness, sceneCount] = await Promise.all([
     prisma.manuscript.findUnique({
       where: { id: manuscriptId },
       select: {
@@ -61,7 +61,8 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
       where: { manuscriptId },
       orderBy: [{ createdAt: "asc" }]
     }),
-    getWorkspaceReadinessForManuscript(manuscriptId)
+    getWorkspaceReadinessForManuscript(manuscriptId),
+    prisma.scene.count({ where: { manuscriptId } })
   ]);
 
   if (!manuscript) {
@@ -108,6 +109,7 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
     totals: {
       chunks: manuscript.chunkCount,
       chapters: manuscript.chapterCount,
+      scenes: sceneCount,
       sections: manuscript.chapterCount,
       auditTargets: manuscript.chapterCount
     }

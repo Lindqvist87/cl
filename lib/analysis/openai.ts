@@ -59,7 +59,7 @@ export async function requestStructuredJson<T>({
 }): Promise<{ json: T; rawText: string; model: string }> {
   const completion = await getOpenAIClient().chat.completions.create({
     model,
-    reasoning_effort: reasoningEffort,
+    reasoning_effort: reasoningEffort as never,
     ...(temperature === undefined ? {} : { temperature }),
     response_format: { type: "json_object" },
     messages: [

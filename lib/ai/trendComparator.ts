@@ -30,7 +30,7 @@ export async function compareTrends(input: TrendComparisonInput) {
   }
 
   return requestEditorJson<TrendComparisonResult>({
-    ...modelConfigForRole("chiefEditor"),
+    ...modelConfigForRole("wholeBookCompiler"),
     system: [
       "You are a careful publishing trend analyst.",
       "Return strict JSON only.",

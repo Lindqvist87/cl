@@ -513,6 +513,11 @@ function humanStepProgressLabel(
       ? "avsnitt"
       : progress.step === "runChapterAudits"
         ? "manusdelar"
+        : progress.step === "compileChapterCapsules"
+          ? "kapitel"
+          : progress.step === "compileSceneDigests" ||
+              progress.step === "extractNarrativeMemory"
+            ? "minnesdelar"
         : "delar";
 
   if (
@@ -600,13 +605,19 @@ function formatStepName(step: string | null) {
 function humanStepName(step: string | null) {
   const labels: Record<string, string> = {
     parseAndNormalizeManuscript: "Läser in manuset",
-    splitIntoChapters: "Skapar textunderlag",
-    splitIntoChunks: "Skapar textunderlag",
-    createEmbeddingsForChunks: "Skapar textunderlag",
-    summarizeChunks: "Sammanfattar kapitel",
+    splitIntoChapters: "Skapar kapitel och scener",
+    splitIntoChunks: "Skapar textblock",
+    createEmbeddingsForChunks: "Indexerar textblock",
+    summarizeChunks: "Sammanfattar textblock",
     summarizeChapters: "Sammanfattar kapitel",
-    createManuscriptProfile: "Bygger redaktionell karta",
-    runChapterAudits: "Bygger redaktionell karta",
+    createManuscriptProfile: "Skapar manusprofil",
+    buildManuscriptNodes: "Bygger manusminne",
+    compileSceneDigests: "Bygger manusminne",
+    extractNarrativeMemory: "Bygger manusminne",
+    compileChapterCapsules: "Kompilerar kapitel",
+    compileWholeBookMap: "Kompilerar helhetskarta",
+    createNextBestEditorialActions: "Tar fram nästa redaktionella steg",
+    runChapterAudits: "Granskar kapitel",
     runWholeBookAudit: "Tar fram rekommendationer",
     compareAgainstCorpus: "Tar fram rekommendationer",
     compareAgainstTrendSignals: "Tar fram rekommendationer",

@@ -24,7 +24,7 @@ export async function analyzeWholeBook(input: WholeBookInput) {
   }
 
   return requestEditorJson<WholeBookAnalysisResult>({
-    ...modelConfigForRole("chiefEditor"),
+    ...modelConfigForRole("wholeBookCompiler"),
     system: [
       "You are a senior acquisition-minded manuscript editor.",
       "Return strict JSON only.",

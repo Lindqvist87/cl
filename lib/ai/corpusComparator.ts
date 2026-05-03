@@ -271,7 +271,7 @@ export async function compareCorpus(
   }
 
   return requestEditorJson<CorpusComparisonResult>({
-    ...modelConfigForRole("chiefEditor"),
+    ...modelConfigForRole("wholeBookCompiler"),
     system: CORPUS_COMPARISON_SYSTEM_PROMPT,
     user: serializeCorpusComparisonInput(input),
     retries: options.retries

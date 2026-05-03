@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import type { ParsedChunk, ParsedManuscript } from "@/lib/types";
 import { jsonInput } from "@/lib/json";
+import { countWords, normalizeWhitespace } from "@/lib/text/wordCount";
 
 type CreateManuscriptInput = {
   parsed: ParsedManuscript;
@@ -13,6 +14,17 @@ type CreateManuscriptInput = {
   authorName?: string;
   targetGenre?: string;
   targetAudience?: string;
+};
+
+type CreateUploadedManuscriptShellInput = {
+  originalText: string;
+  sourceFileName: string;
+  sourceMimeType?: string;
+  sourceFormat: Prisma.ManuscriptCreateInput["sourceFormat"];
+  authorName?: string;
+  targetGenre?: string;
+  targetAudience?: string;
+  title?: string;
 };
 
 const CREATE_MANY_BATCH_SIZE = 500;
@@ -159,6 +171,59 @@ export async function createStoredManuscript(input: CreateManuscriptInput) {
   }, MANUSCRIPT_UPLOAD_TRANSACTION);
 }
 
+export async function createUploadedManuscriptShell(
+  input: CreateUploadedManuscriptShellInput
+) {
+  const originalText = normalizeWhitespace(input.originalText);
+  const wordCount = countWords(originalText);
+  const sourceHash = createHash("sha256").update(originalText).digest("hex");
+  const title =
+    input.title?.trim() ||
+    inferManuscriptTitle(originalText, input.sourceFileName);
+
+  return prisma.$transaction(async (tx) => {
+    const manuscript = await tx.manuscript.create({
+      data: {
+        title,
+        authorName: input.authorName,
+        targetGenre: input.targetGenre,
+        targetAudience: input.targetAudience,
+        sourceFileName: input.sourceFileName,
+        sourceMimeType: input.sourceMimeType,
+        sourceFormat: input.sourceFormat,
+        originalText,
+        wordCount,
+        chapterCount: 0,
+        paragraphCount: 0,
+        chunkCount: 0,
+        status: "IMPORT_QUEUED",
+        analysisStatus: "NOT_STARTED",
+        metadata: jsonInput({
+          compilerVersion: "compiler-v1",
+          importFlow: "shell",
+          sourceFileName: input.sourceFileName,
+          sourceMimeType: input.sourceMimeType,
+          sourceFormat: input.sourceFormat,
+          sourceHash,
+          roughWordCount: wordCount
+        })
+      }
+    });
+
+    await tx.manuscriptVersion.create({
+      data: {
+        manuscriptId: manuscript.id,
+        versionNumber: 1,
+        sourceText: originalText,
+        sourceHash,
+        parserVersion: "compiler-shell-v1"
+      }
+    });
+
+    return manuscript;
+  });
+}
+
 function sceneKey(chapterOrder: number, sceneOrder: number) {
   return `${chapterOrder}:${sceneOrder}`;
 }
@@ -170,4 +235,20 @@ async function createManyInBatches<T>(
   for (let index = 0; index < rows.length; index += CREATE_MANY_BATCH_SIZE) {
     await createMany(rows.slice(index, index + CREATE_MANY_BATCH_SIZE));
   }
+}
+
+function inferManuscriptTitle(text: string, sourceFileName: string) {
+  const firstShortParagraph = text
+    .split(/\n{2,}/)
+    .map((paragraph) => paragraph.trim())
+    .find((paragraph) => {
+      const words = countWords(paragraph);
+      return words > 0 && words <= 14 && paragraph.length <= 120;
+    });
+
+  if (firstShortParagraph) {
+    return firstShortParagraph;
+  }
+
+  return sourceFileName.replace(/\.(docx|txt)$/i, "").replace(/[_-]+/g, " ");
 }
