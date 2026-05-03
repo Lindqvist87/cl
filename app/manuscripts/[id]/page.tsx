@@ -11,11 +11,13 @@ import {
 import { prisma } from "@/lib/prisma";
 import { AuditButton } from "@/components/AuditButton";
 import { LivePipelineProgress } from "@/components/LivePipelineProgress";
+import { PipelineAutoContinue } from "@/components/PipelineAutoContinue";
 import { PipelineActionButton } from "@/components/PipelineActionButton";
 import { StructureReviewPanel } from "@/components/StructureReviewPanel";
 import { executionModeLabel } from "@/lib/pipeline/jobRules";
 import type { AuditReportJson } from "@/lib/types";
 import { buildPipelineStatusDisplay } from "@/lib/pipeline/display";
+import { authorAnalysisAction } from "@/lib/pipeline/authorActions";
 import { getInngestRuntimeConfig } from "@/src/inngest/events";
 import { buildStructureReviewRows } from "@/lib/editorial/structureReview";
 
@@ -85,6 +87,12 @@ export default async function ManuscriptPage({
   });
   const analysisReady =
     manuscript.analysisStatus === "COMPLETED" || pipelineStatus.complete;
+  const analysisAction = authorAnalysisAction({
+    manuscriptId: manuscript.id,
+    analysisReady,
+    analysisStatus: manuscript.analysisStatus,
+    pipelineStatus
+  });
 
   return (
     <div className="space-y-6">
@@ -125,11 +133,8 @@ export default async function ManuscriptPage({
           </div>
 
           <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap lg:justify-end">
-            {!analysisReady ? (
-              <AuditButton
-                manuscriptId={manuscript.id}
-                disabled={manuscript.analysisStatus === "RUNNING"}
-              />
+            {analysisAction ? (
+              <AuditButton manuscriptId={manuscript.id} mode={analysisAction.mode} />
             ) : null}
             <Link
               href={`/manuscripts/${manuscript.id}/workspace`}
@@ -179,6 +184,10 @@ export default async function ManuscriptPage({
         manuscriptId={manuscript.id}
         initialStatus={pipelineStatus}
         showTechnicalDetails={showAdminTools}
+      />
+      <PipelineAutoContinue
+        manuscriptId={manuscript.id}
+        analysisStatus={manuscript.analysisStatus}
       />
 
       <section className="grid gap-6 lg:grid-cols-[minmax(520px,0.9fr)_1fr]">

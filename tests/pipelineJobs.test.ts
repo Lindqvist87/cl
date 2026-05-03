@@ -286,6 +286,60 @@ test("run-until-idle bootstraps missing manuscript jobs before running", async (
   }
 });
 
+test("manual fallback continues a queued job unlocked by a completed job in the same run", async () => {
+  const manuscriptId = "manuscript-chain-unlocked-job";
+  const oldApiKey = process.env.OPENAI_API_KEY;
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks"
+    ],
+    currentStep: "createEmbeddingsForChunks"
+  });
+  const jobs: MutableJob[] = [];
+  const chunks = summarizeChunkFixtures(manuscriptId, 1);
+  const outputs: Array<Record<string, unknown>> = [];
+
+  delete process.env.OPENAI_API_KEY;
+
+  try {
+    await withPatchedPrisma(
+      pipelineStepPatches({ manuscriptId, run, jobs, chunks, outputs }),
+      async () => {
+        const result = await runReadyPipelineJobs({
+          manuscriptId,
+          maxJobs: 2,
+          maxSeconds: 5,
+          maxItemsPerStep: 1,
+          workerType: "MANUAL",
+          workerId: "test:manual-chain"
+        });
+
+        const embeddingJob = jobs.find(
+          (job) => job.type === "createEmbeddingsForChunks"
+        );
+        const summarizeJob = jobs.find((job) => job.type === "summarizeChunks");
+        const chapterJob = jobs.find((job) => job.type === "summarizeChapters");
+
+        assert.equal(result.jobsRun, 2);
+        assert.deepEqual(
+          result.results.map((job) => job.type),
+          ["createEmbeddingsForChunks", "summarizeChunks"]
+        );
+        assert.equal(embeddingJob?.status, PIPELINE_JOB_STATUS.COMPLETED);
+        assert.equal(summarizeJob?.status, PIPELINE_JOB_STATUS.COMPLETED);
+        assert.equal(chapterJob?.status, PIPELINE_JOB_STATUS.QUEUED);
+        assert.deepEqual(result.readyJobIds, [summarizeJob?.id, chapterJob?.id]);
+        assert.equal(result.remainingReadyJobs, 1);
+        assert.equal(result.hasRemainingWork, true);
+      }
+    );
+  } finally {
+    restoreEnv("OPENAI_API_KEY", oldApiKey);
+  }
+});
+
 test("ready runner reports a still-locked running manuscript job", async () => {
   const manuscriptId = "manuscript-running-lock";
   const checkpoint = checkpointBeforeRunChapterAudits();
@@ -1013,6 +1067,33 @@ function summarizeChunksPatches(input: {
       }
     ]
   ];
+}
+
+function pipelineStepPatches(input: {
+  manuscriptId: string;
+  run: MutableRun;
+  jobs: MutableJob[];
+  chunks: Array<Record<string, unknown>>;
+  outputs: Array<Record<string, unknown>>;
+}): Array<[object, Record<string, unknown>]> {
+  const patches = summarizeChunksPatches(input);
+  const manuscriptPatch = patches[0][1];
+  const chunkPatch = patches.find(([target]) => target === prisma.manuscriptChunk)?.[1];
+
+  manuscriptPatch.findUnique = async () => ({ id: input.manuscriptId });
+
+  if (chunkPatch) {
+    chunkPatch.findMany = async () => input.chunks;
+  }
+
+  patches.push([
+    prisma.workerHeartbeat,
+    {
+      upsert: async (args: { update: Record<string, unknown> }) => args.update
+    }
+  ]);
+
+  return patches;
 }
 
 function summarizeChunkFixtures(manuscriptId: string, count: number) {
