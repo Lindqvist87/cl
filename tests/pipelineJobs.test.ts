@@ -2,7 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import type { PipelineJob } from "@prisma/client";
-import { pipelineStartHttpStatus } from "../lib/pipeline/startPipeline";
+import {
+  manualFallbackRunLimits,
+  pipelineStartHttpStatus
+} from "../lib/pipeline/startPipeline";
 import { plannedPipelineJobs } from "../lib/pipeline/jobPlanner";
 import {
   CORPUS_ANALYSIS_PIPELINE_NAME
@@ -706,6 +709,17 @@ test("pipeline start responses only accept successful Inngest dispatches", () =>
   assert.equal(
     pipelineStartHttpStatus({ executionMode: "MANUAL", accepted: false }),
     200
+  );
+});
+
+test("manual start fallback is not capped to the small Inngest batch size", () => {
+  assert.deepEqual(
+    manualFallbackRunLimits({ maxJobsPerRun: 3, maxSecondsPerRun: 25 }),
+    { maxJobs: 50, maxSeconds: 240 }
+  );
+  assert.deepEqual(
+    manualFallbackRunLimits({ maxJobsPerRun: 75, maxSecondsPerRun: 300 }),
+    { maxJobs: 75, maxSeconds: 300 }
   );
 });
 

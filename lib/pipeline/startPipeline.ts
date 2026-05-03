@@ -10,6 +10,9 @@ import {
   sendInngestEvent
 } from "@/src/inngest/events";
 
+const MANUAL_FALLBACK_MIN_MAX_JOBS = 50;
+const MANUAL_FALLBACK_MIN_MAX_SECONDS = 240;
+
 export async function startManuscriptPipeline(input: {
   manuscriptId: string;
   mode: PipelineStartMode;
@@ -45,10 +48,11 @@ export async function startManuscriptPipeline(input: {
     };
   }
 
+  const manualLimits = manualFallbackRunLimits(config);
   const batch = await runReadyPipelineJobs({
     manuscriptId: input.manuscriptId,
-    maxJobs: config.maxJobsPerRun,
-    maxSeconds: config.maxSecondsPerRun,
+    maxJobs: manualLimits.maxJobs,
+    maxSeconds: manualLimits.maxSeconds,
     workerType: "MANUAL",
     workerId: "manual:start-pipeline"
   });
@@ -73,4 +77,17 @@ export function pipelineStartHttpStatus(result: {
   }
 
   return 200;
+}
+
+export function manualFallbackRunLimits(config: {
+  maxJobsPerRun: number;
+  maxSecondsPerRun: number;
+}) {
+  return {
+    maxJobs: Math.max(config.maxJobsPerRun, MANUAL_FALLBACK_MIN_MAX_JOBS),
+    maxSeconds: Math.max(
+      config.maxSecondsPerRun,
+      MANUAL_FALLBACK_MIN_MAX_SECONDS
+    )
+  };
 }
