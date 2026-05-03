@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   CheckCircle2,
@@ -32,11 +32,13 @@ export function LivePipelineProgress({
   manuscriptId,
   initialStatus,
   analysisStatus,
+  manualQueuedMode = false,
   showTechnicalDetails = false
 }: {
   manuscriptId: string;
   initialStatus: PipelineStatusDisplay;
   analysisStatus?: string;
+  manualQueuedMode?: boolean;
   showTechnicalDetails?: boolean;
 }) {
   const [status, setStatus] = useState(initialStatus);
@@ -63,13 +65,20 @@ export function LivePipelineProgress({
     [diagnostics, status]
   );
   const shouldPoll = shouldPollPipelineDiagnostics(pollingSnapshot);
+  const waitingForManualRun =
+    manualQueuedMode &&
+    !status.complete &&
+    !autoRunnerActive &&
+    optimisticPhase === null &&
+    status.jobCounts.running === 0;
   const analysisIsRunning =
     analysisStatus?.toUpperCase() === "RUNNING" &&
+    !waitingForManualRun &&
     diagnostics?.state !== "blocked_by_error" &&
     !status.complete &&
     status.currentJobStatus !== "FAILED";
   const liveShouldPoll =
-    shouldPoll ||
+    (waitingForManualRun ? false : shouldPoll) ||
     analysisIsRunning ||
     autoRunnerActive ||
     optimisticPhase === "starting" ||
@@ -92,6 +101,7 @@ export function LivePipelineProgress({
     status,
     isBlockedByError,
     isWaitingForNextPhase,
+    waitingForManualRun,
     optimisticPhase,
     rewriteDraftsDeferred,
     liveShouldPoll
@@ -100,6 +110,7 @@ export function LivePipelineProgress({
     status,
     isBlockedByError,
     isWaitingForNextPhase,
+    waitingForManualRun,
     optimisticPhase,
     rewriteDraftsDeferred,
     liveShouldPoll
@@ -111,6 +122,7 @@ export function LivePipelineProgress({
     diagnostics,
     isBlockedByError,
     isWaitingForNextPhase,
+    waitingForManualRun,
     optimisticPhase,
     rewriteDraftsDeferred
   });
@@ -132,9 +144,11 @@ export function LivePipelineProgress({
     ? AlertTriangle
     : status.complete || rewriteDraftsDeferred
       ? CheckCircle2
-      : liveShouldPoll
-        ? LoaderCircle
-        : Sparkles;
+      : waitingForManualRun
+        ? Clock3
+        : liveShouldPoll
+          ? LoaderCircle
+          : Sparkles;
   const StatusIcon = statusIcon;
   const statusIconSpins =
     statusIcon === LoaderCircle && liveShouldPoll && !isBlockedByError;
@@ -185,7 +199,10 @@ export function LivePipelineProgress({
       ) {
         setOptimisticPhase(null);
         setAutoRunnerActive(false);
-      } else if (shouldPollPipelineDiagnostics(nextSnapshot)) {
+      } else if (
+        !manualQueuedMode &&
+        shouldPollPipelineDiagnostics(nextSnapshot)
+      ) {
         setOptimisticPhase("running");
       }
     } catch (error) {
@@ -198,7 +215,7 @@ export function LivePipelineProgress({
       refreshInFlightRef.current = false;
       setIsRefreshing(false);
     }
-  }, [manuscriptId]);
+  }, [manuscriptId, manualQueuedMode]);
 
   useEffect(() => {
     void refreshDiagnostics();
@@ -232,6 +249,8 @@ export function LivePipelineProgress({
         setOptimisticPhase("starting");
       } else if (detail.phase === "running" || detail.autoRunnerActive) {
         setOptimisticPhase("running");
+      } else if (manualQueuedMode && detail.autoRunnerActive === false) {
+        setOptimisticPhase(null);
       } else if (detail.phase === "failed" || detail.phase === "idle") {
         setOptimisticPhase(null);
       }
@@ -247,7 +266,7 @@ export function LivePipelineProgress({
         handleRefresh
       );
     };
-  }, [manuscriptId, refreshDiagnostics]);
+  }, [manuscriptId, manualQueuedMode, refreshDiagnostics]);
 
   return (
     <section className="overflow-hidden rounded-xl border border-accent/15 bg-[#fffdfc] p-4 shadow-panel sm:p-5">
@@ -327,6 +346,7 @@ export function LivePipelineProgress({
           {isWaitingForNextPhase ? (
             <span>Nästa fas startar strax</span>
           ) : null}
+          {waitingForManualRun ? <span>Väntar på manuell körning</span> : null}
         </div>
         <div className="inline-flex items-center gap-2 font-semibold text-slate-500">
           <Clock3 size={16} aria-hidden="true" />
@@ -439,6 +459,7 @@ function humanPhaseLabel(input: {
   status: PipelineStatusDisplay;
   isBlockedByError: boolean;
   isWaitingForNextPhase: boolean;
+  waitingForManualRun: boolean;
   optimisticPhase: OptimisticPhase;
   rewriteDraftsDeferred: boolean;
   liveShouldPoll: boolean;
@@ -459,6 +480,10 @@ function humanPhaseLabel(input: {
     return "Analysen startar";
   }
 
+  if (input.waitingForManualRun) {
+    return "Analys köad";
+  }
+
   if (input.isWaitingForNextPhase) {
     return "Nästa fas startar strax";
   }
@@ -474,6 +499,7 @@ function progressGuidance(input: {
   status: PipelineStatusDisplay;
   isBlockedByError: boolean;
   isWaitingForNextPhase: boolean;
+  waitingForManualRun: boolean;
   optimisticPhase: OptimisticPhase;
   rewriteDraftsDeferred: boolean;
   liveShouldPoll: boolean;
@@ -492,6 +518,10 @@ function progressGuidance(input: {
 
   if (input.optimisticPhase === "starting") {
     return "Vi har tagit emot starten och förbereder första fasen. Statusen uppdateras automatiskt.";
+  }
+
+  if (input.waitingForManualRun) {
+    return "Analysjobben är köade och väntar på manuell körning. Kör en analysbatch för att fortsätta.";
   }
 
   if (input.isWaitingForNextPhase) {
@@ -643,6 +673,7 @@ function liveStatusLabel(input: {
   diagnostics: PipelineDiagnosticsResponse | null;
   isBlockedByError: boolean;
   isWaitingForNextPhase: boolean;
+  waitingForManualRun: boolean;
   optimisticPhase: OptimisticPhase;
   rewriteDraftsDeferred: boolean;
 }) {
@@ -664,6 +695,10 @@ function liveStatusLabel(input: {
 
   if (input.rewriteDraftsDeferred) {
     return "Skapar arbetsyta";
+  }
+
+  if (input.waitingForManualRun) {
+    return "Väntar på körning";
   }
 
   if (input.isWaitingForNextPhase) {

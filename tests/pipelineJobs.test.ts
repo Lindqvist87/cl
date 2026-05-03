@@ -708,6 +708,10 @@ test("pipeline start responses only accept successful Inngest dispatches", () =>
     503
   );
   assert.equal(
+    pipelineStartHttpStatus({ executionMode: "QUEUED", accepted: true }),
+    202
+  );
+  assert.equal(
     pipelineStartHttpStatus({ executionMode: "MANUAL", accepted: false }),
     200
   );

@@ -23,6 +23,7 @@ const envSchema = z.object({
   NEXT_PUBLIC_APP_NAME: z.string().min(1).default("Manuscript Audit"),
   AUTO_GENERATE_FULL_BOOK_REWRITES: z.string().min(1).default("false"),
   ENABLE_INNGEST_WORKER: z.string().min(1).optional(),
+  SHOW_OPERATOR_TOOLS: z.string().min(1).optional(),
   INNGEST_APP_ID: z.string().min(1).optional(),
   INNGEST_EVENT_KEY: z.string().min(1).optional(),
   INNGEST_SIGNING_KEY: z.string().min(1).optional(),
@@ -60,6 +61,7 @@ export const env = envSchema.parse({
   AUTO_GENERATE_FULL_BOOK_REWRITES:
     process.env.AUTO_GENERATE_FULL_BOOK_REWRITES,
   ENABLE_INNGEST_WORKER: process.env.ENABLE_INNGEST_WORKER || undefined,
+  SHOW_OPERATOR_TOOLS: process.env.SHOW_OPERATOR_TOOLS || undefined,
   INNGEST_APP_ID: process.env.INNGEST_APP_ID || undefined,
   INNGEST_EVENT_KEY: process.env.INNGEST_EVENT_KEY || undefined,
   INNGEST_SIGNING_KEY: process.env.INNGEST_SIGNING_KEY || undefined,

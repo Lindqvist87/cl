@@ -37,8 +37,11 @@ export type UploadRouteDependencies = {
   ) => Promise<PipelineStartResultForRoute>;
 };
 
+const PIPELINE_QUEUED_MESSAGE =
+  "Manuset är uppladdat och analysjobben är köade. Starta eller återuppta analysen via admin.";
+
 const PIPELINE_NOT_STARTED_MESSAGE =
-  "Manuscript uploaded, but background pipeline did not start automatically. Use admin retry/resume.";
+  "Manuset är uppladdat, men analysen startade inte automatiskt. Starta eller återuppta analysen via admin.";
 
 const defaultUploadRouteDependencies: UploadRouteDependencies = {
   extractTextFromUpload,
@@ -118,10 +121,27 @@ export function createUploadPostHandler(
         runInlineWhenInngestDisabled: false
       });
 
+      if (pipeline.executionMode === "QUEUED") {
+        return NextResponse.json(
+          {
+            manuscriptId: manuscript.id,
+            title: manuscript.title,
+            wordCount: manuscript.wordCount,
+            status: manuscript.status,
+            executionMode: "QUEUED",
+            pipelineStarted: false,
+            pipelineQueued: true,
+            message: PIPELINE_QUEUED_MESSAGE,
+            pipeline
+          },
+          { status: 202 }
+        );
+      }
+
       if (!pipeline.accepted) {
         const warning = pipelineWarningFromResult(pipeline);
         logUploadFailure("pipeline", new Error(warning), warning);
-        return pipelineNotStartedResponse(manuscript, warning);
+        return pipelineNotStartedResponse(manuscript, warning, pipeline);
       }
 
       return NextResponse.json(
@@ -131,7 +151,9 @@ export function createUploadPostHandler(
           wordCount: manuscript.wordCount,
           status: manuscript.status,
           executionMode: pipeline.executionMode,
-          pipelineStarted: true,
+          pipelineStarted:
+            pipeline.executionMode === "INNGEST" && pipeline.accepted === true,
+          pipelineQueued: false,
           message: "Import started",
           pipeline
         },
@@ -150,16 +172,20 @@ export function createUploadPostHandler(
 
 function pipelineNotStartedResponse(
   manuscript: UploadedManuscriptShellForRoute,
-  pipelineWarning: string
+  pipelineWarning: string,
+  pipeline?: PipelineStartResultForRoute
 ) {
   return NextResponse.json(
     {
       manuscriptId: manuscript.id,
       title: manuscript.title,
       status: "IMPORT_QUEUED",
+      executionMode: pipeline?.executionMode,
       pipelineStarted: false,
+      pipelineQueued: false,
       pipelineWarning,
-      message: PIPELINE_NOT_STARTED_MESSAGE
+      message: PIPELINE_NOT_STARTED_MESSAGE,
+      pipeline
     },
     { status: 202 }
   );

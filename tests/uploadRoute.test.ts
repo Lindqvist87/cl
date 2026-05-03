@@ -1,10 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { ManuscriptFormat } from "@prisma/client";
 import {
   createUploadPostHandler,
   type UploadRouteDependencies
 } from "../lib/server/uploadImport";
+import {
+  ADMIN_JOBS_PATH,
+  UploadStatusLinks,
+  uploadFeedbackFromResponse
+} from "../components/UploadForm";
 
 test("upload route returns validation phase when file is missing", async (t) => {
   t.mock.method(console, "error", () => undefined);
@@ -81,10 +88,46 @@ test("upload route succeeds when pipeline start throws", async (t) => {
     title: "Test Manuscript",
     status: "IMPORT_QUEUED",
     pipelineStarted: false,
+    pipelineQueued: false,
     pipelineWarning: "Inngest event send failed.",
     message:
-      "Manuscript uploaded, but background pipeline did not start automatically. Use admin retry/resume."
+      "Manuset är uppladdat, men analysen startade inte automatiskt. Starta eller återuppta analysen via admin."
   });
+});
+
+test("upload route reports queued mode without claiming the pipeline started", async () => {
+  let runInlineWhenInngestDisabled: boolean | undefined;
+  const handler = createUploadPostHandler({
+    ...baseDependencies(),
+    startManuscriptPipeline: async (input) => {
+      runInlineWhenInngestDisabled = input.runInlineWhenInngestDisabled;
+      return {
+        executionMode: "QUEUED",
+        accepted: true,
+        manuscriptId: input.manuscriptId,
+        runId: "run-1",
+        jobCount: 18,
+        warnings: [
+          "Inngest is not configured; jobs were queued but not run in the upload request."
+        ]
+      };
+    }
+  });
+
+  const response = await handler(uploadRequest());
+  const body = await response.json();
+
+  assert.equal(response.status, 202);
+  assert.equal(runInlineWhenInngestDisabled, false);
+  assert.equal(body.manuscriptId, "manuscript-1");
+  assert.equal(body.executionMode, "QUEUED");
+  assert.equal(body.pipelineStarted, false);
+  assert.equal(body.pipelineQueued, true);
+  assert.equal(
+    body.message,
+    "Manuset är uppladdat och analysjobben är köade. Starta eller återuppta analysen via admin."
+  );
+  assert.equal(body.pipeline.accepted, true);
 });
 
 test("upload route succeeds when pipeline start is not accepted", async (t) => {
@@ -110,11 +153,41 @@ test("upload route succeeds when pipeline start is not accepted", async (t) => {
   assert.equal(response.status, 202);
   assert.equal(body.manuscriptId, "manuscript-1");
   assert.equal(body.status, "IMPORT_QUEUED");
+  assert.equal(body.executionMode, "INNGEST");
   assert.equal(body.pipelineStarted, false);
+  assert.equal(body.pipelineQueued, false);
   assert.equal(
     body.pipelineWarning,
     "Inngest rejected the event. Event key is missing."
   );
+});
+
+test("upload route keeps shell success when Inngest branch environment is missing", async (t) => {
+  t.mock.method(console, "error", () => undefined);
+
+  const handler = createUploadPostHandler({
+    ...baseDependencies(),
+    startManuscriptPipeline: async (input) => ({
+      executionMode: "INNGEST",
+      accepted: false,
+      manuscriptId: input.manuscriptId,
+      runId: "run-1",
+      jobCount: 18,
+      eventSent: false,
+      eventError: "Inngest branch environment returned 404.",
+      warnings: ["Preview branch environment was not created."]
+    })
+  });
+
+  const response = await handler(uploadRequest());
+  const body = await response.json();
+
+  assert.equal(response.status, 202);
+  assert.equal(body.manuscriptId, "manuscript-1");
+  assert.equal(body.pipelineStarted, false);
+  assert.equal(body.pipelineQueued, false);
+  assert.match(body.pipelineWarning, /404/);
+  assert.match(body.pipelineWarning, /Preview branch environment/);
 });
 
 test("upload route succeeds when pipeline start is accepted", async () => {
@@ -129,7 +202,92 @@ test("upload route succeeds when pipeline start is accepted", async () => {
   assert.equal(body.status, "IMPORT_QUEUED");
   assert.equal(body.executionMode, "INNGEST");
   assert.equal(body.pipelineStarted, true);
+  assert.equal(body.pipelineQueued, false);
   assert.equal(body.message, "Import started");
+});
+
+test("frontend keeps manuscript and admin links for queued uploads", () => {
+  const feedback = uploadFeedbackFromResponse(true, {
+    manuscriptId: "manuscript-1",
+    pipelineStarted: false,
+    pipelineQueued: true,
+    message:
+      "Manuset är uppladdat och analysjobben är köade. Starta eller återuppta analysen via admin."
+  });
+
+  if (feedback.kind !== "notice") {
+    assert.fail(`Expected notice feedback, received ${feedback.kind}`);
+  }
+
+  assert.equal(feedback.manuscriptId, "manuscript-1");
+  assert.equal(feedback.showAdminJobsLink, true);
+  assert.match(feedback.message, /analysjobben är köade/);
+
+  const markup = renderToStaticMarkup(
+    createElement(UploadStatusLinks, {
+      manuscriptId: feedback.manuscriptId,
+      showAdminJobsLink: feedback.showAdminJobsLink
+    })
+  );
+
+  assert.match(markup, /href="\/manuscripts\/manuscript-1"/);
+  assert.match(markup, /Visa uppladdat manus/);
+  assert.match(markup, new RegExp(`href="${escapeRegExp(ADMIN_JOBS_PATH)}"`));
+});
+
+test("frontend keeps manuscript link for pipeline warning uploads", () => {
+  const feedback = uploadFeedbackFromResponse(true, {
+    manuscriptId: "manuscript-1",
+    pipelineStarted: false,
+    pipelineQueued: false,
+    pipelineWarning: "Inngest branch environment returned 404."
+  });
+
+  if (feedback.kind !== "notice") {
+    assert.fail(`Expected notice feedback, received ${feedback.kind}`);
+  }
+
+  assert.equal(feedback.manuscriptId, "manuscript-1");
+  assert.equal(feedback.showAdminJobsLink, false);
+  assert.match(feedback.message, /Manuset är uppladdat/);
+  assert.match(feedback.message, /404/);
+
+  const markup = renderToStaticMarkup(
+    createElement(UploadStatusLinks, {
+      manuscriptId: feedback.manuscriptId,
+      showAdminJobsLink: feedback.showAdminJobsLink
+    })
+  );
+
+  assert.match(markup, /href="\/manuscripts\/manuscript-1"/);
+  assert.match(markup, /Visa uppladdat manus/);
+  assert.doesNotMatch(markup, /admin\/jobs/);
+});
+
+test("frontend only classifies actual upload failures as red errors", () => {
+  const queued = uploadFeedbackFromResponse(true, {
+    manuscriptId: "manuscript-1",
+    pipelineQueued: true,
+    pipelineStarted: false
+  });
+  const warning = uploadFeedbackFromResponse(true, {
+    manuscriptId: "manuscript-1",
+    pipelineStarted: false,
+    pipelineWarning: "Inngest branch environment returned 404."
+  });
+  const storageFailure = uploadFeedbackFromResponse(false, {
+    error: "Unable to store uploaded manuscript.",
+    phase: "storage"
+  });
+
+  assert.notEqual(queued.kind, "error");
+  assert.notEqual(warning.kind, "error");
+  if (storageFailure.kind !== "error") {
+    assert.fail(`Expected error feedback, received ${storageFailure.kind}`);
+  }
+
+  assert.match(storageFailure.message, /Unable to store uploaded manuscript/);
+  assert.match(storageFailure.message, /phase=storage/);
 });
 
 function baseDependencies(): UploadRouteDependencies {
@@ -169,4 +327,8 @@ function uploadRequest() {
     method: "POST",
     body: formData
   });
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
