@@ -312,6 +312,28 @@ test("pipeline diagnostics polling continues for active work and stops for done 
   );
   assert.equal(
     shouldPollPipelineDiagnostics({
+      run: { status: "RUNNING", error: null },
+      pipelineStatus: {
+        complete: false,
+        currentJobStatus: null,
+        lastError: null
+      }
+    }),
+    true
+  );
+  assert.equal(
+    shouldPollPipelineDiagnostics({
+      run: { status: "RUNNING", error: null },
+      pipelineStatus: {
+        complete: false,
+        currentJobStatus: PIPELINE_JOB_STATUS.BLOCKED,
+        lastError: null
+      }
+    }),
+    true
+  );
+  assert.equal(
+    shouldPollPipelineDiagnostics({
       state: "done",
       pipelineStatus: { complete: true, currentJobStatus: "COMPLETED" }
     }),

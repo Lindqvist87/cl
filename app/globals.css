@@ -32,6 +32,24 @@ select {
   background: rgba(232, 93, 158, 0.18);
 }
 
+@keyframes paperlight-progress-shimmer {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(260%);
+  }
+}
+
+@keyframes paperlight-progress-indeterminate {
+  0% {
+    transform: translateX(-120%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+
 input:not([type="checkbox"]):not([type="radio"]),
 textarea,
 select {
@@ -76,5 +94,14 @@ div.shadow-panel:not(.rounded-full):not(.rounded-md):not(.rounded-lg):not(.round
 
   .detail-toggle {
     @apply rounded-xl border border-line bg-white shadow-panel;
+  }
+
+  .paperlight-progress-shimmer {
+    animation: paperlight-progress-shimmer 1.8s ease-in-out infinite;
+  }
+
+  .paperlight-progress-indeterminate {
+    width: 45%;
+    animation: paperlight-progress-indeterminate 1.7s ease-in-out infinite;
   }
 }

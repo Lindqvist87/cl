@@ -5,4 +5,5 @@ export type PipelineDiagnosticsRefreshDetail = {
   manuscriptId: string;
   result?: unknown;
   autoRunnerActive?: boolean;
+  phase?: "starting" | "running" | "failed" | "idle";
 };
