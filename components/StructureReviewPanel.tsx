@@ -1,19 +1,18 @@
 import Link from "next/link";
 import {
-  DETECTED_SECTION_HELP_TEXT,
   type StructureReviewRow
 } from "@/lib/editorial/structureReview";
 
 export function StructureReviewPanel({
   getHref,
   rows,
-  title = "Book structure",
-  description = DETECTED_SECTION_HELP_TEXT,
-  sectionColumnLabel = "Book section",
-  wordColumnLabel = "Words",
-  issueColumnLabel = "Issues",
-  typeColumnLabel = "Current type",
-  emptyLabel = "No book structure is available yet."
+  title = "Manusstruktur",
+  description = "Upptäckta delar kan vara kapitel, scener, numrerade passager eller omarkerade brytningar.",
+  sectionColumnLabel = "Manusdel",
+  wordColumnLabel = "Ord",
+  issueColumnLabel = "Noteringar",
+  typeColumnLabel = "Typ",
+  emptyLabel = "Ingen manusstruktur finns ännu."
 }: {
   getHref?: (row: StructureReviewRow) => string;
   rows: StructureReviewRow[];

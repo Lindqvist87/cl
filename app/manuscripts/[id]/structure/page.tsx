@@ -72,14 +72,14 @@ export default async function ManuscriptStructurePage({
               className="inline-flex items-center gap-2 text-sm text-accent hover:underline"
             >
               <ArrowLeft size={16} aria-hidden="true" />
-              Back to manuscript overview
+              Till manusöversikt
             </Link>
             <h1 className="mt-3 text-2xl font-semibold tracking-normal">
-              Book structure
+              Manusstruktur
             </h1>
             <p className="mt-1 text-lg font-semibold">{manuscript.title}</p>
             <p className="mt-1 text-sm text-slate-500">
-              {manuscript.sourceFileName || "Original filename unavailable"}
+              {manuscript.sourceFileName || "Filnamn saknas"}
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -88,47 +88,47 @@ export default async function ManuscriptStructurePage({
               className="secondary-button min-h-9 px-3"
             >
               <FileText size={16} aria-hidden="true" />
-              Editorial report
+              Rapport
             </Link>
             <Link
               href={`/manuscripts/${manuscript.id}/workspace`}
               className="secondary-button min-h-9 px-3"
             >
               <BookOpen size={16} aria-hidden="true" />
-              Editorial workspace
+              Arbetsyta
             </Link>
           </div>
         </div>
 
         <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-          <HeaderFact label="Word count" value={formatNumber(manuscript.wordCount)} />
+          <HeaderFact label="Ord" value={formatNumber(manuscript.wordCount)} />
           <HeaderFact
-            label="Book structure"
+            label="Manusstruktur"
             value={formatNumber(inspection.stats.detectedSections)}
           />
-          <HeaderFact label="Chunks" value={formatNumber(inspection.stats.chunkCount)} />
-          <HeaderFact label="Analysis status" value={formatStatus(manuscript.analysisStatus)} />
-          <HeaderFact label="Import status" value={formatStatus(manuscript.status)} />
+          <HeaderFact label="Textdelar" value={formatNumber(inspection.stats.chunkCount)} />
+          <HeaderFact label="Analys" value={formatStatus(manuscript.analysisStatus)} />
+          <HeaderFact label="Import" value={formatStatus(manuscript.status)} />
         </div>
       </header>
 
       <section className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
-        <Stat label="Total words" value={formatNumber(inspection.stats.totalWords)} />
+        <Stat label="Ord totalt" value={formatNumber(inspection.stats.totalWords)} />
         <Stat
-          label="Book structure"
+          label="Manusstruktur"
           value={formatNumber(inspection.stats.detectedSections)}
         />
-        <Stat label="Chunks" value={formatNumber(inspection.stats.chunkCount)} />
+        <Stat label="Textdelar" value={formatNumber(inspection.stats.chunkCount)} />
         <Stat
-          label="Average words per section"
+          label="Snittord per manusdel"
           value={formatNumber(inspection.stats.averageWordsPerSection)}
         />
         <Stat
-          label="Average chunks per section"
+          label="Snitt textdelar per manusdel"
           value={formatNumber(inspection.stats.averageChunksPerSection)}
         />
         <Stat
-          label="Structure warnings"
+          label="Strukturvarningar"
           value={formatNumber(inspection.stats.warningCount)}
         />
       </section>
@@ -138,7 +138,7 @@ export default async function ManuscriptStructurePage({
           <div className="flex items-center gap-2">
             <TriangleAlert size={18} aria-hidden="true" />
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Structure warnings
+              Strukturvarningar
             </h2>
           </div>
           <div className="mt-3 flex flex-wrap gap-2">
@@ -153,16 +153,16 @@ export default async function ManuscriptStructurePage({
         <section className="border border-line bg-white shadow-panel">
           <div className="border-b border-line px-4 py-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Book structure
+              Manusstruktur
             </h2>
             <p className="mt-1 text-sm text-slate-500">
-              Review the imported sections before relying on deeper editorial analysis.
+              Granska hur manuset delades upp innan du går vidare i texten.
             </p>
           </div>
           <div className="divide-y divide-line">
             {inspection.sections.length === 0 ? (
               <p className="px-4 py-8 text-sm text-slate-500">
-                No book sections were imported for this manuscript.
+                Inga manusdelar importerades för det här manuset.
               </p>
             ) : (
               inspection.sections.map((section) => (
@@ -215,12 +215,12 @@ function SectionRow({
             href={`/manuscripts/${manuscriptId}/structure?selectedSectionId=${section.id}`}
             className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-accent hover:underline"
           >
-              Review section
+              Granska del
             <ArrowRight size={16} aria-hidden="true" />
           </Link>
         </div>
-        <SectionMeasure label="Words" value={formatNumber(section.wordCount)} />
-        <SectionMeasure label="Chunks" value={formatNumber(section.chunkCount)} />
+        <SectionMeasure label="Ord" value={formatNumber(section.wordCount)} />
+        <SectionMeasure label="Textdelar" value={formatNumber(section.chunkCount)} />
       </div>
     </article>
   );
@@ -236,7 +236,7 @@ function SectionDetail({
   if (!section) {
     return (
       <aside className="border border-line bg-white p-4 text-sm text-slate-500 shadow-panel">
-        Select a book section to inspect its text and chunks.
+        Välj en manusdel för att granska texten.
       </aside>
     );
   }
@@ -245,18 +245,18 @@ function SectionDetail({
     <aside className="border border-line bg-white shadow-panel">
       <div className="border-b border-line px-4 py-3">
         <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-          Section detail
+          Manusdel
         </h2>
         <h3 className="mt-2 text-xl font-semibold">{section.title}</h3>
         <p className="mt-1 text-sm text-slate-500">
-          {formatNumber(section.wordCount)} words | {formatNumber(section.chunkCount)} chunks
+          {formatNumber(section.wordCount)} ord | {formatNumber(section.chunkCount)} textdelar
         </p>
       </div>
 
       <div className="space-y-5 px-4 py-4">
         {section.warnings.length > 0 ? (
           <div>
-            <h4 className="text-sm font-semibold">Structure warnings</h4>
+            <h4 className="text-sm font-semibold">Strukturvarningar</h4>
             <div className="mt-2 flex flex-wrap gap-2">
               {section.warnings.map((warning) => (
                 <WarningBadge key={warning.code} label={warning.message} />
@@ -266,40 +266,39 @@ function SectionDetail({
         ) : null}
 
         <div>
-          <h4 className="text-sm font-semibold">Cleaned text</h4>
+          <h4 className="text-sm font-semibold">Rensad text</h4>
           <div className="mt-2 max-h-[360px] overflow-auto whitespace-pre-wrap rounded-lg border border-line bg-paper-alt p-3 text-sm leading-7 text-slate-800">
             {section.cleanedText
               ? section.cleanedText
-              : "No cleaned text is available for this section."}
+              : "Ingen rensad text finns för den här manusdelen."}
           </div>
           <Link
             href={`/manuscripts/${manuscriptId}/chapters/${section.id}`}
             className="mt-3 inline-flex items-center gap-2 text-sm font-semibold text-accent hover:underline"
           >
-            Open full section page
+            Öppna hela manusdelen
             <ArrowRight size={16} aria-hidden="true" />
           </Link>
         </div>
 
         <div>
-          <h4 className="text-sm font-semibold">Chunks belonging to this section</h4>
+          <h4 className="text-sm font-semibold">Textdelar i manusdelen</h4>
           <div className="mt-3 divide-y divide-line border-y border-line">
             {section.chunks.length === 0 ? (
               <p className="py-4 text-sm text-slate-500">
-                No chunks were imported for this section.
+                Inga textdelar importerades för den här manusdelen.
               </p>
             ) : (
               section.chunks.map((chunk) => (
                 <div key={chunk.id} className="py-3">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    <span className="font-semibold text-ink">Chunk {chunk.chunkIndex}</span>
-                    <span>{formatNumber(chunk.wordCount)} words</span>
-                    <span>{formatNumber(chunk.tokenEstimate)} token estimate</span>
-                    <span>Summary {chunk.hasSummary ? "yes" : "no"}</span>
-                    <span>Embedding not tracked</span>
+                    <span className="font-semibold text-ink">Textdel {chunk.chunkIndex}</span>
+                    <span>{formatNumber(chunk.wordCount)} ord</span>
+                    <span>{formatNumber(chunk.tokenEstimate)} tokenuppskattning</span>
+                    <span>Sammanfattning {chunk.hasSummary ? "ja" : "nej"}</span>
                   </div>
                   <p className="mt-2 text-sm leading-6 text-slate-700">
-                    {chunk.preview || "No chunk preview is available."}
+                    {chunk.preview || "Ingen förhandsvisning finns."}
                   </p>
                 </div>
               ))
@@ -365,10 +364,15 @@ function summarizeWarnings(warnings: ImportStructureWarning[]) {
 }
 
 function formatStatus(status: string) {
-  return status
-    .toLowerCase()
-    .replace(/_/g, " ")
-    .replace(/^\w/, (char) => char.toUpperCase());
+  const labels: Record<string, string> = {
+    COMPLETED: "Analysen är klar",
+    FAILED: "Behöver ses över",
+    IMPORTED: "Importerad",
+    NOT_STARTED: "Utkast skapat",
+    RUNNING: "Analysen pågår"
+  };
+
+  return labels[status] ?? status.toLowerCase().replace(/_/g, " ");
 }
 
 function formatNumber(value: number) {

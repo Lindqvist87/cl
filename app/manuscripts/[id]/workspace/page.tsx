@@ -84,6 +84,14 @@ export default async function ManuscriptWorkspacePage({
             <p className="mx-auto line-clamp-4 max-w-3xl text-lg leading-8 text-slate-700">
               {authorWorkspace.hero.body}
             </p>
+            <div className="mx-auto max-w-2xl rounded-lg border border-line bg-white px-5 py-4 text-left shadow-panel">
+              <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Nästa bästa redaktionella steg
+              </p>
+              <p className="mt-2 text-base font-semibold leading-7 text-ink">
+                {authorWorkspace.start.title}
+              </p>
+            </div>
           </section>
         </header>
 
@@ -214,7 +222,7 @@ function StartHereCard({
   return (
     <section className="active-card p-7 sm:p-9">
       <p className="text-sm font-semibold uppercase tracking-wide text-accent">
-        Start here
+        {start.heading}
       </p>
       <h2 className="mt-4 max-w-3xl text-3xl font-semibold tracking-normal text-ink sm:text-4xl">
         {start.title}
@@ -261,18 +269,23 @@ function PriorityCard({
     importanceLabel: string;
     whyItMatters: string;
     recommendedAction: string;
+    affectedPartsPreview: string;
     targetSectionId: string | null;
   };
 }) {
   return (
     <article className="flex min-h-[310px] flex-col rounded-lg border border-line bg-white p-6 shadow-panel">
       <ImportanceBadge label={priority.importanceLabel} />
+      <p className="mt-4 text-xs font-semibold uppercase tracking-wide text-slate-500">
+        Problem
+      </p>
       <h3 className="mt-4 text-xl font-semibold tracking-normal text-ink">
         {priority.title}
       </h3>
       <div className="mt-5 space-y-4">
         <EditorialFact label="Varför det spelar roll" value={priority.whyItMatters} />
         <EditorialFact label="Gör nu" value={priority.recommendedAction} />
+        <EditorialFact label="Berörda delar" value={priority.affectedPartsPreview} />
       </div>
       <div className="mt-auto pt-6">
         {priority.targetSectionId ? (
@@ -412,7 +425,7 @@ function RewritePlanPanel({
               <span className="text-sm font-semibold">{item.title}</span>
               {item.priority ? (
                 <span className="border border-line bg-paper px-2 py-1 text-xs text-slate-600">
-                  Priority {item.priority}
+                  Prioritet {item.priority}
                 </span>
               ) : null}
             </div>
@@ -605,8 +618,21 @@ function authorSectionLabel(label: string) {
 }
 
 function formatStatus(status: string) {
-  return status
-    .toLowerCase()
-    .replace(/_/g, " ")
-    .replace(/^\w/, (char) => char.toUpperCase());
+  const labels: Record<string, string> = {
+    ACCEPTED: "Accepterad",
+    BLOCKED: "Blockerad",
+    COMPLETED: "Analysen är klar",
+    DEFERRED: "Väntar",
+    FAILED: "Behöver ses över",
+    NEEDS_REVIEW: "Behöver ses över",
+    NOT_STARTED: "Utkast skapat",
+    pending_required: "Väntar på analys",
+    pending_optional: "Valfritt underlag väntar",
+    ready: "Klar",
+    REJECTED: "Avvisad",
+    RUNNING: "Analysen pågår",
+    workspace_ready: "Arbetsytan är klar"
+  };
+
+  return labels[status] ?? status.toLowerCase().replace(/_/g, " ");
 }

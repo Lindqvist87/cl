@@ -426,6 +426,7 @@ test("author workspace maps aggregated priorities into author-facing cards", () 
       "Scener utan tydlig press, konflikt eller insats tappar framåtrörelse och gör senare stegring svagare.",
     recommendedAction:
       "Förtydliga vilket hinder, val eller vilken press som driver de berörda delarna.",
+    affectedPartsPreview: "Del 2: Warehouse, Del 3: The call, 1 till",
     targetSectionId: "s2"
   });
 });
@@ -454,7 +455,7 @@ test("author workspace keeps raw findings secondary instead of primary", () => {
   assert.equal(authorWorkspace.details.sectionsLabel, "Manusets delar");
   assert.equal(authorWorkspace.details.rewritePlanLabel, "Redigeringsplan");
   assert.equal(authorWorkspace.details.importedStructureLabel, "Importerad struktur");
-  assert.equal(authorWorkspace.details.rawDataLabel, "Rådata och detaljer");
+  assert.equal(authorWorkspace.details.rawDataLabel, "Analysunderlag");
   assert.doesNotMatch(
     mainLabels,
     /Workspace readiness|Pipeline|Raw findings|Next Best Editorial Action|Detected sections|Severity|Findings/

@@ -4,13 +4,12 @@
     "description": "Editorial analysis and revision workspace for manuscripts"
   },
   "shell": {
-    "brand": "Manuscript Intelligence",
-    "badge": "V2"
+    "brand": "Manuscript Intelligence"
   },
   "dashboard": {
     "title": "Starta nytt manus",
     "intro": "Få en redaktionell översikt, prioriterade förbättringsområden och ett tydligt första steg.",
-    "sectionTitle": "Senaste manus",
+    "sectionTitle": "Mina manus",
     "emptyState": "Inga manus har laddats upp ännu.",
     "metrics": {
       "words": "Ord",

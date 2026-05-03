@@ -54,6 +54,7 @@ export default async function ManuscriptAuditPage({
     (output) => output.passType === AnalysisPassType.TREND_COMPARISON
   );
   const rewritePlan = manuscript.rewritePlans[0];
+  const showTechnicalDetails = process.env.NODE_ENV !== "production";
   const priorityThemes = aggregateEditorialFindingPriorities({
     chapters: manuscript.chapters,
     findings: manuscript.findings,
@@ -65,10 +66,10 @@ export default async function ManuscriptAuditPage({
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <Link href={`/manuscripts/${manuscript.id}`} className="text-sm text-accent hover:underline">
-            Back to manuscript
+            Till manus
           </Link>
           <h1 className="mt-2 text-2xl font-semibold tracking-normal">
-            Editorial report: {manuscript.title}
+            Rapport: {manuscript.title}
           </h1>
         </div>
         <div className="flex flex-wrap gap-2">
@@ -77,7 +78,7 @@ export default async function ManuscriptAuditPage({
             className="secondary-button min-h-9 px-3"
           >
             <BookOpen size={16} aria-hidden="true" />
-            Review structure
+            Manusstruktur
           </Link>
           <a href={`/api/manuscripts/${manuscript.id}/report/markdown`} className="secondary-button min-h-9 px-3">
             <Download size={16} aria-hidden="true" />
@@ -91,27 +92,27 @@ export default async function ManuscriptAuditPage({
       </div>
 
       <section className="grid gap-3 md:grid-cols-3">
-        <Stat label="Editorial score" value={typeof score === "number" ? `${score}/100` : "Pending"} />
-        <Stat label="Issues to review" value={String(manuscript.findings.length)} />
-        <Stat label="Revision plan" value={rewritePlan ? "Ready" : "Pending"} />
+        <Stat label="Redaktionellt värde" value={typeof score === "number" ? `${score}/100` : "Väntar"} />
+        <Stat label="Noteringar" value={String(manuscript.findings.length)} />
+        <Stat label="Redigeringsplan" value={rewritePlan ? "Klar" : "Väntar"} />
       </section>
 
       <section className="border border-line bg-white p-4 shadow-panel">
-        <h2 className="text-lg font-semibold">Executive Summary</h2>
+        <h2 className="text-lg font-semibold">Helhetsbedömning</h2>
         <p className="mt-2 text-sm leading-6 text-slate-700">
-          {structured?.executiveSummary ?? "No editorial report has been generated yet."}
+          {structured?.executiveSummary ?? "Ingen redaktionell rapport har skapats ännu."}
         </p>
       </section>
 
       <section className="border border-line bg-white shadow-panel">
         <div className="border-b border-line px-4 py-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-            Priority themes
+            Prioriterade teman
           </h2>
         </div>
         <div className="grid gap-3 p-4 md:grid-cols-2">
           {priorityThemes.length === 0 ? (
-            <p className="text-sm text-slate-500">No priority themes are available yet.</p>
+            <p className="text-sm text-slate-500">Inga prioriterade teman finns ännu.</p>
           ) : (
             priorityThemes.map((priority) => (
               <PriorityThemeSummary key={priority.priorityId} priority={priority} />
@@ -123,7 +124,7 @@ export default async function ManuscriptAuditPage({
       <section className="border border-line bg-white shadow-panel">
         <div className="border-b border-line px-4 py-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-            Issues to review
+            Redaktionella noteringar
           </h2>
         </div>
         <div className="divide-y divide-line">
@@ -150,7 +151,7 @@ export default async function ManuscriptAuditPage({
       <section className="border border-line bg-white shadow-panel">
         <div className="border-b border-line px-4 py-3">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-            Section notes
+            Noteringar per manusdel
           </h2>
         </div>
         <div className="divide-y divide-line">
@@ -172,14 +173,22 @@ export default async function ManuscriptAuditPage({
       </section>
 
       <section className="grid gap-6 lg:grid-cols-2">
-        <ComparisonPanel title="Corpus comparison" output={toRecord(corpusOutput?.output)} />
-        <ComparisonPanel title="Trend comparison" output={toRecord(trendOutput?.output)} />
+        <ComparisonPanel
+          title="Referensbibliotek"
+          output={toRecord(corpusOutput?.output)}
+          showTechnicalDetails={showTechnicalDetails}
+        />
+        <ComparisonPanel
+          title="Marknadssignaler"
+          output={toRecord(trendOutput?.output)}
+          showTechnicalDetails={showTechnicalDetails}
+        />
       </section>
 
       <section className="border border-line bg-white p-4 shadow-panel">
-        <h2 className="text-lg font-semibold">Recommended Rewrite Strategy</h2>
+        <h2 className="text-lg font-semibold">Redigeringsstrategi</h2>
         <p className="mt-2 text-sm leading-6 text-slate-700">
-          {rewritePlan?.globalStrategy ?? structured?.rewriteStrategy ?? "Rewrite plan pending."}
+          {rewritePlan?.globalStrategy ?? structured?.rewriteStrategy ?? "Redigeringsplanen väntar."}
         </p>
       </section>
     </div>
@@ -197,28 +206,32 @@ function Stat({ label, value }: { label: string; value: string }) {
 
 function ComparisonPanel({
   title,
-  output
+  output,
+  showTechnicalDetails
 }: {
   title: string;
   output: JsonRecord;
+  showTechnicalDetails: boolean;
 }) {
   const summary =
     typeof output.summary === "string"
       ? output.summary
-      : "Comparison pending or source data unavailable.";
+      : "Underlaget väntar eller saknar tillgänglig sammanfattning.";
 
   return (
     <div className="border border-line bg-white p-4 shadow-panel">
       <h2 className="text-lg font-semibold">{title}</h2>
       <p className="mt-2 text-sm leading-6 text-slate-700">{summary}</p>
-      <details className="detail-toggle mt-3">
-        <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-ink hover:text-accent">
-          Technical details
-        </summary>
-        <pre className="max-h-72 overflow-auto border-t border-line bg-paper-alt p-3 text-xs leading-5 text-slate-700">
-          {JSON.stringify(output, null, 2)}
-        </pre>
-      </details>
+      {showTechnicalDetails ? (
+        <details className="detail-toggle mt-3">
+          <summary className="cursor-pointer px-3 py-2 text-sm font-semibold text-ink hover:text-accent">
+            Teknisk information
+          </summary>
+          <pre className="max-h-72 overflow-auto border-t border-line bg-paper-alt p-3 text-xs leading-5 text-slate-700">
+            {JSON.stringify(output, null, 2)}
+          </pre>
+        </details>
+      ) : null}
     </div>
   );
 }
@@ -237,8 +250,8 @@ function PriorityThemeSummary({
 }) {
   const affected =
     priority.affectedSectionLabels.length > 0
-      ? priority.affectedSectionLabels.slice(0, 3).join(", ")
-      : "Manuscript level";
+    ? priority.affectedSectionLabels.slice(0, 3).join(", ")
+    : "Hela manuset";
   const remaining = Math.max(0, priority.affectedSectionLabels.length - 3);
 
   return (
@@ -250,9 +263,9 @@ function PriorityThemeSummary({
         </span>
       </div>
       <div className="mt-2 text-xs text-slate-500">
-        {priority.issueCount} issue{priority.issueCount === 1 ? "" : "s"} |{" "}
-        {priority.rawSeverityRange} raw | {affected}
-        {remaining > 0 ? ` and ${remaining} more` : ""}
+        {priority.issueCount} notering{priority.issueCount === 1 ? "" : "ar"} |{" "}
+        {priority.rawSeverityRange} | {affected}
+        {remaining > 0 ? ` och ${remaining} till` : ""}
       </div>
       <p className="mt-2 text-sm leading-6 text-slate-700">{priority.recommendedAction}</p>
     </section>
@@ -269,7 +282,7 @@ function groupFindingsByChapter<
   T extends { id: string; chapter?: { title: string } | null }
 >(findings: T[]) {
   return findings.reduce<Record<string, T[]>>((groups, finding) => {
-    const title = finding.chapter?.title ?? "Whole manuscript";
+    const title = finding.chapter?.title ?? "Hela manuset";
     groups[title] = groups[title] ?? [];
     groups[title].push(finding);
     return groups;

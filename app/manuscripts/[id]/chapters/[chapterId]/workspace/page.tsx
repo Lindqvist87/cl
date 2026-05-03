@@ -65,14 +65,14 @@ export default async function ChapterWorkspacePage({
     })),
     ...rewriteInstructions.slice(0, 4).map((instruction, index) => ({
       key: `instruction-${index}`,
-      title: "Rewrite instruction",
+      title: "Redigeringsinstruktion",
       detail: instruction
     })),
     ...(planItem?.plan
       ? [
           {
             key: "rewrite-plan",
-            title: "Rewrite plan",
+            title: "Redigeringsplan",
             detail: String(planItem.plan)
           }
         ]
@@ -94,13 +94,13 @@ export default async function ChapterWorkspacePage({
             className="inline-flex items-center gap-2 text-sm text-accent hover:underline"
           >
             <ArrowLeft size={16} aria-hidden="true" />
-            Back to workspace
+            Till arbetsyta
           </Link>
           <h1 className="mt-2 text-2xl font-semibold tracking-normal">
-            Section {chapter.order}: {chapter.title}
+            Manusdel {chapter.order}: {chapter.title}
           </h1>
           <p className="mt-1 text-sm text-slate-500">
-            {chapter.manuscript.title} | {chapter.wordCount.toLocaleString()} words |{" "}
+            {chapter.manuscript.title} | {chapter.wordCount.toLocaleString()} ord |{" "}
             {formatStatus(chapter.status)}
           </p>
         </div>
@@ -108,7 +108,7 @@ export default async function ChapterWorkspacePage({
           manuscriptId={id}
           chapterId={chapterId}
           rewritePlanId={latestRewritePlan?.id}
-          title={`Review ${chapter.title}`}
+          title={`Granska ${chapter.title}`}
           rationale={planItem?.plan ? String(planItem.plan) : null}
           scope="CHAPTER"
           currentStatus={latestChapterDecision(decisions, chapterId, latestRewritePlan?.id)?.status}
@@ -116,22 +116,22 @@ export default async function ChapterWorkspacePage({
       </div>
 
       <section className="grid gap-6 lg:grid-cols-[1.15fr_0.85fr]">
-        <TextPanel title="Section text" text={chapter.text || "No section text available."} />
+        <TextPanel title="Manusdelens text" text={chapter.text || "Ingen text finns för den här manusdelen."} />
         <section className="space-y-6">
-          <InfoPanel title="Section summary">
+          <InfoPanel title="Sammanfattning">
             <p className="text-sm leading-6 text-slate-700">
-              {chapter.summary || String(audit.summary ?? "No chapter summary is available yet.")}
+              {chapter.summary || String(audit.summary ?? "Ingen sammanfattning finns ännu.")}
             </p>
           </InfoPanel>
 
-          <InfoPanel title="Role in the book">
+          <InfoPanel title="Funktion i manuset">
             <p className="text-sm leading-6 text-slate-700">
               {String(
                 audit.chapterPromise ??
                   audit.sceneFunction ??
                   audit.conflict ??
                   audit.pacing ??
-                  "No whole-book function has been detected yet."
+                  "Ingen funktion i helheten har identifierats ännu."
               )}
             </p>
           </InfoPanel>
@@ -143,12 +143,12 @@ export default async function ChapterWorkspacePage({
           <div className="flex items-center gap-2 border-b border-line px-4 py-3">
             <ListChecks size={18} aria-hidden="true" />
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Section notes
+              Noteringar för manusdelen
             </h2>
           </div>
           <div className="divide-y divide-line">
             {chapter.findings.length === 0 ? (
-              <p className="px-4 py-6 text-sm text-slate-500">No section notes yet.</p>
+              <p className="px-4 py-6 text-sm text-slate-500">Inga noteringar finns ännu.</p>
             ) : (
               chapter.findings.map((finding) => {
                 const decision = decisionByFinding.get(finding.id);
@@ -191,13 +191,13 @@ export default async function ChapterWorkspacePage({
         <section className="border border-line bg-white shadow-panel">
           <div className="border-b border-line px-4 py-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Manuscript-wide notes for this section
+              Noteringar för hela manuset
             </h2>
           </div>
           <div className="divide-y divide-line">
             {globalFindings.length === 0 ? (
               <p className="px-4 py-6 text-sm text-slate-500">
-                No manuscript-level notes are linked yet.
+                Inga manusövergripande noteringar är kopplade ännu.
               </p>
             ) : (
               globalFindings.slice(0, 6).map((finding) => {
@@ -237,13 +237,13 @@ export default async function ChapterWorkspacePage({
         <section className="border border-line bg-white shadow-panel">
           <div className="border-b border-line px-4 py-3">
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Suggested revisions
+              Föreslagna redigeringar
             </h2>
           </div>
           <div className="divide-y divide-line">
             {proposedActions.length === 0 ? (
               <p className="px-4 py-6 text-sm text-slate-500">
-                No suggested revisions are available yet.
+                Inga föreslagna redigeringar finns ännu.
               </p>
             ) : (
               proposedActions.map((action) => (
@@ -260,26 +260,26 @@ export default async function ChapterWorkspacePage({
           <div className="flex items-center gap-2">
             <GitBranch size={18} aria-hidden="true" />
             <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-              Echo Impact
+              Följdeffekter
             </h2>
           </div>
           {affectedChapters.length === 0 &&
           relatedUnresolvedFindings.length === 0 &&
           continuityNotes.length === 0 ? (
-            <p className="mt-3 text-sm text-slate-500">No global impact detected yet.</p>
+            <p className="mt-3 text-sm text-slate-500">Inga följdeffekter har hittats ännu.</p>
           ) : (
             <div className="mt-3 space-y-4">
               {affectedChapters.length > 0 ? (
-                <ImpactBlock title="Affected chapters" items={affectedChapters} />
+                <ImpactBlock title="Berörda manusdelar" items={affectedChapters} />
               ) : null}
               {relatedUnresolvedFindings.length > 0 ? (
                 <ImpactBlock
-                  title="Related unresolved findings"
+                  title="Relaterade öppna noteringar"
                   items={relatedUnresolvedFindings.slice(0, 5).map((finding) => finding.problem)}
                 />
               ) : null}
               {continuityNotes.length > 0 ? (
-                <ImpactBlock title="Continuity notes" items={continuityNotes.slice(0, 5)} />
+                <ImpactBlock title="Kontinuitet" items={continuityNotes.slice(0, 5)} />
               ) : null}
             </div>
           )}
@@ -422,8 +422,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function formatStatus(status: string) {
-  return status
-    .toLowerCase()
-    .replace(/_/g, " ")
-    .replace(/^\w/, (char) => char.toUpperCase());
+  const labels: Record<string, string> = {
+    ACCEPTED: "Accepterad",
+    COMPLETED: "Klar",
+    DEFERRED: "Väntar",
+    NEEDS_REVIEW: "Behöver ses över",
+    PENDING: "Väntar",
+    REJECTED: "Avvisad"
+  };
+
+  return labels[status] ?? status.toLowerCase().replace(/_/g, " ");
 }
