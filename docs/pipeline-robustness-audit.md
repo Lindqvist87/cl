@@ -38,7 +38,7 @@ Core rule: durable artifacts win over checkpoint and job metadata. A phase is co
 
 ## Known Weak Spots For Follow-Up
 
-- `runFullManuscriptPipeline` still uses checkpoint-only skip logic and should either delegate to the job runner or use durable reconciliation directly.
+- `runFullManuscriptPipeline` still uses checkpoint-only skip logic and should either delegate to the job runner or use durable reconciliation directly. Current usage check: it is not imported by the active author-facing upload/audit/resume routes, admin/manual runner routes, cron-style job routes, or Inngest functions. Those paths call `startManuscriptPipeline`, `ensureManuscriptPipelineJobs`, `runReadyPipelineJobs`, or `runPipelineJob`.
 - The durable helper intentionally avoids schema changes; a future run/version identity field on generated artifacts would make stale-output detection stronger.
 - Embedding completion uses `localMetrics.embeddingStatus`; this is durable enough for the current schema but weaker than a first-class embedding status column.
 - Corpus/trend skipped outputs are considered complete when written for the current run. That is intentional, but diagnostics should keep showing the skip reason clearly.
