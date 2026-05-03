@@ -27,7 +27,7 @@ export function AuditButton({
     setIsRunning(false);
 
     if (!response.ok) {
-      setError(payload.error ?? "Audit failed.");
+      setError(payload.error ?? "Analysen kunde inte startas.");
       return;
     }
 
@@ -43,7 +43,7 @@ export function AuditButton({
         className="primary-button"
       >
         <PlayCircle size={18} aria-hidden="true" />
-        {isRunning ? "Starting..." : "Start analysis"}
+        {isRunning ? "Startar..." : "Starta analys"}
       </button>
       {error ? <p className="text-sm text-danger">{error}</p> : null}
     </div>

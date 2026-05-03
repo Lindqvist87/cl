@@ -12,6 +12,7 @@ export type AuthorPriorityCard = {
   importanceLabel: string;
   whyItMatters: string;
   recommendedAction: string;
+  affectedPartsPreview: string;
   targetSectionId: string | null;
 };
 
@@ -41,7 +42,7 @@ export type AuthorWorkspaceViewModel = {
     sectionsLabel: "Manusets delar";
     rewritePlanLabel: "Redigeringsplan";
     importedStructureLabel: "Importerad struktur";
-    rawDataLabel: "Rådata och detaljer";
+    rawDataLabel: "Analysunderlag";
   };
   mainSectionLabels: string[];
 };
@@ -150,9 +151,11 @@ const AUTHOR_PATTERN_COPY: Record<string, AuthorPatternCopy> = {
 export function buildAuthorWorkspaceViewModel(
   workspace: EditorialWorkspaceData
 ): AuthorWorkspaceViewModel {
-  const priorityCards = workspace.editorialPriorities
-    .slice(0, 5)
-    .map((priority) => buildAuthorPriorityCard(priority));
+  const priorityCards = disambiguateDuplicatePriorityCards(
+    workspace.editorialPriorities
+      .slice(0, 5)
+      .map((priority) => buildAuthorPriorityCard(priority))
+  );
   const start = buildAuthorStartCard(workspace, priorityCards);
   const hero = buildHero(workspace, priorityCards);
 
@@ -167,7 +170,7 @@ export function buildAuthorWorkspaceViewModel(
       sectionsLabel: "Manusets delar",
       rewritePlanLabel: "Redigeringsplan",
       importedStructureLabel: "Importerad struktur",
-      rawDataLabel: "Rådata och detaljer"
+      rawDataLabel: "Analysunderlag"
     },
     mainSectionLabels: [
       hero.statusLabel,
@@ -177,7 +180,8 @@ export function buildAuthorWorkspaceViewModel(
       ...priorityCards.flatMap((card) => [
         card.importanceLabel,
         card.title,
-        card.recommendedAction
+        card.recommendedAction,
+        card.affectedPartsPreview
       ])
     ]
   };
@@ -187,6 +191,7 @@ export function buildAuthorPriorityCard(
   priority: EditorialPriority
 ): AuthorPriorityCard {
   const copy = copyForPriority(priority);
+  const affectedParts = affectedPartsForPriority(priority, 2);
 
   return {
     id: priority.priorityId,
@@ -194,11 +199,38 @@ export function buildAuthorPriorityCard(
     importanceLabel: importanceLabel(priority.displayPriority),
     whyItMatters: copy.whyItMatters,
     recommendedAction: copy.recommendedAction,
+    affectedPartsPreview: affectedParts.join(", "),
     targetSectionId:
       priority.affectedSectionIds[0] ??
       priority.representativeFindings.find((finding) => finding.sectionId)?.sectionId ??
       null
   };
+}
+
+function disambiguateDuplicatePriorityCards(cards: AuthorPriorityCard[]) {
+  const titleCounts = cards.reduce<Map<string, number>>((counts, card) => {
+    counts.set(card.title, (counts.get(card.title) ?? 0) + 1);
+    return counts;
+  }, new Map());
+  const seen = new Map<string, number>();
+
+  return cards.map((card) => {
+    if ((titleCounts.get(card.title) ?? 0) < 2) {
+      return card;
+    }
+
+    const index = (seen.get(card.title) ?? 0) + 1;
+    seen.set(card.title, index);
+    const context =
+      card.affectedPartsPreview && card.affectedPartsPreview !== "Hela manuset"
+        ? card.affectedPartsPreview
+        : `prioritet ${index}`;
+
+    return {
+      ...card,
+      title: `${card.title} (${context})`
+    };
+  });
 }
 
 export function importanceLabel(priority: EditorialDisplayPriority) {

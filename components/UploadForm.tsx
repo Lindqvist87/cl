@@ -93,14 +93,14 @@ export function UploadForm() {
   return (
     <form
       onSubmit={onSubmit}
-      className="relative overflow-hidden rounded-xl border border-accent/18 bg-white p-5 shadow-[0_28px_70px_rgba(23,23,23,0.075),0_0_0_1px_rgba(232,93,158,0.10),0_0_44px_rgba(232,93,158,0.095)] sm:p-7"
+      className="paper-card relative overflow-hidden p-5 sm:p-7"
     >
       <div
         aria-hidden="true"
         className="absolute inset-x-8 top-0 h-px bg-gradient-to-r from-transparent via-accent/30 to-transparent"
       />
       <div className="flex flex-col gap-2">
-        <p className="text-sm font-semibold text-accent">
+        <p className="text-sm font-semibold text-ink">
           Ladda upp ditt manus. Vi hjälper dig förstå vad som behöver göras.
         </p>
       </div>
@@ -108,14 +108,14 @@ export function UploadForm() {
       <label
         className={`mt-5 flex min-h-[250px] cursor-pointer flex-col items-center justify-center rounded-lg border border-dashed px-5 py-8 text-center shadow-[inset_0_1px_0_rgba(255,255,255,0.92)] focus-within:ring-2 focus-within:ring-accent focus-within:ring-offset-2 focus-within:ring-offset-paper sm:min-h-[286px] sm:py-10 ${
           isDragging
-            ? "border-accent bg-white shadow-[0_0_0_6px_rgba(232,93,158,0.08),inset_0_1px_0_rgba(255,255,255,0.92)]"
-            : "border-accent/30 bg-[linear-gradient(180deg,#FFFEFC_0%,#FAFAF7_100%)] hover:border-accent/55 hover:bg-white"
+            ? "border-accent bg-white shadow-[0_0_0_4px_rgba(232,93,158,0.08),inset_0_1px_0_rgba(255,255,255,0.92)]"
+            : "border-line bg-[linear-gradient(180deg,#FFFEFC_0%,#FAFAF7_100%)] hover:border-accent/35 hover:bg-white"
         }`}
         onDragLeave={onDragLeave}
         onDragOver={onDragOver}
         onDrop={onDrop}
       >
-        <span className="flex h-16 w-16 items-center justify-center rounded-full border border-accent/14 bg-white text-accent shadow-[0_16px_34px_rgba(23,23,23,0.055),0_0_28px_rgba(232,93,158,0.12)]">
+        <span className="flex h-16 w-16 items-center justify-center rounded-full border border-line bg-paper-alt text-muted shadow-[0_16px_34px_rgba(23,23,23,0.045)]">
           <FileText size={28} aria-hidden="true" />
         </span>
         <span className="mt-6 text-2xl font-semibold tracking-normal text-ink">
@@ -130,8 +130,8 @@ export function UploadForm() {
           DOCX stöds först. EPUB och PDF kan läggas till senare.
         </span>
         {selectedFileName ? (
-          <span className="mt-5 inline-flex max-w-full items-center gap-2 rounded-full border border-accent/18 bg-white px-4 py-2 text-sm font-semibold text-ink shadow-[0_10px_22px_rgba(23,23,23,0.045)]">
-            <CheckCircle2 size={16} className="shrink-0 text-accent" aria-hidden="true" />
+          <span className="mt-5 inline-flex max-w-full items-center gap-2 rounded-full border border-line bg-white px-4 py-2 text-sm font-semibold text-ink shadow-[0_10px_22px_rgba(23,23,23,0.045)]">
+            <CheckCircle2 size={16} className="shrink-0 text-success" aria-hidden="true" />
             <span className="truncate">{selectedFileName}</span>
           </span>
         ) : null}
@@ -172,7 +172,7 @@ export function UploadForm() {
         <button
           type="submit"
           disabled={isUploading}
-          className="inline-flex min-h-12 items-center justify-center gap-2 rounded-md bg-accent px-5 py-2 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(232,93,158,0.26),inset_0_1px_0_rgba(255,255,255,0.22)] hover:bg-accent-dark hover:shadow-[0_18px_34px_rgba(232,93,158,0.32),inset_0_1px_0_rgba(255,255,255,0.24)] active:translate-y-px active:shadow-[0_8px_18px_rgba(232,93,158,0.24)] focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-paper disabled:cursor-not-allowed disabled:opacity-60 sm:min-w-52"
+          className="primary-button min-h-12 px-5 sm:min-w-52"
         >
           <Upload size={18} aria-hidden="true" />
           {isUploading ? copy.upload.busyLabel : copy.upload.idleLabel}

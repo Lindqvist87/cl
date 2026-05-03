@@ -7,14 +7,21 @@ import { UploadForm } from "@/components/UploadForm";
 
 export const dynamic = "force-dynamic";
 
+type DashboardManuscript = Awaited<
+  ReturnType<typeof getDashboardManuscripts>
+>[number];
+
 export default async function DashboardPage() {
   let dbError: string | null = null;
-  let manuscripts: Awaited<ReturnType<typeof getDashboardManuscripts>> = [];
+  let manuscripts: DashboardManuscript[] = [];
 
   try {
     manuscripts = await getDashboardManuscripts();
   } catch (error) {
-    dbError = error instanceof Error ? error.message : "Manuslistan är inte tillgänglig.";
+    dbError =
+      error instanceof Error
+        ? error.message
+        : "Manuslistan är inte tillgänglig.";
   }
 
   return (
@@ -24,27 +31,30 @@ export default async function DashboardPage() {
         className="pointer-events-none absolute inset-0 -z-20"
         style={{
           backgroundImage:
-            "linear-gradient(135deg, #FAFAF7 0%, rgba(255,248,251,0.94) 42%, #FAFAF8 76%, #FFFFFF 100%)"
+            "linear-gradient(180deg, #FAFAF7 0%, #FAFAF8 58%, #FFFFFF 100%)"
         }}
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[620px] opacity-90"
+        className="pointer-events-none absolute inset-x-0 top-0 -z-10 h-[520px] opacity-80"
         style={{
           backgroundImage:
-            "radial-gradient(58% 54% at 46% 20%, rgba(232,93,158,0.12), transparent 70%), radial-gradient(34% 32% at 9% 72%, rgba(232,93,158,0.07), transparent 72%), linear-gradient(180deg, rgba(255,255,255,0.46), transparent 74%)"
+            "linear-gradient(180deg, rgba(255,255,255,0.76), transparent 78%)"
         }}
       />
       <div
         aria-hidden="true"
-        className="pointer-events-none absolute inset-0 -z-10 opacity-[0.32]"
+        className="pointer-events-none absolute inset-0 -z-10 opacity-[0.28]"
         style={{
           backgroundImage:
-            "repeating-linear-gradient(0deg, rgba(231,226,218,0.24) 0px, rgba(231,226,218,0.24) 1px, transparent 1px, transparent 22px)"
+            "repeating-linear-gradient(0deg, rgba(231,226,218,0.22) 0px, rgba(231,226,218,0.22) 1px, transparent 1px, transparent 24px)"
         }}
       />
 
-      <section className="relative isolate overflow-hidden py-5 sm:py-8">
+      <section
+        id="nytt-manus"
+        className="relative isolate overflow-hidden py-5 sm:py-8"
+      >
         <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
           <div className="max-w-3xl">
             <p className="text-sm font-semibold text-accent/90">
@@ -103,50 +113,31 @@ export default async function DashboardPage() {
 
       {dbError ? <DatabaseErrorPanel message={dbError} /> : null}
 
-      <section className="border border-line bg-white shadow-panel">
-        <div className="border-b border-line px-4 py-3">
-          <h2 className="text-sm font-semibold tracking-normal text-ink">
-            {copy.dashboard.sectionTitle}
-          </h2>
+      <section id="manus" className="border border-line bg-white shadow-panel">
+        <div className="flex flex-col gap-2 border-b border-line px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold tracking-normal text-ink">
+              {copy.dashboard.sectionTitle}
+            </h2>
+            <p className="mt-1 text-sm text-muted">
+              Dina uppladdade manus samlade som redaktionella projekt.
+            </p>
+          </div>
+          <Link href="/#nytt-manus" className="secondary-button min-h-9 px-3">
+            Nytt manus
+          </Link>
         </div>
         {manuscripts.length === 0 ? (
-          <div className="px-4 py-10 text-center text-sm text-slate-500">
+          <div className="px-5 py-12 text-center text-sm text-slate-500">
             {copy.dashboard.emptyState}
           </div>
         ) : (
-          <div className="divide-y divide-line">
+          <div className="grid gap-3 p-4">
             {manuscripts.map((manuscript) => (
-              <Link
+              <ManuscriptProjectCard
                 key={manuscript.id}
-                href={`/manuscripts/${manuscript.id}`}
-                className="focus-ring grid gap-3 px-4 py-4 hover:bg-paper-alt sm:grid-cols-[1fr_120px_120px_160px]"
-              >
-                <div className="flex items-start gap-3">
-                  <FileText
-                    size={20}
-                    className="mt-0.5 text-accent"
-                    aria-hidden="true"
-                  />
-                  <div>
-                    <h3 className="font-semibold">{manuscript.title}</h3>
-                    <p className="mt-1 text-xs text-slate-500">
-                      {manuscript.sourceFileName}
-                    </p>
-                  </div>
-                </div>
-                <Metric
-                  label={copy.dashboard.metrics.words}
-                  value={manuscript.wordCount.toLocaleString()}
-                />
-                <Metric
-                  label={copy.dashboard.metrics.chapters}
-                  value={String(manuscript.chapterCount)}
-                />
-                <Metric
-                  label={copy.dashboard.metrics.status}
-                  value={formatStatus(manuscript.analysisStatus)}
-                />
-              </Link>
+                manuscript={manuscript}
+              />
             ))}
           </div>
         )}
@@ -222,27 +213,92 @@ function TrustNote() {
       <span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full border border-accent/15 bg-white text-accent shadow-[0_8px_18px_rgba(232,93,158,0.08)]">
         <ShieldCheck size={14} aria-hidden="true" />
       </span>
-      <span>Du behåller alltid kontrollen. Appen föreslår – du bestämmer.</span>
+      <span>Du behåller alltid kontrollen. Appen föreslår - du bestämmer.</span>
     </p>
   );
 }
 
-function Metric({ label, value }: { label: string; value: string }) {
+function ManuscriptProjectCard({
+  manuscript
+}: {
+  manuscript: DashboardManuscript;
+}) {
   return (
-    <div>
+    <article className="grid gap-4 rounded-lg border border-line bg-white p-4 shadow-[0_12px_28px_rgba(23,23,23,0.045)] transition hover:border-accent/20 hover:shadow-panel lg:grid-cols-[1fr_auto] lg:items-center">
+      <div className="flex min-w-0 gap-4">
+        <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-lg border border-line bg-paper-alt text-muted">
+          <FileText size={20} aria-hidden="true" />
+        </span>
+        <div className="min-w-0">
+          <h3 className="truncate text-lg font-semibold tracking-normal text-ink">
+            {manuscript.title}
+          </h3>
+          <p className="mt-1 truncate text-sm text-muted">
+            {manuscript.sourceFileName}
+          </p>
+          <div className="mt-4 flex flex-wrap items-center gap-3">
+            <ProjectMeta
+              label={copy.dashboard.metrics.words}
+              value={manuscript.wordCount.toLocaleString()}
+            />
+            <StatusBadge status={manuscript.analysisStatus} />
+          </div>
+        </div>
+      </div>
+      <div className="flex flex-col gap-2 sm:flex-row lg:justify-end">
+        <Link
+          href={`/manuscripts/${manuscript.id}/workspace`}
+          className="primary-button min-h-10 px-4"
+        >
+          Öppna arbetsyta
+          <ArrowRight size={16} aria-hidden="true" />
+        </Link>
+        <Link
+          href={`/manuscripts/${manuscript.id}`}
+          className="secondary-button min-h-10 px-4"
+        >
+          Översikt
+        </Link>
+      </div>
+    </article>
+  );
+}
+
+function ProjectMeta({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-line bg-paper-alt px-3 py-2">
       <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
-      <div className="mt-1 text-sm font-semibold">{value}</div>
+      <div className="mt-1 text-sm font-semibold text-ink">{value}</div>
     </div>
+  );
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const tone =
+    status === "COMPLETED"
+      ? "border-success/20 bg-green-50 text-success"
+      : status === "RUNNING"
+        ? "border-accent/20 bg-accent/10 text-accent"
+        : status === "FAILED"
+          ? "border-danger/20 bg-red-50 text-danger"
+          : "border-line bg-paper-alt text-slate-600";
+
+  return (
+    <span
+      className={`inline-flex min-h-9 items-center rounded-full border px-3 text-sm font-semibold ${tone}`}
+    >
+      {formatStatus(status)}
+    </span>
   );
 }
 
 function formatStatus(status: string) {
   const labels: Record<string, string> = {
-    COMPLETED: "Klar",
+    COMPLETED: "Analysen är klar",
     FAILED: "Behöver ses över",
-    NOT_STARTED: "Ej startad",
-    RUNNING: "Pågår"
+    NOT_STARTED: "Utkast skapat",
+    RUNNING: "Analysen pågår"
   };
 
-  return labels[status] ?? "Okänd";
+  return labels[status] ?? "Behöver ses över";
 }

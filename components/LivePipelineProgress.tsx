@@ -22,10 +22,12 @@ type PipelineDiagnosticsResponse = Omit<
 
 export function LivePipelineProgress({
   manuscriptId,
-  initialStatus
+  initialStatus,
+  showTechnicalDetails = false
 }: {
   manuscriptId: string;
   initialStatus: PipelineStatusDisplay;
+  showTechnicalDetails?: boolean;
 }) {
   const [status, setStatus] = useState(initialStatus);
   const [diagnostics, setDiagnostics] =
@@ -60,6 +62,18 @@ export function LivePipelineProgress({
     diagnostics,
     isBlockedByError,
     autoRunnerActive,
+    rewriteDraftsDeferred
+  });
+  const phaseLabel = humanPhaseLabel({
+    status,
+    diagnostics,
+    isBlockedByError,
+    rewriteDraftsDeferred,
+    liveShouldPoll
+  });
+  const guidance = progressGuidance({
+    status,
+    isBlockedByError,
     rewriteDraftsDeferred
   });
 
@@ -147,37 +161,33 @@ export function LivePipelineProgress({
             ? "border-danger bg-white"
             : fetchError && !diagnostics
               ? "border-warn bg-white"
-              : "border-accent/30 bg-white shadow-active"
+              : "border-line bg-white shadow-panel"
         }`}
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <div
               className={`text-xs font-semibold uppercase tracking-wide ${
-                isBlockedByError ? "text-danger" : "text-accent"
+                isBlockedByError ? "text-danger" : "text-slate-500"
               }`}
             >
-              Current analysis step
+              Aktuell fas
             </div>
             <h2 className="mt-1 text-2xl font-semibold tracking-normal text-ink">
-              {isBlockedByError
-                ? `Analysis paused at ${formatStepName(status.currentStep)}`
-                : formatStepName(status.currentStep)}
+              {phaseLabel}
             </h2>
             <div className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-base font-semibold">
               {rewriteDraftsDeferred ? (
-                <span>Rewrite plan ready. Chapter rewrite drafts can be generated when needed.</span>
-              ) : status.stepProgress?.label ? (
-                <span>{status.stepProgress.label}</span>
-              ) : status.stepProgress?.remainingLabel ? (
-                <span>{status.stepProgress.remainingLabel}</span>
+                <span>Redigeringsplanen är klar.</span>
+              ) : status.stepProgress ? (
+                <span>{humanStepProgressLabel(status.stepProgress)}</span>
               ) : fetchError && !diagnostics ? (
-                <span>Live diagnostics unavailable</span>
+                <span>Aktuell status kunde inte hämtas just nu.</span>
               ) : (
-                <span>Progress total not available yet</span>
+                <span>{guidance}</span>
               )}
               {status.stepProgress?.remainingLabel &&
-              status.stepProgress.label ? (
+              showTechnicalDetails ? (
                 <span className="text-slate-600">
                   {status.stepProgress.remainingLabel}
                 </span>
@@ -187,7 +197,7 @@ export function LivePipelineProgress({
               <p className="mt-2 text-sm font-semibold text-danger">
                 {status.lastError ??
                   diagnostics?.manualRunner?.message ??
-                  "Analysis is blocked by error."}
+                  "Analysen behöver ses över innan den kan fortsätta."}
               </p>
             ) : null}
           </div>
@@ -207,14 +217,14 @@ export function LivePipelineProgress({
         <div
           className="mt-4 h-5 overflow-hidden bg-white shadow-inner"
           role="progressbar"
-          aria-label={`${formatStepName(status.currentStep)} current step progress`}
+          aria-label={`${formatStepName(status.currentStep)} fasens framsteg`}
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={primaryPercent ?? undefined}
           aria-valuetext={
-            status.stepProgress?.label ??
-            status.stepProgress?.remainingLabel ??
-            liveStatusText
+            status.stepProgress
+              ? humanStepProgressLabel(status.stepProgress)
+              : liveStatusText
           }
         >
           <div
@@ -228,12 +238,12 @@ export function LivePipelineProgress({
           <span>{liveStatusText}</span>
           <span>{lastRefreshLabel(lastRefreshedAt)}</span>
           {hasStepProgress && primaryPercent !== null ? (
-            <span>{primaryPercent}% of current step</span>
+            <span>{primaryPercent}% av fasen</span>
           ) : null}
         </div>
         {fetchError && !diagnostics ? (
           <p className="mt-2 text-sm font-semibold text-warn">
-            Live diagnostics unavailable
+            Aktuell status kunde inte hämtas.
           </p>
         ) : null}
       </div>
@@ -241,10 +251,10 @@ export function LivePipelineProgress({
       <div className="mt-5 flex items-center justify-between gap-3">
         <div>
           <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-            Overall analysis progress
+            Analysens framsteg
           </h3>
           <p className="mt-1 text-sm text-slate-500">
-            {status.completedSteps} of {status.totalSteps} steps complete
+            {status.completedSteps} av {status.totalSteps} faser är klara
           </p>
         </div>
         <div className="inline-flex items-center gap-2 text-sm font-semibold">
@@ -255,7 +265,7 @@ export function LivePipelineProgress({
       <div
         className="mt-3 h-2 overflow-hidden bg-paper"
         role="progressbar"
-        aria-label="Overall analysis progress"
+        aria-label="Analysens framsteg"
         aria-valuemin={0}
         aria-valuemax={100}
         aria-valuenow={status.percent}
@@ -263,7 +273,7 @@ export function LivePipelineProgress({
         <div className="h-full bg-accent" style={{ width: `${status.percent}%` }} />
       </div>
 
-      {status.lockStatus ? (
+      {showTechnicalDetails && status.lockStatus ? (
         <div className="mt-4 border border-line bg-paper px-3 py-3 text-sm">
           <div className="font-semibold">{status.lockStatus.message}</div>
           <div className="mt-2 grid gap-2 sm:grid-cols-3">
@@ -280,63 +290,67 @@ export function LivePipelineProgress({
         </div>
       ) : null}
 
-      {manualNotice ? (
+      {showTechnicalDetails && manualNotice ? (
         <div className="mt-3 border border-line bg-paper px-3 py-2 text-sm font-semibold">
           {manualNotice}
         </div>
       ) : null}
 
-      <details className="detail-toggle mt-4">
-        <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-ink hover:text-accent">
-          Technical details
-        </summary>
-        <div className="border-t border-line p-4">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <PipelineDetail
-              label="Current step"
-              value={formatStepName(status.currentStep)}
-            />
-            <PipelineDetail
-              label="Current job status"
-              value={formatNullableStatus(status.currentJobStatus)}
-            />
-            <PipelineDetail
-              label="Completed steps"
-              value={`${status.completedSteps} / ${status.totalSteps}`}
-            />
-            <PipelineDetail
-              label="Current step remaining"
-              value={formatOptionalNumber(status.remainingCount)}
-            />
-            {typeof status.analyzedCount === "number" ? (
+      {showTechnicalDetails ? (
+        <details className="detail-toggle mt-4">
+          <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-ink hover:text-accent">
+            Teknisk information
+          </summary>
+          <div className="border-t border-line p-4">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <PipelineDetail
-                label="Current step completed"
-                value={status.analyzedCount.toLocaleString()}
+                label="Current step"
+                value={formatStepName(status.currentStep)}
               />
-            ) : null}
-            <PipelineDetail
-              label="Live diagnostics"
-              value={diagnostics || !fetchError ? "Available" : "Unavailable"}
-            />
-            <PipelineDetail label="Complete" value={String(status.complete)} />
-            <PipelineDetail
-              label="Last updated"
-              value={formatDisplayTime(status.lastUpdatedAt)}
-            />
-            <PipelineDetail
-              label="Next step"
-              value={formatStepName(status.nextStep)}
-            />
-          </div>
-          <div className="mt-3 rounded-lg border border-line bg-paper-alt px-3 py-2 text-sm">
-            <div className="text-xs uppercase tracking-wide text-slate-500">
-              Last error
+              <PipelineDetail
+                label="Current job status"
+                value={formatNullableStatus(status.currentJobStatus)}
+              />
+              <PipelineDetail
+                label="Completed steps"
+                value={`${status.completedSteps} / ${status.totalSteps}`}
+              />
+              <PipelineDetail
+                label="Current step remaining"
+                value={formatOptionalNumber(status.remainingCount)}
+              />
+              {typeof status.analyzedCount === "number" ? (
+                <PipelineDetail
+                  label="Current step completed"
+                  value={status.analyzedCount.toLocaleString()}
+                />
+              ) : null}
+              <PipelineDetail
+                label="Live diagnostics"
+                value={diagnostics || !fetchError ? "Available" : "Unavailable"}
+              />
+              <PipelineDetail label="Complete" value={String(status.complete)} />
+              <PipelineDetail
+                label="Last updated"
+                value={formatDisplayTime(status.lastUpdatedAt)}
+              />
+              <PipelineDetail
+                label="Next step"
+                value={formatStepName(status.nextStep)}
+              />
             </div>
-            <div className="mt-1 text-slate-700">{status.lastError ?? "None"}</div>
+            <div className="mt-3 rounded-lg border border-line bg-paper-alt px-3 py-2 text-sm">
+              <div className="text-xs uppercase tracking-wide text-slate-500">
+                Last error
+              </div>
+              <div className="mt-1 text-slate-700">
+                {status.lastError ?? "None"}
+              </div>
+            </div>
           </div>
-        </div>
-      </details>
-      {fetchError && diagnostics ? (
+        </details>
+      ) : null}
+      {showTechnicalDetails && fetchError && diagnostics ? (
         <p className="mt-3 text-xs text-danger">
           Live diagnostics refresh failed: {fetchError}
         </p>
@@ -347,11 +361,86 @@ export function LivePipelineProgress({
 
 function PipelineDetail({ label, value }: { label: string; value: string }) {
   return (
-      <div className="rounded-lg border border-line bg-paper-alt px-3 py-2">
+    <div className="rounded-lg border border-line bg-paper-alt px-3 py-2">
       <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
       <div className="mt-1 break-words text-sm font-semibold">{value}</div>
     </div>
   );
+}
+
+function humanPhaseLabel(input: {
+  status: PipelineStatusDisplay;
+  diagnostics: PipelineDiagnosticsResponse | null;
+  isBlockedByError: boolean;
+  rewriteDraftsDeferred: boolean;
+  liveShouldPoll: boolean;
+}) {
+  if (input.isBlockedByError) {
+    return "Behöver ses över";
+  }
+
+  if (input.status.complete) {
+    return "Analysen är klar";
+  }
+
+  if (input.rewriteDraftsDeferred) {
+    return "Redigeringsplanen är klar";
+  }
+
+  if (
+    input.liveShouldPoll ||
+    input.status.currentStep ||
+    input.diagnostics?.state === "running"
+  ) {
+    return humanStepName(input.status.currentStep);
+  }
+
+  return input.status.percent > 0 ? "Analysen är pausad" : "Redo för analys";
+}
+
+function progressGuidance(input: {
+  status: PipelineStatusDisplay;
+  isBlockedByError: boolean;
+  rewriteDraftsDeferred: boolean;
+}) {
+  if (input.isBlockedByError) {
+    return "Analysen har pausat och behöver kontrolleras.";
+  }
+
+  if (input.status.complete || input.rewriteDraftsDeferred) {
+    return "Nästa steg: Öppna arbetsytan.";
+  }
+
+  if (input.status.currentStep) {
+    return "Vi arbetar igenom manuset och uppdaterar arbetsytan när nästa fas är klar.";
+  }
+
+  return "Starta analysen för att skapa rapport, strukturöversikt och första redigeringssteg.";
+}
+
+function humanStepProgressLabel(
+  progress: NonNullable<PipelineStatusDisplay["stepProgress"]>
+) {
+  const unit =
+    progress.step === "summarizeChunks"
+      ? "textdelar"
+      : progress.step === "runChapterAudits"
+        ? "manusdelar"
+        : "delar";
+
+  if (
+    typeof progress.completed === "number" &&
+    typeof progress.total === "number"
+  ) {
+    const remaining =
+      typeof progress.remaining === "number"
+        ? `, ${progress.remaining} återstår`
+        : "";
+
+    return `${progress.completed} av ${progress.total} ${unit} klara${remaining}`;
+  }
+
+  return "Fasen pågår.";
 }
 
 function manualNoticeFromResult(result: unknown) {
@@ -421,6 +510,26 @@ function formatStepName(step: string | null) {
     .replace(/^\w/, (char) => char.toUpperCase());
 }
 
+function humanStepName(step: string | null) {
+  const labels: Record<string, string> = {
+    parseAndNormalizeManuscript: "Läser in manuset",
+    splitIntoChapters: "Hittar manusets delar",
+    splitIntoChunks: "Förbereder textdelar",
+    createEmbeddingsForChunks: "Skapar textunderlag",
+    summarizeChunks: "Sammanfattar textdelar",
+    summarizeChapters: "Sammanfattar manusdelar",
+    createManuscriptProfile: "Bygger manusprofil",
+    runChapterAudits: "Gör redaktionell genomgång",
+    runWholeBookAudit: "Skapar helhetsbedömning",
+    compareAgainstCorpus: "Jämför med referensbibliotek",
+    compareAgainstTrendSignals: "Väger mot marknadssignaler",
+    createRewritePlan: "Skapar redigeringsplan",
+    generateChapterRewriteDrafts: "Skapar kapitelutkast"
+  };
+
+  return step ? labels[step] ?? "Analysen pågår" : "Redo för analys";
+}
+
 function formatOptionalNumber(value: number | null) {
   return typeof value === "number" ? value.toLocaleString() : "Unknown";
 }
@@ -439,34 +548,34 @@ function liveStatusLabel(input: {
   rewriteDraftsDeferred: boolean;
 }) {
   if (input.isRefreshing) {
-    return "Refreshing...";
+    return "Uppdaterar...";
   }
 
   if (input.autoRunnerActive) {
-    return "Run until pause active";
+    return "Adminbearbetning pågår";
   }
 
   if (input.fetchError && !input.diagnostics) {
-    return "Live diagnostics unavailable";
+    return "Status tillfälligt otillgänglig";
   }
 
   if (input.isBlockedByError) {
-    return "Live updates paused because analysis is blocked by error.";
+    return "Analysen behöver ses över";
   }
 
   if (input.rewriteDraftsDeferred) {
-    return "Rewrite plan ready. Chapter rewrite drafts can be generated when needed.";
+    return "Redigeringsplanen är klar";
   }
 
-  return input.shouldPoll ? "Live updates active" : "Live updates paused";
+  return input.shouldPoll ? "Analysen pågår" : "Status uppdaterad";
 }
 
 function lastRefreshLabel(value: Date | null) {
   if (!value) {
-    return "Last refreshed: pending";
+    return "Senast uppdaterad: väntar";
   }
 
-  return `Last refreshed at ${value.toLocaleTimeString([], {
+  return `Senast uppdaterad ${value.toLocaleTimeString([], {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit"
