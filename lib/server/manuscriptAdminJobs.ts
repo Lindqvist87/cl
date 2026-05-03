@@ -5,6 +5,7 @@ import {
   pipelineProgress
 } from "@/lib/pipeline/steps";
 import { buildPipelineStatusDisplay } from "@/lib/pipeline/display";
+import { getManuscriptDurablePipelineState } from "@/lib/pipeline/durableState";
 import { prisma } from "@/lib/prisma";
 
 const DEFAULT_MAX_JOBS = 5;
@@ -63,21 +64,29 @@ async function getManuscriptRunProgress(manuscriptId: string) {
     prisma.analysisRun.findFirst({
       where: { manuscriptId },
       orderBy: { createdAt: "desc" },
-      select: { checkpoint: true, status: true, error: true, updatedAt: true }
+      select: { id: true, checkpoint: true, status: true, error: true, updatedAt: true }
     }),
     prisma.pipelineJob.findMany({
       where: { manuscriptId },
       orderBy: [{ createdAt: "asc" }]
     })
   ]);
-  const checkpoint = normalizeCheckpoint(run?.checkpoint);
+  const durableState = await getManuscriptDurablePipelineState({
+    manuscriptId,
+    runId: run?.id,
+    checkpoint: run?.checkpoint,
+    jobs
+  });
+  const checkpoint = durableState.evaluationIncomplete
+    ? normalizeCheckpoint(run?.checkpoint)
+    : durableState.reconciledCheckpoint;
   const currentStep = stepOrUndefined(checkpoint.currentStep);
   const metadata = currentStep
     ? recordOrNull(checkpoint.stepMetadata?.[currentStep])
     : null;
   const summary = pipelineProgress(checkpoint);
   const display = buildPipelineStatusDisplay({
-    run,
+    run: run ? { ...run, checkpoint } : null,
     jobs,
     totals: {
       chunks: manuscript?.chunkCount ?? null,

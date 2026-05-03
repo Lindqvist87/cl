@@ -52,6 +52,10 @@ import {
   normalizeCheckpoint,
   type ManuscriptPipelineStep
 } from "@/lib/pipeline/steps";
+import {
+  durableProgressMetadata,
+  getManuscriptDurablePipelineState
+} from "@/lib/pipeline/durableState";
 import { prisma } from "@/lib/prisma";
 import {
   draftChapterRewrite,
@@ -132,7 +136,32 @@ export async function ensureManuscriptPipelineJobs(
   }
 
   const run = await findOrCreatePipelineRun(manuscriptId);
-  const checkpoint = normalizeCheckpoint(run.checkpoint);
+  const durableState = await getManuscriptDurablePipelineState({
+    manuscriptId,
+    runId: run.id,
+    checkpoint: run.checkpoint
+  });
+  const checkpoint = durableState.evaluationIncomplete
+    ? normalizeCheckpoint(run.checkpoint)
+    : durableState.reconciledCheckpoint;
+  if (!durableState.evaluationIncomplete && durableState.checkpointChanged) {
+    await persistPipelineCheckpoint(run.id, checkpoint);
+  }
+  if (
+    !durableState.evaluationIncomplete &&
+    !durableState.complete &&
+    run.status === AnalysisRunStatus.COMPLETED
+  ) {
+    await prisma.analysisRun.update({
+      where: { id: run.id },
+      data: {
+        status: AnalysisRunStatus.RUNNING,
+        completedAt: null,
+        error: null,
+        checkpoint: jsonInput(checkpoint)
+      }
+    });
+  }
   const planned = plannedPipelineJobs(manuscriptId, checkpoint);
   const jobsByKey = new Map<string, PipelineJob>();
   const jobs: PipelineJob[] = [];
@@ -149,6 +178,9 @@ export async function ensureManuscriptPipelineJobs(
       (mode === "RESUME" || mode === "FULL_PIPELINE") &&
       existing?.status === PIPELINE_JOB_STATUS.FAILED &&
       existing.attempts < existing.maxAttempts;
+    const shouldReopenCompleted =
+      !completedFromCheckpoint &&
+      existing?.status === PIPELINE_JOB_STATUS.COMPLETED;
     const baseData = {
       manuscriptId,
       type: jobPlan.type,
@@ -179,6 +211,22 @@ export async function ensureManuscriptPipelineJobs(
                     lockedBy: null,
                     lockExpiresAt: null
                   }
+                : shouldReopenCompleted
+                  ? {
+                      status:
+                        dependencyIds.length > 0
+                          ? PIPELINE_JOB_STATUS.BLOCKED
+                          : PIPELINE_JOB_STATUS.QUEUED,
+                      completedAt: null,
+                      error: null,
+                      result: jsonInput({
+                        reopenedBecause: "durable_outputs_incomplete"
+                      }),
+                      readyAt: null,
+                      lockedAt: null,
+                      lockedBy: null,
+                      lockExpiresAt: null
+                    }
                 : {})
           }
         })
@@ -258,7 +306,14 @@ export async function ensureChapterRewriteJob(input: {
 export async function ensureChapterRewriteDraftsJob(manuscriptId: string) {
   const run = await findOrCreatePipelineRun(manuscriptId);
   const checkpoint = normalizeCheckpoint(run.checkpoint);
-  const rewritePlanComplete = isStepComplete(checkpoint, "createRewritePlan");
+  const durableState = await getManuscriptDurablePipelineState({
+    manuscriptId,
+    runId: run.id,
+    checkpoint
+  });
+  const rewritePlanComplete = durableState.evaluationIncomplete
+    ? isStepComplete(checkpoint, "createRewritePlan")
+    : durableState.phaseByStep.createRewritePlan.isComplete;
 
   if (!rewritePlanComplete) {
     throw new Error("Create the rewrite plan before generating chapter rewrite drafts.");
@@ -329,16 +384,6 @@ export async function runReadyPipelineJobs(options: RunReadyJobsOptions = {}) {
   });
   const recoveredStaleJobs = await releaseStaleLocks(scope);
   await unblockReadyJobsForScope(scope);
-
-  if (recoveredStaleJobs.length > 0) {
-    return buildRunReadyPipelineJobsResult({
-      scope,
-      workerType,
-      results,
-      readyJobIds,
-      recoveredStaleJobs
-    });
-  }
 
   while (results.length < maxJobs && Date.now() - startedAt < maxSeconds * 1000) {
     const nextJob = await findNextReadyJob(scope);
@@ -438,7 +483,12 @@ export async function runPipelineJob(
   }
 
   if (isCompletedJob(job)) {
-    return jobResult(job, "completed");
+    const reopened = await reopenCompletedManuscriptJobIfDurableOutputMissing(job);
+    if (!reopened) {
+      return jobResult(job, "completed");
+    }
+
+    return runPipelineJob(reopened.id, options);
   }
 
   if (isJobCancelled(job)) {
@@ -546,6 +596,45 @@ export async function retryPipelineJob(jobId: string) {
   }
 
   return job;
+}
+
+async function reopenCompletedManuscriptJobIfDurableOutputMissing(
+  job: PipelineJob
+) {
+  if (
+    !job.manuscriptId ||
+    !MANUSCRIPT_PIPELINE_STEPS.includes(job.type as ManuscriptPipelineStep)
+  ) {
+    return null;
+  }
+
+  const step = job.type as ManuscriptPipelineStep;
+  const run = await findOrCreatePipelineRun(job.manuscriptId);
+  const durableState = await safeManuscriptDurablePipelineState({
+    manuscriptId: job.manuscriptId,
+    runId: run.id,
+    checkpoint: run.checkpoint
+  });
+
+  if (!durableState || durableState.evaluationIncomplete || durableState.phaseByStep[step]?.isComplete) {
+    return null;
+  }
+
+  return prisma.pipelineJob.update({
+    where: { id: job.id },
+    data: {
+      status: (await dependenciesComplete(job))
+        ? PIPELINE_JOB_STATUS.QUEUED
+        : PIPELINE_JOB_STATUS.BLOCKED,
+      completedAt: null,
+      error: null,
+      result: jsonInput({ reopenedBecause: "durable_outputs_incomplete" }),
+      readyAt: null,
+      lockedAt: null,
+      lockedBy: null,
+      lockExpiresAt: null
+    }
+  });
 }
 
 export async function cancelPipelineJob(jobId: string) {
@@ -707,7 +796,16 @@ async function runManuscriptPipelineStepJob(
 
   const step = job.type as ManuscriptPipelineStep;
   const run = await findOrCreatePipelineRun(job.manuscriptId);
-  let checkpoint = normalizeCheckpoint(run.checkpoint);
+  const durableBefore = await safeManuscriptDurablePipelineState({
+    manuscriptId: job.manuscriptId,
+    runId: run.id,
+    checkpoint: run.checkpoint
+  });
+  const durableBeforeIncomplete =
+    !durableBefore || durableBefore.evaluationIncomplete;
+  let checkpoint = durableBeforeIncomplete
+    ? normalizeCheckpoint(run.checkpoint)
+    : durableBefore.reconciledCheckpoint;
 
   await prisma.manuscript.update({
     where: { id: job.manuscriptId },
@@ -717,7 +815,17 @@ async function runManuscriptPipelineStepJob(
     }
   });
 
-  if (isStepComplete(checkpoint, step)) {
+  if (durableBefore && !durableBefore.evaluationIncomplete && durableBefore.checkpointChanged) {
+    checkpoint = await persistPipelineCheckpoint(run.id, checkpoint);
+  }
+
+  const phaseBefore = durableBefore?.phaseByStep[step];
+  const durablyCompleteBefore =
+    !durableBeforeIncomplete && Boolean(phaseBefore?.isComplete);
+  if (
+    durablyCompleteBefore ||
+    (durableBeforeIncomplete && isStepComplete(checkpoint, step))
+  ) {
     const completed = await markJobCompleted(job, { reusedCheckpoint: true });
     return jobResult(completed, "completed", await afterJobCompleted(completed));
   }
@@ -729,17 +837,30 @@ async function runManuscriptPipelineStepJob(
   const metadata = await runPipelineStep(step, job.manuscriptId, run.id, {
     maxItems: maxItemsPerStep
   });
+  const durableAfter = await safeManuscriptDurablePipelineState({
+    manuscriptId: job.manuscriptId,
+    runId: run.id,
+    checkpoint
+  });
+  const durableAfterIncomplete = !durableAfter || durableAfter.evaluationIncomplete;
+  const phaseAfter = durableAfter?.phaseByStep[step];
+  const completionMetadata = !durableAfterIncomplete && phaseAfter
+    ? { ...metadata, ...durableProgressMetadata(phaseAfter) }
+    : metadata;
+  const stepComplete = durableAfterIncomplete
+    ? isPipelineStepRunComplete(metadata)
+    : Boolean(phaseAfter?.isComplete);
 
-  if (!isPipelineStepRunComplete(metadata)) {
+  if (!stepComplete) {
     await persistPipelineCheckpoint(
       run.id,
-      markStepProgress(checkpoint, step, metadata)
+      markStepProgress(checkpoint, step, completionMetadata)
     );
     const queued = await prisma.pipelineJob.update({
       where: { id: job.id },
       data: {
         status: PIPELINE_JOB_STATUS.QUEUED,
-        result: jsonInput(metadata),
+        result: jsonInput(completionMetadata),
         attempts: attemptsAfterPartialProgress(job),
         error: null,
         readyAt: null,
@@ -753,13 +874,13 @@ async function runManuscriptPipelineStepJob(
 
   checkpoint = await persistPipelineCheckpoint(
     run.id,
-    markStepComplete(checkpoint, step, metadata)
+    markStepComplete(checkpoint, step, completionMetadata)
   );
   await prisma.analysisRun.update({
     where: { id: run.id },
     data: { checkpoint: jsonInput(checkpoint) }
   });
-  const completed = await markJobCompleted(job, metadata);
+  const completed = await markJobCompleted(job, completionMetadata);
   const readyJobIds = await afterJobCompleted(completed);
 
   return jobResult(completed, "completed", readyJobIds);
@@ -1001,6 +1122,39 @@ async function updateManuscriptPipelineStatus(manuscriptId: string) {
     },
     orderBy: { createdAt: "desc" }
   });
+  const durableState = run
+    ? await safeManuscriptDurablePipelineState({
+        manuscriptId,
+        runId: run.id,
+        checkpoint: run.checkpoint
+      })
+    : null;
+
+  if (
+    allCompleted &&
+    run &&
+    durableState &&
+    !durableState.evaluationIncomplete &&
+    !durableState.complete
+  ) {
+    await prisma.analysisRun.update({
+      where: { id: run.id },
+      data: {
+        status: AnalysisRunStatus.RUNNING,
+        completedAt: null,
+        error: null,
+        checkpoint: jsonInput(durableState.reconciledCheckpoint)
+      }
+    });
+    await prisma.manuscript.update({
+      where: { id: manuscriptId },
+      data: {
+        status: "PIPELINE_RUNNING",
+        analysisStatus: AnalysisStatus.RUNNING
+      }
+    });
+    return;
+  }
 
   if (allCompleted) {
     if (run) {
@@ -1053,6 +1207,18 @@ async function updateManuscriptPipelineStatus(manuscriptId: string) {
       analysisStatus: AnalysisStatus.RUNNING
     }
   });
+}
+
+async function safeManuscriptDurablePipelineState(input: {
+  manuscriptId: string;
+  runId?: string | null;
+  checkpoint?: unknown;
+}) {
+  try {
+    return await getManuscriptDurablePipelineState(input);
+  } catch {
+    return null;
+  }
 }
 
 async function countReadyJobs(scopeOrManuscriptId?: string | PipelineJobScope) {

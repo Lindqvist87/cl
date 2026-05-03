@@ -16,6 +16,7 @@ import { StructureReviewPanel } from "@/components/StructureReviewPanel";
 import { executionModeLabel } from "@/lib/pipeline/jobRules";
 import type { AuditReportJson } from "@/lib/types";
 import { buildPipelineStatusDisplay } from "@/lib/pipeline/display";
+import { getManuscriptDurablePipelineState } from "@/lib/pipeline/durableState";
 import { getInngestRuntimeConfig } from "@/src/inngest/events";
 import { buildStructureReviewRows } from "@/lib/editorial/structureReview";
 
@@ -53,6 +54,12 @@ export default async function ManuscriptPage({
   const latestRun = manuscript.runs[0];
   const latestRewritePlan = manuscript.rewritePlans[0];
   const latestRewrite = manuscript.rewrites[0];
+  const durableState = await getManuscriptDurablePipelineState({
+    manuscriptId: id,
+    runId: latestRun?.id,
+    checkpoint: latestRun?.checkpoint,
+    jobs: manuscript.pipelineJobs
+  });
   const rewriteDraftCount = new Set(
     manuscript.rewrites
       .filter((rewrite) => ["DRAFT", "ACCEPTED"].includes(rewrite.status))
@@ -60,7 +67,10 @@ export default async function ManuscriptPage({
   ).size;
   const rewriteDraftsComplete = rewriteDraftCount >= manuscript.chapterCount;
   const pipelineStatus = buildPipelineStatusDisplay({
-    run: latestRun,
+    run:
+      latestRun && !durableState.evaluationIncomplete
+        ? { ...latestRun, checkpoint: durableState.reconciledCheckpoint }
+        : latestRun,
     jobs: manuscript.pipelineJobs,
     totals: {
       chunks: manuscript.chunkCount,

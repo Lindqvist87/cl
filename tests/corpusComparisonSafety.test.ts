@@ -319,6 +319,7 @@ function corpusStepPatches(input: {
     [
       prisma.manuscript,
       {
+        findUnique: async () => manuscriptFixture(input.manuscriptId),
         findUniqueOrThrow: async () => manuscriptFixture(input.manuscriptId),
         update: async (args: { data: Record<string, unknown> }) => ({
           id: input.manuscriptId,

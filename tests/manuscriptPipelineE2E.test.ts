@@ -428,6 +428,7 @@ function manuscriptDelegate(db: FakeDb) {
     outputs: db.outputs,
     reports: db.report ? [db.report] : [],
     rewritePlans: db.rewritePlans,
+    rewrites: db.rewrites,
     runs: db.runs,
     pipelineJobs: db.jobs
   });

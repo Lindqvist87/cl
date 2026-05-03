@@ -19,6 +19,7 @@ import {
 import { buildPipelineStatusDisplay } from "@/lib/pipeline/display";
 import { getWorkspaceReadinessForManuscript } from "@/lib/pipeline/workspaceReadiness";
 import { getModelRoleDiagnostics } from "@/lib/ai/modelConfig";
+import { getManuscriptDurablePipelineState } from "@/lib/pipeline/durableState";
 import { prisma } from "@/lib/prisma";
 
 export type PipelineJobDiagnostic = {
@@ -68,9 +69,18 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
     throw new Error("Manuscript not found.");
   }
 
-  const checkpoint = normalizeCheckpoint(run?.checkpoint);
+  const durableState = await getManuscriptDurablePipelineState({
+    manuscriptId,
+    runId: run?.id,
+    checkpoint: run?.checkpoint,
+    jobs
+  });
+  const checkpoint = durableState.evaluationIncomplete
+    ? normalizeCheckpoint(run?.checkpoint)
+    : durableState.reconciledCheckpoint;
   const completedSteps = new Set(checkpoint.completedSteps ?? []);
   const currentStep =
+    durableState.currentPhase ??
     stepOrNull(checkpoint.currentStep) ??
     FULL_MANUSCRIPT_PIPELINE_STEPS.find((step) => !completedSteps.has(step)) ??
     null;
@@ -96,14 +106,17 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
   const runnerState =
     failedJobs.length > 0
       ? "blocked_by_error"
-      : remainingJobs.length > 0
+      : remainingJobs.length > 0 ||
+          (!durableState.evaluationIncomplete &&
+            durableState.recoverable &&
+            !durableState.complete)
         ? "more_work_remains"
         : "done";
   const zeroRunDetails: RunReadyJobsReasonResult = nextEligibleJob
     ? {}
     : zeroRunReasonForJobs({ state: runnerState, jobs, now });
   const pipelineStatus = buildPipelineStatusDisplay({
-    run,
+    run: run ? { ...run, checkpoint } : null,
     jobs,
     totals: {
       chunks: manuscript.chunkCount,
@@ -115,6 +128,23 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
 
   return {
     manuscriptId,
+    durablePhase: durableState.currentPhase,
+    jobStatusPhase: durableState.jobStatusPhase,
+    checkpointPhase: durableState.checkpointPhase,
+    mismatchWarnings: durableState.mismatchWarnings,
+    recoverable: durableState.recoverable,
+    staleMetadataDetected: durableState.staleMetadataDetected,
+    currentPhaseProgress: durableState.currentPhaseState
+      ? {
+          phase: durableState.currentPhaseState.phase,
+          completed: durableState.currentPhaseState.completed,
+          total: durableState.currentPhaseState.total,
+          remaining: durableState.currentPhaseState.remaining,
+          isComplete: durableState.currentPhaseState.isComplete,
+          blockingReason: durableState.currentPhaseState.blockingReason,
+          nextJobType: durableState.currentPhaseState.nextJobType
+        }
+      : null,
     state: runnerState,
     run: run
       ? {

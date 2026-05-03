@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import type { PipelineJob } from "@prisma/client";
+import { AnalysisPassType, type PipelineJob } from "@prisma/client";
 import { pipelineStartHttpStatus } from "../lib/pipeline/startPipeline";
 import { plannedPipelineJobs } from "../lib/pipeline/jobPlanner";
 import {
@@ -29,6 +29,8 @@ import {
   isStepComplete,
   normalizeCheckpoint
 } from "../lib/pipeline/steps";
+import { evaluateDurablePipelineState } from "../lib/pipeline/durableState";
+import { getManuscriptPipelineDiagnostics } from "../lib/pipeline/diagnostics";
 import { manuscriptAdminJobRunner } from "../lib/server/manuscriptAdminJobs";
 import { prisma } from "../lib/prisma";
 
@@ -72,6 +74,210 @@ test("pipeline.started plans ordered jobs with dependencies", () => {
   assert.equal(jobs[0].completedFromCheckpoint, true);
   assert.deepEqual(jobs[0].dependencyKeys, []);
   assert.deepEqual(jobs[1].dependencyKeys, [jobs[0].idempotencyKey]);
+});
+
+test("durable state overrides stale checkpoint after incomplete chunk summaries", () => {
+  const state = evaluateDurablePipelineState({
+    manuscript: { id: "m-durable", originalText: "Stored text.", wordCount: 2 },
+    chapters: [
+      { id: "chapter-1", summary: "Chapter summary.", text: "Chapter text." }
+    ],
+    chunks: [
+      {
+        id: "chunk-1",
+        summary: "Chunk summary.",
+        localMetrics: { embeddingStatus: "stored" }
+      },
+      {
+        id: "chunk-2",
+        summary: null,
+        localMetrics: { embeddingStatus: "stored" }
+      }
+    ],
+    outputs: [
+      {
+        passType: AnalysisPassType.CHUNK_ANALYSIS,
+        scopeType: "chunk",
+        scopeId: "chunk-1",
+        status: "COMPLETED",
+        output: { summary: "Chunk summary." }
+      }
+    ],
+    profile: { id: "profile-1" },
+    reports: [{ id: "report-1", runId: "run-1" }],
+    rewritePlans: [{ id: "rewrite-plan-1", analysisRunId: "run-1" }],
+    checkpoint: {
+      completedSteps: [
+        "parseAndNormalizeManuscript",
+        "splitIntoChapters",
+        "splitIntoChunks",
+        "createEmbeddingsForChunks",
+        "summarizeChunks",
+        "summarizeChapters",
+        "createManuscriptProfile",
+        "runChapterAudits",
+        "runWholeBookAudit",
+        "compareAgainstCorpus",
+        "compareAgainstTrendSignals",
+        "createRewritePlan"
+      ],
+      currentStep: "createRewritePlan"
+    },
+    jobs: [
+      mutableJob("summarize-job", {
+        manuscriptId: "m-durable",
+        type: "summarizeChunks",
+        status: PIPELINE_JOB_STATUS.COMPLETED,
+        idempotencyKey: "summarize-job"
+      })
+    ]
+  });
+
+  assert.equal(state.currentPhase, "summarizeChunks");
+  assert.deepEqual(state.completedSteps, [
+    "parseAndNormalizeManuscript",
+    "splitIntoChapters",
+    "splitIntoChunks",
+    "createEmbeddingsForChunks"
+  ]);
+  assert.equal(state.currentPhaseState?.total, 2);
+  assert.equal(state.currentPhaseState?.completed, 1);
+  assert.equal(state.currentPhaseState?.remaining, 1);
+  assert.equal(state.phaseByStep.summarizeChunks.isComplete, false);
+  assert.equal(state.staleMetadataDetected, true);
+  assert.match(state.mismatchWarnings.join("\n"), /summarizeChunks/);
+});
+
+test("durable summarizeChunks completion accepts current-run output or chunk summary", () => {
+  const state = evaluateDurablePipelineState({
+    manuscript: { id: "m-chunk-complete", originalText: "Stored text.", wordCount: 2 },
+    chapters: [{ id: "chapter-1", text: "Chapter text." }],
+    chunks: [
+      {
+        id: "chunk-with-summary",
+        summary: "Persisted summary.",
+        localMetrics: { embeddingStatus: "stored" }
+      },
+      {
+        id: "chunk-with-output",
+        summary: null,
+        localMetrics: { embeddingStatus: "stored" }
+      }
+    ],
+    outputs: [
+      {
+        passType: AnalysisPassType.CHUNK_ANALYSIS,
+        scopeType: "chunk",
+        scopeId: "chunk-with-output",
+        status: "COMPLETED",
+        output: { summary: "Output summary." }
+      }
+    ],
+    checkpoint: {
+      completedSteps: [
+        "parseAndNormalizeManuscript",
+        "splitIntoChapters",
+        "splitIntoChunks",
+        "createEmbeddingsForChunks"
+      ],
+      currentStep: "summarizeChunks"
+    }
+  });
+
+  assert.equal(state.phaseByStep.summarizeChunks.isComplete, true);
+  assert.equal(state.phaseByStep.summarizeChunks.completed, 2);
+});
+
+test("diagnostics report durable/checkpoint mismatch instead of hiding it", async () => {
+  const manuscriptId = "manuscript-diagnostics-mismatch";
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks",
+      "createEmbeddingsForChunks",
+      "summarizeChunks",
+      "summarizeChapters",
+      "createManuscriptProfile",
+      "runChapterAudits",
+      "runWholeBookAudit",
+      "compareAgainstCorpus",
+      "compareAgainstTrendSignals",
+      "createRewritePlan"
+    ],
+    currentStep: "createRewritePlan"
+  });
+  const jobs = [
+    mutableJob("summarize-job", {
+      manuscriptId,
+      type: "summarizeChunks",
+      status: PIPELINE_JOB_STATUS.COMPLETED,
+      idempotencyKey: "summarize-job"
+    })
+  ];
+  const manuscriptSnapshot = {
+    id: manuscriptId,
+    originalText: "Stored text.",
+    wordCount: 2,
+    analysisStatus: "COMPLETED",
+    status: "PIPELINE_COMPLETED",
+    chapterCount: 1,
+    chunkCount: 2,
+    chapters: [{ id: "chapter-1", summary: "Chapter summary.", text: "Chapter text." }],
+    chunks: [
+      {
+        id: "chunk-1",
+        summary: "Chunk summary.",
+        text: "Chunk one.",
+        wordCount: 2,
+        localMetrics: { embeddingStatus: "stored" }
+      },
+      {
+        id: "chunk-2",
+        summary: null,
+        text: "Chunk two.",
+        wordCount: 2,
+        localMetrics: { embeddingStatus: "stored" }
+      }
+    ],
+    outputs: [
+      {
+        passType: AnalysisPassType.CHUNK_ANALYSIS,
+        scopeId: "chunk-1",
+        output: { summary: "Chunk summary." },
+        rawText: "{}",
+        status: "COMPLETED"
+      }
+    ],
+    profile: { id: "profile-1" },
+    reports: [{ id: "report-1", runId: run.id, executiveSummary: "Summary." }],
+    rewritePlans: [{ id: "rewrite-plan-1", analysisRunId: run.id }],
+    rewrites: [],
+    findings: [{ id: "finding-1" }],
+    runs: [{ checkpoint: run.checkpoint }],
+    pipelineJobs: jobs
+  };
+
+  await withPatchedPrisma(
+    [
+      [prisma.manuscript, { findUnique: async () => manuscriptSnapshot }],
+      [prisma.analysisRun, analysisRunPatch(run)],
+      [prisma.pipelineJob, pipelineJobPatch(jobs)]
+    ],
+    async () => {
+      const diagnostics = await getManuscriptPipelineDiagnostics(manuscriptId);
+
+      assert.equal(diagnostics.state, "more_work_remains");
+      assert.equal(diagnostics.durablePhase, "summarizeChunks");
+      assert.equal(diagnostics.checkpointPhase, "createRewritePlan");
+      assert.equal(diagnostics.pipelineStatus.currentStep, "summarizeChunks");
+      assert.equal(diagnostics.staleMetadataDetected, true);
+      assert.equal(diagnostics.recoverable, true);
+      assert.equal(diagnostics.currentPhaseProgress?.completed, 1);
+      assert.equal(diagnostics.currentPhaseProgress?.total, 2);
+      assert.match(diagnostics.mismatchWarnings.join("\n"), /summarizeChunks/);
+    }
+  );
 });
 
 test("stuck manuscript with no jobs gets resumable jobs from checkpoint", async () => {
@@ -136,6 +342,93 @@ test("stuck manuscript with no jobs gets resumable jobs from checkpoint", async 
         jobs.slice(5).every((job) => job.status === PIPELINE_JOB_STATUS.BLOCKED),
         true
       );
+    }
+  );
+});
+
+test("resume reopens completed job when durable outputs are incomplete", async () => {
+  const manuscriptId = "manuscript-reopen-stale-complete";
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks",
+      "createEmbeddingsForChunks",
+      "summarizeChunks",
+      "summarizeChapters",
+      "createManuscriptProfile",
+      "runChapterAudits",
+      "runWholeBookAudit",
+      "compareAgainstCorpus",
+      "compareAgainstTrendSignals",
+      "createRewritePlan"
+    ],
+    currentStep: "createRewritePlan"
+  });
+  const jobs: MutableJob[] = [
+    mutableJob("summarize-stale-complete", {
+      manuscriptId,
+      type: "summarizeChunks",
+      status: PIPELINE_JOB_STATUS.COMPLETED,
+      idempotencyKey: `manuscript:${manuscriptId}:pipeline-step:summarizeChunks`,
+      completedAt: new Date("2026-04-29T05:30:00Z")
+    })
+  ];
+
+  await withPatchedPrisma(
+    [
+      [
+        prisma.manuscript,
+        {
+          findUnique: async () => ({
+            id: manuscriptId,
+            originalText: "Stored text.",
+            wordCount: 2,
+            chapters: [{ id: "chapter-1", summary: "Chapter summary.", text: "Text." }],
+            chunks: [
+              {
+                id: "chunk-1",
+                summary: "Chunk summary.",
+                localMetrics: { embeddingStatus: "stored" }
+              },
+              {
+                id: "chunk-2",
+                summary: null,
+                localMetrics: { embeddingStatus: "stored" }
+              }
+            ],
+            outputs: [
+              {
+                passType: AnalysisPassType.CHUNK_ANALYSIS,
+                scopeId: "chunk-1",
+                status: "COMPLETED",
+                output: { summary: "Chunk summary." }
+              }
+            ],
+            profile: { id: "profile-1" },
+            reports: [{ id: "report-1", runId: run.id }],
+            rewritePlans: [{ id: "rewrite-plan-1", analysisRunId: run.id }],
+            rewrites: []
+          }),
+          update: async (args: { data: Record<string, unknown> }) => ({
+            id: manuscriptId,
+            ...args.data
+          })
+        }
+      ],
+      [prisma.analysisRun, analysisRunPatch(run)],
+      [prisma.pipelineJob, pipelineJobPatch(jobs)]
+    ],
+    async () => {
+      await ensureManuscriptPipelineJobs(manuscriptId, "RESUME");
+
+      const summarizeJob = jobs.find((job) => job.type === "summarizeChunks");
+      const checkpoint = normalizeCheckpoint(run.checkpoint);
+
+      assert.equal(summarizeJob?.status, PIPELINE_JOB_STATUS.QUEUED);
+      assert.equal(summarizeJob?.completedAt, null);
+      assert.equal(checkpoint.currentStep, "summarizeChunks");
+      assert.equal(checkpoint.completedSteps?.includes("summarizeChunks"), false);
     }
   );
 });
@@ -283,6 +576,90 @@ test("run-until-idle bootstraps missing manuscript jobs before running", async (
   }
 });
 
+test("fallback runner continues from one phase to the next within one session", async () => {
+  const manuscriptId = "manuscript-fallback-continues";
+  const run = mutableRun(manuscriptId, { completedSteps: [] });
+  const jobs: MutableJob[] = [];
+  const chapters = [
+    {
+      id: "chapter-1",
+      manuscriptId,
+      title: "Opening",
+      order: 1,
+      chapterIndex: 0,
+      text: "Opening chapter text.",
+      wordCount: 0,
+      summary: null,
+      status: "PENDING",
+      paragraphs: [{ text: "Opening chapter text.", chapterOrder: 1 }]
+    }
+  ];
+
+  await withPatchedPrisma(
+    [
+      [
+        prisma.manuscript,
+        {
+          findUnique: async () => ({
+            id: manuscriptId,
+            originalText: "Opening chapter text.",
+            wordCount: 3,
+            versions: []
+          }),
+          update: async (args: { data: Record<string, unknown> }) => ({
+            id: manuscriptId,
+            ...args.data
+          })
+        }
+      ],
+      [
+        prisma.manuscriptChapter,
+        {
+          findMany: async () => chapters,
+          update: async (args: {
+            where: { id: string };
+            data: Record<string, unknown>;
+          }) => {
+            const chapter = chapters.find(
+              (candidate) => candidate.id === args.where.id
+            );
+            assert.ok(chapter);
+            Object.assign(chapter, args.data);
+            return chapter;
+          }
+        }
+      ],
+      [prisma.analysisRun, analysisRunPatch(run)],
+      [prisma.pipelineJob, pipelineJobPatch(jobs)],
+      [
+        prisma.workerHeartbeat,
+        {
+          upsert: async (args: { update: Record<string, unknown> }) => args.update
+        }
+      ]
+    ],
+    async () => {
+      const result = await runReadyPipelineJobs({
+        manuscriptId,
+        maxJobs: 2,
+        maxSeconds: 5,
+        workerType: "MANUAL",
+        workerId: "manual:test-continue"
+      });
+
+      assert.equal(result.jobsRun, 2);
+      assert.deepEqual(
+        result.results.map((item) => item.type),
+        ["parseAndNormalizeManuscript", "splitIntoChapters"]
+      );
+      assert.equal(
+        jobs.find((job) => job.type === "splitIntoChunks")?.status,
+        PIPELINE_JOB_STATUS.QUEUED
+      );
+    }
+  );
+});
+
 test("ready runner reports a still-locked running manuscript job", async () => {
   const manuscriptId = "manuscript-running-lock";
   const checkpoint = checkpointBeforeRunChapterAudits();
@@ -329,18 +706,18 @@ test("ready runner reports a still-locked running manuscript job", async () => {
   );
 });
 
-test("ready runner recovers stale running manuscript jobs before retrying them", async () => {
+test("ready runner recovers stale running manuscript jobs and continues within budget", async () => {
   const manuscriptId = "manuscript-stale-running";
-  const checkpoint = checkpointBeforeRunChapterAudits();
+  const checkpoint = { completedSteps: [], currentStep: "parseAndNormalizeManuscript" };
   const runningPlan = plannedPipelineJobs(manuscriptId, checkpoint).find(
-    (job) => job.type === "runChapterAudits"
+    (job) => job.type === "parseAndNormalizeManuscript"
   );
   assert.ok(runningPlan);
 
   const jobs: MutableJob[] = [
-    mutableJob("stale-audits-job", {
+    mutableJob("stale-parse-job", {
       manuscriptId,
-      type: "runChapterAudits",
+      type: "parseAndNormalizeManuscript",
       status: PIPELINE_JOB_STATUS.RUNNING,
       idempotencyKey: runningPlan.idempotencyKey,
       lockedAt: new Date(Date.now() - 20 * 60 * 1000),
@@ -353,7 +730,31 @@ test("ready runner recovers stale running manuscript jobs before retrying them",
   const run = mutableRun(manuscriptId, checkpoint);
 
   await withPatchedPrisma(
-    manuscriptRunnerPatches({ manuscriptId, run, jobs }),
+    [
+      [
+        prisma.manuscript,
+        {
+          findUnique: async () => ({
+            id: manuscriptId,
+            originalText: "Recovered source text.",
+            wordCount: 3,
+            versions: []
+          }),
+          update: async (args: { data: Record<string, unknown> }) => ({
+            id: manuscriptId,
+            ...args.data
+          })
+        }
+      ],
+      [prisma.analysisRun, analysisRunPatch(run)],
+      [prisma.pipelineJob, pipelineJobPatch(jobs)],
+      [
+        prisma.workerHeartbeat,
+        {
+          upsert: async (args: { update: Record<string, unknown> }) => args.update
+        }
+      ]
+    ],
     async () => {
       const result = await runReadyPipelineJobs({
         manuscriptId,
@@ -363,17 +764,17 @@ test("ready runner recovers stale running manuscript jobs before retrying them",
         workerId: "manual:test-stale-lock"
       });
 
-      assert.equal(result.jobsRun, 0);
-      assert.equal(result.reason, "stale_running_job_recovered");
-      assert.equal(result.blockingJob?.id, "stale-audits-job");
-      assert.equal(result.blockingJob?.stale, true);
-      assert.equal(jobs[0].status, PIPELINE_JOB_STATUS.RETRYING);
+      assert.equal(result.jobsRun, 1);
+      assert.equal(result.reason, undefined);
+      assert.equal(result.recoveredStaleJobs[0]?.id, "stale-parse-job");
+      assert.equal(result.recoveredStaleJobs[0]?.stale, true);
+      assert.equal(result.results[0]?.type, "parseAndNormalizeManuscript");
+      assert.equal(result.results[0]?.status, "completed");
+      assert.equal(jobs[0].status, PIPELINE_JOB_STATUS.COMPLETED);
       assert.equal(jobs[0].lockedAt, null);
       assert.equal(jobs[0].lockedBy, null);
       assert.equal(jobs[0].lockExpiresAt, null);
-      assert.ok(jobs[0].readyAt instanceof Date);
       assert.equal(result.remainingReadyJobs, 1);
-      assert.match(result.message ?? "", /Recovered stale running job runChapterAudits/);
     }
   );
 });
@@ -495,7 +896,10 @@ test("partial summarizeChunks progress requeues without exhausting maxAttempts",
         assert.deepEqual(job.result, {
           analyzed: 1,
           remaining: 1,
-          complete: false
+          complete: false,
+          total: 2,
+          completed: 1,
+          blockingReason: "Chunk summaries are incomplete."
         });
         assert.equal(outputs.length, 1);
 
@@ -575,7 +979,10 @@ test("repeated summarizeChunks partial runs finish and unblock summarizeChapters
         assert.deepEqual(summarizeJob.result, {
           analyzed: 1,
           remaining: 0,
-          complete: true
+          complete: true,
+          total: 3,
+          completed: 3,
+          blockingReason: null
         });
         assert.equal(chapterJob.status, PIPELINE_JOB_STATUS.QUEUED);
         assert.deepEqual(third.readyJobIds, [chapterJob.id]);
@@ -898,6 +1305,18 @@ function summarizeChunksPatches(input: {
     [
       prisma.manuscript,
       {
+        findUnique: async () => ({
+          id: input.manuscriptId,
+          originalText: "Test manuscript text.",
+          wordCount: 9,
+          chapters: [chapterFixture()],
+          chunks: input.chunks,
+          outputs: input.outputs,
+          profile: { id: "profile-1" },
+          reports: [],
+          rewritePlans: [],
+          rewrites: []
+        }),
         findUniqueOrThrow: async () => ({
           id: input.manuscriptId,
           title: "Test Manuscript",
