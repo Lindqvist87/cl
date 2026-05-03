@@ -38,39 +38,41 @@ export type PipelineJobDiagnostic = {
 
 export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
   const now = new Date();
-  const [manuscript, run, jobs, readiness, chunkSummaryProgress] =
-    await Promise.all([
-      prisma.manuscript.findUnique({
-        where: { id: manuscriptId },
-        select: {
-          id: true,
-          chapterCount: true,
-          chunkCount: true
-        }
-      }),
-      prisma.analysisRun.findFirst({
-        where: { manuscriptId },
-        orderBy: { createdAt: "desc" },
-        select: {
-          id: true,
-          status: true,
-          checkpoint: true,
-          error: true,
-          updatedAt: true
-        }
-      }),
-      prisma.pipelineJob.findMany({
-        where: { manuscriptId },
-        orderBy: [{ createdAt: "asc" }]
-      }),
-      getWorkspaceReadinessForManuscript(manuscriptId),
-      getChunkSummaryProgress(manuscriptId)
-    ]);
+  const [manuscript, run, jobs, readiness] = await Promise.all([
+    prisma.manuscript.findUnique({
+      where: { id: manuscriptId },
+      select: {
+        id: true,
+        chapterCount: true,
+        chunkCount: true
+      }
+    }),
+    prisma.analysisRun.findFirst({
+      where: { manuscriptId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        status: true,
+        checkpoint: true,
+        error: true,
+        updatedAt: true
+      }
+    }),
+    prisma.pipelineJob.findMany({
+      where: { manuscriptId },
+      orderBy: [{ createdAt: "asc" }]
+    }),
+    getWorkspaceReadinessForManuscript(manuscriptId)
+  ]);
 
   if (!manuscript) {
     throw new Error("Manuscript not found.");
   }
 
+  const chunkSummaryProgress = await getChunkSummaryProgress(
+    manuscriptId,
+    run?.id
+  );
   const checkpoint = normalizeCheckpoint(run?.checkpoint);
   const completedSteps = new Set(checkpoint.completedSteps ?? []);
   const currentStep =

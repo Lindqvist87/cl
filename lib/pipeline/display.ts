@@ -129,12 +129,20 @@ export function buildPipelineStatusDisplay(input: {
   const checkpoint = normalizeCheckpoint(
     input.checkpoint ?? input.run?.checkpoint ?? {}
   );
-  const completedCoreStepSet = new Set(
+  const orderedJobs = sortPipelineJobs(jobs);
+  const rawCompletedCoreStepSet = new Set(
     (checkpoint.completedSteps ?? []).filter(isCoreManuscriptPipelineStep)
   );
+  const forceSummarizeChunks = shouldForceSummarizeChunks({
+    completedStepSet: rawCompletedCoreStepSet,
+    jobs: orderedJobs,
+    totals: input.totals
+  });
+  const completedCoreStepSet = forceSummarizeChunks
+    ? pruneCompletedStepsFrom(rawCompletedCoreStepSet, "summarizeChunks")
+    : rawCompletedCoreStepSet;
   const completedSteps = completedCoreStepSet.size;
   const totalSteps = CORE_MANUSCRIPT_PIPELINE_STEPS.length;
-  const orderedJobs = sortPipelineJobs(jobs);
   const activeJob = orderedJobs.find(
     (job) =>
       isCoreManuscriptPipelineStep(job.type) && ACTIVE_JOB_STATUSES.has(job.status)
@@ -145,6 +153,9 @@ export function buildPipelineStatusDisplay(input: {
       ACTIVE_JOB_STATUSES.has(job.status)
   );
   const currentStep =
+    (forceSummarizeChunks
+      ? "summarizeChunks"
+      : null) ??
     (isCoreManuscriptPipelineStep(checkpoint.currentStep)
       ? checkpoint.currentStep
       : null) ??
@@ -179,6 +190,9 @@ export function buildPipelineStatusDisplay(input: {
   const coreAnalysisComplete = completedSteps === totalSteps && totalSteps > 0;
   const optionalRewriteDraftsPending = Boolean(optionalRewriteDraftJob);
   const complete =
+    (measuredProgress && typeof remainingCount === "number"
+      ? remainingCount === 0
+      : null) ??
     booleanValue(progressRecord.complete) ??
     coreAnalysisComplete ??
     false;
@@ -339,6 +353,53 @@ function sortPipelineJobs(jobs: PipelineDisplayJob[]) {
 
     return dateMs(a.createdAt) - dateMs(b.createdAt);
   });
+}
+
+function shouldForceSummarizeChunks(input: {
+  completedStepSet: Set<string>;
+  jobs: PipelineDisplayJob[];
+  totals?: PipelineDisplayTotals;
+}) {
+  const total = input.totals?.chunks;
+  const summarized = input.totals?.summarizedChunks;
+  if (
+    typeof total !== "number" ||
+    typeof summarized !== "number" ||
+    total <= 0 ||
+    summarized >= total
+  ) {
+    return false;
+  }
+
+  return (
+    input.completedStepSet.has("createEmbeddingsForChunks") ||
+    input.jobs.some(
+      (job) =>
+        job.type === "createEmbeddingsForChunks" &&
+        job.status === PIPELINE_JOB_STATUS.COMPLETED
+    )
+  );
+}
+
+function pruneCompletedStepsFrom(
+  completedStepSet: Set<string>,
+  firstIncompleteStep: ManuscriptPipelineStep
+) {
+  const firstIncompleteIndex = CORE_MANUSCRIPT_PIPELINE_STEPS.indexOf(
+    firstIncompleteStep as (typeof CORE_MANUSCRIPT_PIPELINE_STEPS)[number]
+  );
+  const pruned = new Set<string>();
+
+  for (const step of completedStepSet) {
+    const index = CORE_MANUSCRIPT_PIPELINE_STEPS.indexOf(
+      step as (typeof CORE_MANUSCRIPT_PIPELINE_STEPS)[number]
+    );
+    if (index >= 0 && index < firstIncompleteIndex) {
+      pruned.add(step);
+    }
+  }
+
+  return pruned;
 }
 
 function stepOrder(type: string) {

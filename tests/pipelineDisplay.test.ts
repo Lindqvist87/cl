@@ -104,6 +104,107 @@ test("pipeline display prefers actual summarized chunk count over stale metadata
   });
 });
 
+test("pipeline display stays on summarizeChunks when later checkpoint progress is stale", () => {
+  const display = buildPipelineStatusDisplay({
+    checkpoint: {
+      completedSteps: [
+        "parseAndNormalizeManuscript",
+        "splitIntoChapters",
+        "splitIntoChunks",
+        "createEmbeddingsForChunks",
+        "summarizeChunks",
+        "summarizeChapters",
+        "createManuscriptProfile"
+      ],
+      currentStep: "runChapterAudits",
+      stepMetadata: {
+        runChapterAudits: {
+          audited: 40,
+          remaining: 108,
+          complete: false
+        }
+      }
+    },
+    jobs: [
+      {
+        type: "createEmbeddingsForChunks",
+        status: PIPELINE_JOB_STATUS.COMPLETED,
+        createdAt: "2026-05-03T07:50:00.000Z"
+      },
+      {
+        type: "summarizeChunks",
+        status: PIPELINE_JOB_STATUS.QUEUED,
+        createdAt: "2026-05-03T07:55:00.000Z"
+      },
+      {
+        type: "runChapterAudits",
+        status: PIPELINE_JOB_STATUS.BLOCKED,
+        result: { audited: 40, remaining: 108, complete: false },
+        createdAt: "2026-05-03T08:00:00.000Z"
+      }
+    ],
+    totals: {
+      chunks: 139,
+      summarizedChunks: 16,
+      chapters: 148,
+      sections: 148,
+      auditTargets: 148
+    }
+  });
+
+  assert.equal(display.currentStep, "summarizeChunks");
+  assert.equal(display.completedSteps, 4);
+  assert.equal(display.analyzedCount, 16);
+  assert.equal(display.remainingCount, 123);
+  assert.equal(display.stepProgressLabel, "16 / 139 chunks summarized");
+  assert.deepEqual(display.stepProgress, {
+    step: "summarizeChunks",
+    completed: 16,
+    total: 139,
+    remaining: 123,
+    percent: 12,
+    label: "16 / 139 chunks summarized",
+    remainingLabel: "123 remaining"
+  });
+});
+
+test("pipeline display moves to chapter audit progress only after chunk summaries complete", () => {
+  const display = buildPipelineStatusDisplay({
+    checkpoint: {
+      completedSteps: [
+        "parseAndNormalizeManuscript",
+        "splitIntoChapters",
+        "splitIntoChunks",
+        "createEmbeddingsForChunks",
+        "summarizeChunks",
+        "summarizeChapters",
+        "createManuscriptProfile"
+      ],
+      currentStep: "runChapterAudits"
+    },
+    jobs: [
+      {
+        type: "runChapterAudits",
+        status: PIPELINE_JOB_STATUS.QUEUED,
+        result: { audited: 40, remaining: 108, complete: false },
+        createdAt: "2026-05-03T08:00:00.000Z"
+      }
+    ],
+    totals: {
+      chunks: 139,
+      summarizedChunks: 139,
+      chapters: 148,
+      sections: 148,
+      auditTargets: 148
+    }
+  });
+
+  assert.equal(display.currentStep, "runChapterAudits");
+  assert.equal(display.analyzedCount, 40);
+  assert.equal(display.remainingCount, 108);
+  assert.equal(display.stepProgressLabel, "40 / 148 section audits completed");
+});
+
 test("pipeline display separates core completion from optional rewrite drafts", () => {
   const completedCoreSteps = [
     "parseAndNormalizeManuscript",

@@ -31,24 +31,21 @@ export default async function ManuscriptPage({
 }) {
   const { id } = await params;
   const showAdminTools = process.env.NODE_ENV !== "production";
-  const [manuscript, chunkSummaryProgress] = await Promise.all([
-    prisma.manuscript.findUnique({
-      where: { id },
-      include: {
-        chapters: {
-          orderBy: { order: "asc" },
-          include: { _count: { select: { findings: true } } }
-        },
-        reports: { orderBy: { createdAt: "desc" }, take: 1 },
-        runs: { orderBy: { createdAt: "desc" }, take: 1 },
-        rewritePlans: { orderBy: { createdAt: "desc" }, take: 1 },
-        rewrites: { orderBy: { createdAt: "desc" } },
-        findings: { take: 1 },
-        pipelineJobs: { orderBy: { createdAt: "asc" }, take: 60 }
-      }
-    }),
-    getChunkSummaryProgress(id)
-  ]);
+  const manuscript = await prisma.manuscript.findUnique({
+    where: { id },
+    include: {
+      chapters: {
+        orderBy: { order: "asc" },
+        include: { _count: { select: { findings: true } } }
+      },
+      reports: { orderBy: { createdAt: "desc" }, take: 1 },
+      runs: { orderBy: { createdAt: "desc" }, take: 1 },
+      rewritePlans: { orderBy: { createdAt: "desc" }, take: 1 },
+      rewrites: { orderBy: { createdAt: "desc" } },
+      findings: { take: 1 },
+      pipelineJobs: { orderBy: { createdAt: "asc" }, take: 60 }
+    }
+  });
 
   if (!manuscript) {
     notFound();
@@ -57,6 +54,7 @@ export default async function ManuscriptPage({
   const report = manuscript.reports[0];
   const structured = report?.structured as AuditReportJson | undefined;
   const latestRun = manuscript.runs[0];
+  const chunkSummaryProgress = await getChunkSummaryProgress(id, latestRun?.id);
   const latestRewritePlan = manuscript.rewritePlans[0];
   const latestRewrite = manuscript.rewrites[0];
   const rewriteDraftCount = new Set(

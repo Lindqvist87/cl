@@ -1,8 +1,11 @@
+import { AnalysisPassType } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 
 export type ChunkSummaryProgress = {
   total: number;
   summarized: number;
+  outputCount: number;
+  summaryRowCount: number;
   remaining: number;
 };
 
@@ -11,10 +14,18 @@ export function hasUsableChunkSummary(summary: unknown): summary is string {
 }
 
 export async function getChunkSummaryProgress(
-  manuscriptId: string
+  manuscriptId: string,
+  runId?: string | null
 ): Promise<ChunkSummaryProgress> {
-  const [total, summarized] = await Promise.all([
+  const outputWhere = {
+    manuscriptId,
+    passType: AnalysisPassType.CHUNK_ANALYSIS,
+    scopeType: "chunk",
+    ...(runId ? { runId } : {})
+  };
+  const [total, outputCount, summaryRowCount] = await Promise.all([
     prisma.manuscriptChunk.count({ where: { manuscriptId } }),
+    prisma.analysisOutput.count({ where: outputWhere }),
     prisma.manuscriptChunk.count({
       where: {
         manuscriptId,
@@ -22,10 +33,13 @@ export async function getChunkSummaryProgress(
       }
     })
   ]);
+  const summarized = Math.min(total, runId || outputCount > 0 ? outputCount : summaryRowCount);
 
   return {
     total,
     summarized,
+    outputCount,
+    summaryRowCount,
     remaining: Math.max(total - summarized, 0)
   };
 }

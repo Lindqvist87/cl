@@ -56,7 +56,7 @@ export function manuscriptAdminRunJobOptions(
 }
 
 async function getManuscriptRunProgress(manuscriptId: string) {
-  const [manuscript, run, jobs, chunkSummaryProgress] = await Promise.all([
+  const [manuscript, run, jobs] = await Promise.all([
     prisma.manuscript.findUnique({
       where: { id: manuscriptId },
       select: { chapterCount: true, chunkCount: true }
@@ -64,14 +64,17 @@ async function getManuscriptRunProgress(manuscriptId: string) {
     prisma.analysisRun.findFirst({
       where: { manuscriptId },
       orderBy: { createdAt: "desc" },
-      select: { checkpoint: true, status: true, error: true, updatedAt: true }
+      select: { id: true, checkpoint: true, status: true, error: true, updatedAt: true }
     }),
     prisma.pipelineJob.findMany({
       where: { manuscriptId },
       orderBy: [{ createdAt: "asc" }]
-    }),
-    getChunkSummaryProgress(manuscriptId)
+    })
   ]);
+  const chunkSummaryProgress = await getChunkSummaryProgress(
+    manuscriptId,
+    run?.id
+  );
   const checkpoint = normalizeCheckpoint(run?.checkpoint);
   const currentStep = stepOrUndefined(checkpoint.currentStep);
   const metadata = currentStep

@@ -240,6 +240,8 @@ test("run-until-idle bootstraps missing manuscript jobs before running", async (
         [
           prisma.manuscriptChunk,
           {
+            count: async (args: { where?: Record<string, unknown> } = {}) =>
+              countChunks(chunks, args.where),
             findMany: async () => chunks,
             update: async (args: {
               where: { id: string };
@@ -250,6 +252,12 @@ test("run-until-idle bootstraps missing manuscript jobs before running", async (
               Object.assign(chunk, args.data);
               return chunk;
             }
+          }
+        ],
+        [
+          prisma.analysisOutput,
+          {
+            count: async () => 0
           }
         ],
         [
@@ -333,6 +341,70 @@ test("manual fallback continues a queued job unlocked by a completed job in the 
         assert.deepEqual(result.readyJobIds, [summarizeJob?.id, chapterJob?.id]);
         assert.equal(result.remainingReadyJobs, 1);
         assert.equal(result.hasRemainingWork, true);
+      }
+    );
+  } finally {
+    restoreEnv("OPENAI_API_KEY", oldApiKey);
+  }
+});
+
+test("queued summarizeChunks with missing outputs is picked up despite stale later checkpoint", async () => {
+  const manuscriptId = "manuscript-stale-audit-resume-summarize";
+  const oldApiKey = process.env.OPENAI_API_KEY;
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks",
+      "createEmbeddingsForChunks",
+      "summarizeChunks",
+      "summarizeChapters",
+      "createManuscriptProfile"
+    ],
+    currentStep: "runChapterAudits"
+  });
+  const jobs: MutableJob[] = [];
+  const chunks = summarizeChunkFixtures(manuscriptId, 3);
+  chunks[0].summary = "Completed chunk 1.";
+  const outputs = [
+    chunkAnalysisOutput({
+      runId: run.id,
+      manuscriptId,
+      chunkId: "chunk-1",
+      chapterId: "chapter-1",
+      summary: "Completed chunk 1."
+    })
+  ];
+
+  delete process.env.OPENAI_API_KEY;
+
+  try {
+    await withPatchedPrisma(
+      pipelineStepPatches({ manuscriptId, run, jobs, chunks, outputs }),
+      async () => {
+        const result = await runReadyPipelineJobs({
+          manuscriptId,
+          maxJobs: 1,
+          maxSeconds: 5,
+          maxItemsPerStep: 1,
+          workerType: "MANUAL",
+          workerId: "test:stale-checkpoint"
+        });
+
+        const summarizeJob = jobs.find((job) => job.type === "summarizeChunks");
+        const chapterJob = jobs.find((job) => job.type === "summarizeChapters");
+        const checkpoint = normalizeCheckpoint(run.checkpoint);
+
+        assert.equal(result.jobsRun, 1);
+        assert.equal(result.results[0]?.type, "summarizeChunks");
+        assert.equal(summarizeJob?.status, PIPELINE_JOB_STATUS.QUEUED);
+        assert.equal(chapterJob?.status, PIPELINE_JOB_STATUS.BLOCKED);
+        assert.equal(checkpoint.currentStep, "summarizeChunks");
+        assert.equal(isStepComplete(checkpoint, "summarizeChunks"), false);
+        assert.deepEqual(
+          outputs.map((output) => output.scopeId),
+          ["chunk-1", "chunk-2"]
+        );
       }
     );
   } finally {
@@ -600,6 +672,13 @@ test("summarizeChunks resumes stored summaries and hydrates missing summaries fr
     chunkAnalysisOutput({
       runId: run.id,
       manuscriptId,
+      chunkId: "chunk-1",
+      chapterId: "chapter-1",
+      summary: "Already summarized chunk."
+    }),
+    chunkAnalysisOutput({
+      runId: run.id,
+      manuscriptId,
       chunkId: "chunk-2",
       chapterId: "chapter-1",
       summary: "Recovered summary for chunk 2."
@@ -629,7 +708,7 @@ test("summarizeChunks resumes stored summaries and hydrates missing summaries fr
           remaining: 1,
           complete: false
         });
-        assert.equal(outputs.length, 1);
+        assert.equal(outputs.length, 2);
 
         const second = await runPipelineJob(job.id, {
           maxItemsPerStep: 1,
@@ -641,7 +720,7 @@ test("summarizeChunks resumes stored summaries and hydrates missing summaries fr
         assert.equal(chunks.every((chunk) => typeof chunk.summary === "string"), true);
         assert.deepEqual(
           outputs.map((output) => output.scopeId),
-          ["chunk-2", "chunk-3"]
+          ["chunk-1", "chunk-2", "chunk-3"]
         );
         assert.deepEqual(job.result, {
           analyzed: 1,
@@ -1037,6 +1116,12 @@ function manuscriptRunnerPatches(input: {
     [prisma.analysisRun, analysisRunPatch(input.run)],
     [prisma.pipelineJob, pipelineJobPatch(input.jobs)],
     [
+      prisma.analysisOutput,
+      {
+        count: async () => 0
+      }
+    ],
+    [
       prisma.manuscriptChunk,
       {
         count: async () => 0
@@ -1081,6 +1166,8 @@ function summarizeChunksPatches(input: {
     [
       prisma.analysisOutput,
       {
+        count: async (args: { where?: Record<string, unknown> } = {}) =>
+          countOutputs(input.outputs, args.where),
         findUnique: async (args: {
           where: {
             runId_passType_scopeType_scopeId: {
@@ -1140,6 +1227,8 @@ function summarizeChunksPatches(input: {
     [
       prisma.manuscriptChunk,
       {
+        count: async (args: { where?: Record<string, unknown> } = {}) =>
+          countChunks(input.chunks, args.where),
         update: async (args: {
           where: { id: string };
           data: Record<string, unknown>;
@@ -1344,6 +1433,52 @@ function filterJobs(jobs: MutableJob[], where: Record<string, unknown> = {}) {
 
     return true;
   });
+}
+
+function countChunks(
+  chunks: Array<Record<string, unknown>>,
+  where: Record<string, unknown> = {}
+) {
+  return chunks.filter((chunk) => {
+    if (
+      typeof where.manuscriptId === "string" &&
+      chunk.manuscriptId !== where.manuscriptId
+    ) {
+      return false;
+    }
+
+    const and = Array.isArray(where.AND) ? where.AND : [];
+    for (const condition of and) {
+      const conditionRecord = recordValue(condition);
+      if (!conditionRecord) {
+        continue;
+      }
+      const summary = recordValue(conditionRecord.summary);
+      if (summary?.not === null && chunk.summary === null) {
+        return false;
+      }
+      if (summary?.not === "" && chunk.summary === "") {
+        return false;
+      }
+    }
+
+    return true;
+  }).length;
+}
+
+function countOutputs(
+  outputs: Array<Record<string, unknown>>,
+  where: Record<string, unknown> = {}
+) {
+  return outputs.filter((output) => {
+    for (const [key, value] of Object.entries(where)) {
+      if (output[key] !== value) {
+        return false;
+      }
+    }
+
+    return true;
+  }).length;
 }
 
 async function withPatchedPrisma<T>(

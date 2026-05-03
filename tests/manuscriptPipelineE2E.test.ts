@@ -481,6 +481,8 @@ function analysisOutputDelegate(db: FakeDb) {
       findOutput(db, args.where.runId_passType_scopeType_scopeId),
     findFirst: async (args: { where?: Record<string, unknown> } = {}) =>
       db.outputs.find((output) => matchesWhere(output, args.where)) ?? null,
+    count: async (args: { where?: Record<string, unknown> } = {}) =>
+      db.outputs.filter((output) => matchesWhere(output, args.where)).length,
     upsert: async (args: {
       where: { runId_passType_scopeType_scopeId: OutputKey };
       create: Record<string, unknown>;
@@ -703,6 +705,10 @@ function matchesField(actual: unknown, expected: unknown): boolean {
 
   if (record.not === null) {
     return actual !== null && actual !== undefined;
+  }
+
+  if (record.not !== undefined) {
+    return actual !== record.not;
   }
 
   if (record.lte instanceof Date) {

@@ -456,23 +456,38 @@ async function summarizeChunks(
   const manuscript = await getPipelineManuscript(manuscriptId);
   let analyzed = 0;
   let restored = 0;
-  const pendingChunks = manuscript.chunks.filter(
-    (chunk) => !hasUsableChunkSummary(chunk.summary)
-  );
+  const completedChunkIds = new Set<string>();
+  const pendingChunks: Array<{
+    chunk: (typeof manuscript.chunks)[number];
+    existingOutput: Awaited<ReturnType<typeof findOutput>> | null;
+  }> = [];
 
-  const maxItems = normalizeMaxItems(options.maxItems, pendingChunks.length);
-  for (const chunk of pendingChunks.slice(0, maxItems)) {
-    const existing = await findOutput(
+  for (const chunk of manuscript.chunks) {
+    const existingOutput = await findOutput(
       runId,
       AnalysisPassType.CHUNK_ANALYSIS,
       "chunk",
       chunk.id
     );
-    const existingSummary = chunkSummaryFromOutput(existing?.output);
+    const hasOutput = Boolean(existingOutput);
+    const hasSummary = hasUsableChunkSummary(chunk.summary);
+
+    if (hasOutput && hasSummary) {
+      completedChunkIds.add(chunk.id);
+      continue;
+    }
+
+    pendingChunks.push({ chunk, existingOutput });
+  }
+
+  const maxItems = normalizeMaxItems(options.maxItems, pendingChunks.length);
+  for (const { chunk, existingOutput } of pendingChunks.slice(0, maxItems)) {
+    const existingSummary = chunkSummaryFromOutput(existingOutput?.output);
 
     if (existingSummary) {
-      await updateChunkSummaryFromOutput(chunk, existingSummary, existing?.output);
+      await updateChunkSummaryFromOutput(chunk, existingSummary, existingOutput?.output);
       chunk.summary = existingSummary;
+      completedChunkIds.add(chunk.id);
       analyzed += 1;
       restored += 1;
       continue;
@@ -512,6 +527,7 @@ async function summarizeChunks(
       }
     });
     chunk.summary = result.json.summary;
+    completedChunkIds.add(chunk.id);
 
     await saveOutput({
       runId,
@@ -534,10 +550,8 @@ async function summarizeChunks(
     analyzed += 1;
   }
 
-  const summarized = manuscript.chunks.filter((chunk) =>
-    hasUsableChunkSummary(chunk.summary)
-  ).length;
   const total = manuscript.chunks.length;
+  const summarized = completedChunkIds.size;
   const remaining = Math.max(total - summarized, 0);
 
   return {
