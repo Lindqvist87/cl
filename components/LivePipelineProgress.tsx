@@ -412,6 +412,10 @@ function progressGuidance(input: {
   }
 
   if (input.status.currentStep) {
+    if (input.status.currentStep === "summarizeChunks") {
+      return "Det här kan ta några minuter första gången.";
+    }
+
     return "Vi arbetar igenom manuset och uppdaterar arbetsytan när nästa fas är klar.";
   }
 

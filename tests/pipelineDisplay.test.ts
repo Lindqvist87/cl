@@ -60,6 +60,50 @@ test("pipeline display derives cumulative summarizeChunks progress", () => {
   });
 });
 
+test("pipeline display prefers actual summarized chunk count over stale metadata", () => {
+  const display = buildPipelineStatusDisplay({
+    checkpoint: {
+      completedSteps: [
+        "parseAndNormalizeManuscript",
+        "splitIntoChapters",
+        "splitIntoChunks",
+        "createEmbeddingsForChunks"
+      ],
+      currentStep: "summarizeChunks",
+      stepMetadata: {
+        summarizeChunks: {
+          analyzed: 96,
+          remaining: 43,
+          complete: false,
+          updatedAt: "2026-05-03T08:00:00.000Z"
+        }
+      }
+    },
+    jobs: [
+      {
+        type: "summarizeChunks",
+        status: PIPELINE_JOB_STATUS.QUEUED,
+        result: { analyzed: 96, remaining: 43, complete: false },
+        createdAt: "2026-05-03T07:55:00.000Z"
+      }
+    ],
+    totals: { chunks: 139, summarizedChunks: 16 }
+  });
+
+  assert.equal(display.analyzedCount, 16);
+  assert.equal(display.remainingCount, 123);
+  assert.equal(display.stepProgressLabel, "16 / 139 chunks summarized");
+  assert.deepEqual(display.stepProgress, {
+    step: "summarizeChunks",
+    completed: 16,
+    total: 139,
+    remaining: 123,
+    percent: 12,
+    label: "16 / 139 chunks summarized",
+    remainingLabel: "123 remaining"
+  });
+});
+
 test("pipeline display separates core completion from optional rewrite drafts", () => {
   const completedCoreSteps = [
     "parseAndNormalizeManuscript",

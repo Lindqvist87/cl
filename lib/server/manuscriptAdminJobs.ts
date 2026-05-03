@@ -5,6 +5,7 @@ import {
   pipelineProgress
 } from "@/lib/pipeline/steps";
 import { buildPipelineStatusDisplay } from "@/lib/pipeline/display";
+import { getChunkSummaryProgress } from "@/lib/pipeline/chunkSummaryProgress";
 import { prisma } from "@/lib/prisma";
 
 const DEFAULT_MAX_JOBS = 5;
@@ -55,7 +56,7 @@ export function manuscriptAdminRunJobOptions(
 }
 
 async function getManuscriptRunProgress(manuscriptId: string) {
-  const [manuscript, run, jobs] = await Promise.all([
+  const [manuscript, run, jobs, chunkSummaryProgress] = await Promise.all([
     prisma.manuscript.findUnique({
       where: { id: manuscriptId },
       select: { chapterCount: true, chunkCount: true }
@@ -68,7 +69,8 @@ async function getManuscriptRunProgress(manuscriptId: string) {
     prisma.pipelineJob.findMany({
       where: { manuscriptId },
       orderBy: [{ createdAt: "asc" }]
-    })
+    }),
+    getChunkSummaryProgress(manuscriptId)
   ]);
   const checkpoint = normalizeCheckpoint(run?.checkpoint);
   const currentStep = stepOrUndefined(checkpoint.currentStep);
@@ -80,7 +82,8 @@ async function getManuscriptRunProgress(manuscriptId: string) {
     run,
     jobs,
     totals: {
-      chunks: manuscript?.chunkCount ?? null,
+      chunks: chunkSummaryProgress.total,
+      summarizedChunks: chunkSummaryProgress.summarized,
       chapters: manuscript?.chapterCount ?? null,
       sections: manuscript?.chapterCount ?? null,
       auditTargets: manuscript?.chapterCount ?? null

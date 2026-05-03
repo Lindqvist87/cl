@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import type { PipelineJob } from "@prisma/client";
+import { AnalysisPassType, type PipelineJob } from "@prisma/client";
 import {
   manualFallbackRunLimits,
   pipelineStartHttpStatus
@@ -551,6 +551,9 @@ test("partial summarizeChunks progress requeues without exhausting maxAttempts",
         assert.equal(job.attempts, 2);
         assert.deepEqual(job.result, {
           analyzed: 1,
+          restored: 0,
+          summarized: 1,
+          total: 2,
           remaining: 1,
           complete: false
         });
@@ -564,6 +567,90 @@ test("partial summarizeChunks progress requeues without exhausting maxAttempts",
             .remaining,
           1
         );
+      }
+    );
+  } finally {
+    restoreEnv("OPENAI_API_KEY", oldApiKey);
+  }
+});
+
+test("summarizeChunks resumes stored summaries and hydrates missing summaries from outputs", async () => {
+  const manuscriptId = "manuscript-resume-stored-summaries";
+  const oldApiKey = process.env.OPENAI_API_KEY;
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks",
+      "createEmbeddingsForChunks"
+    ],
+    currentStep: "summarizeChunks"
+  });
+  const job = mutableJob("summarize-job", {
+    manuscriptId,
+    type: "summarizeChunks",
+    status: PIPELINE_JOB_STATUS.QUEUED,
+    idempotencyKey: "summarize-job",
+    maxAttempts: 3
+  });
+  const jobs = [job];
+  const chunks = summarizeChunkFixtures(manuscriptId, 3);
+  chunks[0].summary = "Already summarized chunk.";
+  const outputs = [
+    chunkAnalysisOutput({
+      runId: run.id,
+      manuscriptId,
+      chunkId: "chunk-2",
+      chapterId: "chapter-1",
+      summary: "Recovered summary for chunk 2."
+    })
+  ];
+
+  delete process.env.OPENAI_API_KEY;
+
+  try {
+    await withPatchedPrisma(
+      summarizeChunksPatches({ manuscriptId, run, jobs, chunks, outputs }),
+      async () => {
+        const first = await runPipelineJob(job.id, {
+          maxItemsPerStep: 1,
+          workerId: "test:resume-stored-1"
+        });
+
+        assert.equal(first.status, "queued");
+        assert.equal(chunks[0].summary, "Already summarized chunk.");
+        assert.equal(chunks[1].summary, "Recovered summary for chunk 2.");
+        assert.equal(chunks[2].summary, null);
+        assert.deepEqual(job.result, {
+          analyzed: 1,
+          restored: 1,
+          summarized: 2,
+          total: 3,
+          remaining: 1,
+          complete: false
+        });
+        assert.equal(outputs.length, 1);
+
+        const second = await runPipelineJob(job.id, {
+          maxItemsPerStep: 1,
+          workerId: "test:resume-stored-2"
+        });
+
+        assert.equal(second.status, "completed");
+        assert.equal(job.status, PIPELINE_JOB_STATUS.COMPLETED);
+        assert.equal(chunks.every((chunk) => typeof chunk.summary === "string"), true);
+        assert.deepEqual(
+          outputs.map((output) => output.scopeId),
+          ["chunk-2", "chunk-3"]
+        );
+        assert.deepEqual(job.result, {
+          analyzed: 1,
+          restored: 0,
+          summarized: 3,
+          total: 3,
+          remaining: 0,
+          complete: true
+        });
       }
     );
   } finally {
@@ -631,6 +718,9 @@ test("repeated summarizeChunks partial runs finish and unblock summarizeChapters
         assert.equal(summarizeJob.status, PIPELINE_JOB_STATUS.COMPLETED);
         assert.deepEqual(summarizeJob.result, {
           analyzed: 1,
+          restored: 0,
+          summarized: 3,
+          total: 3,
           remaining: 0,
           complete: true
         });
@@ -947,6 +1037,12 @@ function manuscriptRunnerPatches(input: {
     [prisma.analysisRun, analysisRunPatch(input.run)],
     [prisma.pipelineJob, pipelineJobPatch(input.jobs)],
     [
+      prisma.manuscriptChunk,
+      {
+        count: async () => 0
+      }
+    ],
+    [
       prisma.workerHeartbeat,
       {
         upsert: async (args: { update: Record<string, unknown> }) => args.update
@@ -1096,7 +1192,10 @@ function pipelineStepPatches(input: {
   return patches;
 }
 
-function summarizeChunkFixtures(manuscriptId: string, count: number) {
+function summarizeChunkFixtures(
+  manuscriptId: string,
+  count: number
+): Array<Record<string, unknown>> {
   const chapter = chapterFixture();
 
   return Array.from({ length: count }, (_, index) => ({
@@ -1120,6 +1219,33 @@ function summarizeChunkFixtures(manuscriptId: string, count: number) {
     createdAt: new Date("2026-04-29T05:00:00Z"),
     chapter
   }));
+}
+
+function chunkAnalysisOutput(input: {
+  runId: string;
+  manuscriptId: string;
+  chunkId: string;
+  chapterId: string;
+  summary: string;
+}) {
+  return {
+    id: `output-${input.chunkId}`,
+    runId: input.runId,
+    manuscriptId: input.manuscriptId,
+    passType: AnalysisPassType.CHUNK_ANALYSIS,
+    scopeType: "chunk",
+    scopeId: input.chunkId,
+    chunkId: input.chunkId,
+    chapterId: input.chapterId,
+    output: {
+      summary: input.summary,
+      sceneFunction: "recovered scene function",
+      metrics: { clarity: 0.8 }
+    },
+    rawText: JSON.stringify({ summary: input.summary }),
+    model: "stub",
+    inputSummary: null
+  };
 }
 
 function chapterFixture() {

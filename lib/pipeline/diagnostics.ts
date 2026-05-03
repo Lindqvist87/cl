@@ -19,6 +19,7 @@ import {
 import { buildPipelineStatusDisplay } from "@/lib/pipeline/display";
 import { getWorkspaceReadinessForManuscript } from "@/lib/pipeline/workspaceReadiness";
 import { getModelRoleDiagnostics } from "@/lib/ai/modelConfig";
+import { getChunkSummaryProgress } from "@/lib/pipeline/chunkSummaryProgress";
 import { prisma } from "@/lib/prisma";
 
 export type PipelineJobDiagnostic = {
@@ -37,32 +38,34 @@ export type PipelineJobDiagnostic = {
 
 export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
   const now = new Date();
-  const [manuscript, run, jobs, readiness] = await Promise.all([
-    prisma.manuscript.findUnique({
-      where: { id: manuscriptId },
-      select: {
-        id: true,
-        chapterCount: true,
-        chunkCount: true
-      }
-    }),
-    prisma.analysisRun.findFirst({
-      where: { manuscriptId },
-      orderBy: { createdAt: "desc" },
-      select: {
-        id: true,
-        status: true,
-        checkpoint: true,
-        error: true,
-        updatedAt: true
-      }
-    }),
-    prisma.pipelineJob.findMany({
-      where: { manuscriptId },
-      orderBy: [{ createdAt: "asc" }]
-    }),
-    getWorkspaceReadinessForManuscript(manuscriptId)
-  ]);
+  const [manuscript, run, jobs, readiness, chunkSummaryProgress] =
+    await Promise.all([
+      prisma.manuscript.findUnique({
+        where: { id: manuscriptId },
+        select: {
+          id: true,
+          chapterCount: true,
+          chunkCount: true
+        }
+      }),
+      prisma.analysisRun.findFirst({
+        where: { manuscriptId },
+        orderBy: { createdAt: "desc" },
+        select: {
+          id: true,
+          status: true,
+          checkpoint: true,
+          error: true,
+          updatedAt: true
+        }
+      }),
+      prisma.pipelineJob.findMany({
+        where: { manuscriptId },
+        orderBy: [{ createdAt: "asc" }]
+      }),
+      getWorkspaceReadinessForManuscript(manuscriptId),
+      getChunkSummaryProgress(manuscriptId)
+    ]);
 
   if (!manuscript) {
     throw new Error("Manuscript not found.");
@@ -106,7 +109,8 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
     run,
     jobs,
     totals: {
-      chunks: manuscript.chunkCount,
+      chunks: chunkSummaryProgress.total,
+      summarizedChunks: chunkSummaryProgress.summarized,
       chapters: manuscript.chapterCount,
       sections: manuscript.chapterCount,
       auditTargets: manuscript.chapterCount
@@ -125,6 +129,7 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
         }
       : null,
     pipelineStatus,
+    chunkSummaryProgress,
     modelRoles: getModelRoleDiagnostics(),
     currentStep,
     completedSteps: Array.from(completedSteps),

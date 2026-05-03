@@ -18,6 +18,7 @@ import { executionModeLabel } from "@/lib/pipeline/jobRules";
 import type { AuditReportJson } from "@/lib/types";
 import { buildPipelineStatusDisplay } from "@/lib/pipeline/display";
 import { authorAnalysisAction } from "@/lib/pipeline/authorActions";
+import { getChunkSummaryProgress } from "@/lib/pipeline/chunkSummaryProgress";
 import { getInngestRuntimeConfig } from "@/src/inngest/events";
 import { buildStructureReviewRows } from "@/lib/editorial/structureReview";
 
@@ -30,21 +31,24 @@ export default async function ManuscriptPage({
 }) {
   const { id } = await params;
   const showAdminTools = process.env.NODE_ENV !== "production";
-  const manuscript = await prisma.manuscript.findUnique({
-    where: { id },
-    include: {
-      chapters: {
-        orderBy: { order: "asc" },
-        include: { _count: { select: { findings: true } } }
-      },
-      reports: { orderBy: { createdAt: "desc" }, take: 1 },
-      runs: { orderBy: { createdAt: "desc" }, take: 1 },
-      rewritePlans: { orderBy: { createdAt: "desc" }, take: 1 },
-      rewrites: { orderBy: { createdAt: "desc" } },
-      findings: { take: 1 },
-      pipelineJobs: { orderBy: { createdAt: "asc" }, take: 60 }
-    }
-  });
+  const [manuscript, chunkSummaryProgress] = await Promise.all([
+    prisma.manuscript.findUnique({
+      where: { id },
+      include: {
+        chapters: {
+          orderBy: { order: "asc" },
+          include: { _count: { select: { findings: true } } }
+        },
+        reports: { orderBy: { createdAt: "desc" }, take: 1 },
+        runs: { orderBy: { createdAt: "desc" }, take: 1 },
+        rewritePlans: { orderBy: { createdAt: "desc" }, take: 1 },
+        rewrites: { orderBy: { createdAt: "desc" } },
+        findings: { take: 1 },
+        pipelineJobs: { orderBy: { createdAt: "asc" }, take: 60 }
+      }
+    }),
+    getChunkSummaryProgress(id)
+  ]);
 
   if (!manuscript) {
     notFound();
@@ -65,7 +69,8 @@ export default async function ManuscriptPage({
     run: latestRun,
     jobs: manuscript.pipelineJobs,
     totals: {
-      chunks: manuscript.chunkCount,
+      chunks: chunkSummaryProgress.total,
+      summarizedChunks: chunkSummaryProgress.summarized,
       chapters: manuscript.chapterCount,
       sections: manuscript.chapterCount,
       auditTargets: manuscript.chapterCount

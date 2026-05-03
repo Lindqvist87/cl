@@ -33,6 +33,7 @@ export type PipelineDisplayRun = {
 
 export type PipelineDisplayTotals = {
   chunks?: number | null;
+  summarizedChunks?: number | null;
   chapters?: number | null;
   sections?: number | null;
   auditTargets?: number | null;
@@ -160,12 +161,20 @@ export function buildPipelineStatusDisplay(input: {
         ...recordFromUnknown(currentJob?.result)
       }
     : {};
-  const remainingCount = numberValue(progressRecord.remaining);
   const stepTotal = totalForStep(currentStep, progressRecord, input.totals);
-  const analyzedCount = analyzedForStep(currentStep, progressRecord, {
-    remaining: remainingCount,
-    total: stepTotal
-  });
+  const measuredProgress = measuredProgressForStep(
+    currentStep,
+    stepTotal,
+    input.totals
+  );
+  const remainingCount =
+    measuredProgress?.remaining ?? numberValue(progressRecord.remaining);
+  const analyzedCount =
+    measuredProgress?.analyzed ??
+    analyzedForStep(currentStep, progressRecord, {
+      remaining: remainingCount,
+      total: stepTotal
+    });
   const nextStep = nextStepFor(currentStep, completedCoreStepSet);
   const coreAnalysisComplete = completedSteps === totalSteps && totalSteps > 0;
   const optionalRewriteDraftsPending = Boolean(optionalRewriteDraftJob);
@@ -375,6 +384,29 @@ function totalForStep(
   }
 
   return firstNumber(record.total, record.totalCount, record.chunkCount);
+}
+
+function measuredProgressForStep(
+  step: string | null,
+  total: number | null,
+  totals?: PipelineDisplayTotals
+) {
+  if (
+    step !== "summarizeChunks" ||
+    typeof totals?.summarizedChunks !== "number"
+  ) {
+    return null;
+  }
+
+  const analyzed = Math.max(0, Math.floor(totals.summarizedChunks));
+  const clampedAnalyzed =
+    typeof total === "number" ? Math.min(total, analyzed) : analyzed;
+
+  return {
+    analyzed: clampedAnalyzed,
+    remaining:
+      typeof total === "number" ? Math.max(total - clampedAnalyzed, 0) : null
+  };
 }
 
 function analyzedForStep(

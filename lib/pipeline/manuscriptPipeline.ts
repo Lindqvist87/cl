@@ -45,6 +45,7 @@ import {
   normalizeEvidenceAnchors,
   type EvidenceSourceChunk
 } from "@/lib/editorial/evidence";
+import { hasUsableChunkSummary } from "@/lib/pipeline/chunkSummaryProgress";
 import {
   FULL_MANUSCRIPT_PIPELINE_STEPS,
   isStepComplete,
@@ -454,18 +455,29 @@ async function summarizeChunks(
 ) {
   const manuscript = await getPipelineManuscript(manuscriptId);
   let analyzed = 0;
-  const pendingChunks: typeof manuscript.chunks = [];
-
-  for (const chunk of manuscript.chunks) {
-    const existing = await findOutput(runId, AnalysisPassType.CHUNK_ANALYSIS, "chunk", chunk.id);
-    if (existing) {
-      continue;
-    }
-    pendingChunks.push(chunk);
-  }
+  let restored = 0;
+  const pendingChunks = manuscript.chunks.filter(
+    (chunk) => !hasUsableChunkSummary(chunk.summary)
+  );
 
   const maxItems = normalizeMaxItems(options.maxItems, pendingChunks.length);
   for (const chunk of pendingChunks.slice(0, maxItems)) {
+    const existing = await findOutput(
+      runId,
+      AnalysisPassType.CHUNK_ANALYSIS,
+      "chunk",
+      chunk.id
+    );
+    const existingSummary = chunkSummaryFromOutput(existing?.output);
+
+    if (existingSummary) {
+      await updateChunkSummaryFromOutput(chunk, existingSummary, existing?.output);
+      chunk.summary = existingSummary;
+      analyzed += 1;
+      restored += 1;
+      continue;
+    }
+
     const result = await analyzeManuscriptChunk({
       manuscriptTitle: manuscript.title,
       targetGenre: manuscript.targetGenre,
@@ -499,6 +511,7 @@ async function summarizeChunks(
         })
       }
     });
+    chunk.summary = result.json.summary;
 
     await saveOutput({
       runId,
@@ -521,8 +534,20 @@ async function summarizeChunks(
     analyzed += 1;
   }
 
-  const remaining = Math.max(pendingChunks.length - analyzed, 0);
-  return { analyzed, remaining, complete: remaining === 0 };
+  const summarized = manuscript.chunks.filter((chunk) =>
+    hasUsableChunkSummary(chunk.summary)
+  ).length;
+  const total = manuscript.chunks.length;
+  const remaining = Math.max(total - summarized, 0);
+
+  return {
+    analyzed,
+    restored,
+    summarized,
+    total,
+    remaining,
+    complete: remaining === 0
+  };
 }
 
 async function summarizeChapters(manuscriptId: string) {
@@ -1242,6 +1267,38 @@ async function findOutput(
       }
     }
   });
+}
+
+async function updateChunkSummaryFromOutput(
+  chunk: EvidenceSourceChunk & {
+    id: string;
+    localMetrics?: unknown;
+  },
+  summary: string,
+  output: unknown
+) {
+  const outputRecord = toJsonRecord(output);
+  const sceneFunction =
+    typeof outputRecord.sceneFunction === "string"
+      ? { sceneFunction: outputRecord.sceneFunction }
+      : {};
+
+  await prisma.manuscriptChunk.update({
+    where: { id: chunk.id },
+    data: {
+      summary,
+      localMetrics: jsonInput({
+        ...toJsonRecord(chunk.localMetrics),
+        ...toJsonRecord(outputRecord.metrics),
+        ...sceneFunction
+      })
+    }
+  });
+}
+
+function chunkSummaryFromOutput(output: unknown) {
+  const summary = toJsonRecord(output).summary;
+  return hasUsableChunkSummary(summary) ? summary : null;
 }
 
 async function saveOutput(input: {
