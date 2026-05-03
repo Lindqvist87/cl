@@ -1,5 +1,7 @@
 # Git and hosting workflow
 
+<!-- Preview deploy refresh: 2026-05-03; documentation-only no-op. -->
+
 This project is a Next.js app with API routes, Prisma, and Postgres. It should be hosted on a platform that supports a Node.js server runtime and environment variables, such as Vercel, Render, Fly.io, or a similar app host. It is not a plain static site for GitHub Pages.
 
 ## Source of truth
