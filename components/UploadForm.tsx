@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, FileText, Upload } from "lucide-react";
 import copy from "@/content/app-copy.json";
@@ -10,12 +11,18 @@ export function UploadForm() {
   const inputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+  const [uploadedManuscriptId, setUploadedManuscriptId] = useState<string | null>(
+    null
+  );
   const [isDragging, setIsDragging] = useState(false);
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
 
   function selectFile(fileName: string | null) {
     setSelectedFileName(fileName);
     setError(null);
+    setWarning(null);
+    setUploadedManuscriptId(null);
   }
 
   function onFileChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -68,21 +75,31 @@ export function UploadForm() {
     formData.set("file", file);
     setIsUploading(true);
     setError(null);
+    setWarning(null);
+    setUploadedManuscriptId(null);
 
     const response = await fetch("/api/upload", {
       method: "POST",
       body: formData
     });
 
-    const payload = (await response.json()) as {
-      manuscriptId?: string;
-      error?: string;
-    };
+    const payload = (await response.json().catch(() => ({}))) as UploadResponse;
 
     setIsUploading(false);
 
     if (!response.ok || !payload.manuscriptId) {
-      setError(payload.error ?? copy.upload.failedError);
+      setError(uploadResponseMessage(payload, copy.upload.failedError));
+      return;
+    }
+
+    if (payload.pipelineStarted === false) {
+      setWarning(
+        uploadResponseMessage(
+          payload,
+          "Manuscript uploaded, but background pipeline did not start automatically."
+        )
+      );
+      setUploadedManuscriptId(payload.manuscriptId);
       return;
     }
 
@@ -179,8 +196,40 @@ export function UploadForm() {
         </button>
       </div>
       {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
+      {warning ? <p className="mt-3 text-sm text-muted">{warning}</p> : null}
+      {uploadedManuscriptId ? (
+        <Link
+          href={`/manuscripts/${uploadedManuscriptId}`}
+          className="secondary-button mt-3 w-fit"
+        >
+          Visa uppladdat manus
+        </Link>
+      ) : null}
     </form>
   );
+}
+
+type UploadResponse = {
+  manuscriptId?: string;
+  error?: string;
+  phase?: string;
+  pipelineStarted?: boolean;
+  pipelineWarning?: string;
+  message?: string;
+};
+
+function uploadResponseMessage(payload: UploadResponse, fallback: string) {
+  const parts = [payload.error ?? payload.message ?? fallback];
+
+  if (payload.phase) {
+    parts.push(`phase=${payload.phase}`);
+  }
+
+  if (payload.pipelineWarning) {
+    parts.push(payload.pipelineWarning);
+  }
+
+  return parts.filter(Boolean).join(" ");
 }
 
 function EditorialField({
