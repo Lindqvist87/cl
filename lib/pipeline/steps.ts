@@ -1,3 +1,7 @@
+// Editorial output flow: import stores chapters/scenes/paragraphs/chunks, local
+// chunk/chapter passes create findings with source anchors, section/global passes
+// group those findings into report/rewrite artifacts, and the author workspace
+// derives next action + recommendation cards from stored artifacts only.
 export const CORE_MANUSCRIPT_PIPELINE_STEPS = [
   "parseAndNormalizeManuscript",
   "splitIntoChapters",

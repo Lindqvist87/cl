@@ -1,4 +1,5 @@
 import OpenAI from "openai";
+import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 import { env } from "@/lib/env";
 import {
   auditModel,
@@ -57,7 +58,7 @@ export async function requestStructuredJson<T>({
   reasoningEffort?: ReasoningEffort;
   temperature?: number;
 }): Promise<{ json: T; rawText: string; model: string }> {
-  const completion = await getOpenAIClient().chat.completions.create({
+  const requestBody = {
     model,
     reasoning_effort: reasoningEffort,
     ...(temperature === undefined ? {} : { temperature }),
@@ -66,7 +67,10 @@ export async function requestStructuredJson<T>({
       { role: "system", content: system },
       { role: "user", content: user }
     ]
-  });
+  };
+  const completion = await getOpenAIClient().chat.completions.create(
+    requestBody as unknown as ChatCompletionCreateParamsNonStreaming
+  );
 
   const rawText = completion.choices[0]?.message.content ?? "{}";
 

@@ -8,6 +8,11 @@ type ChunkInput = {
   manuscriptTitle: string;
   targetGenre?: string | null;
   targetAudience?: string | null;
+  chapterId?: string | null;
+  chunkId?: string | null;
+  sceneId?: string | null;
+  paragraphStart?: number | null;
+  paragraphEnd?: number | null;
   chapterTitle: string;
   chunkIndex: number;
   text: string;
@@ -21,13 +26,15 @@ export async function analyzeManuscriptChunk(input: ChunkInput) {
   }
 
   return requestEditorJson<ChunkAnalysisResult>({
-    ...modelConfigForRole("audit"),
+    ...modelConfigForRole("localEditor"),
     system: [
-      "You are a senior manuscript editor analyzing one chunk in a resumable pipeline.",
+      "You are the Close Reader / Local Editor in a manuscript model orchestra.",
       "Return strict JSON only.",
       "Use only the supplied manuscript chunk and context.",
+      "Make local observations only; do not make final whole-book prioritization decisions.",
       "Do not compare the prose to living authors or copyrighted modern books.",
-      "Be concrete, evidence-led, and preserve the author's voice."
+      "Be concrete, evidence-led, and preserve the author's voice.",
+      "Every meaningful finding must include a source excerpt and evidenceAnchors when possible."
     ].join(" "),
     user: JSON.stringify(
       {
@@ -49,10 +56,25 @@ export async function analyzeManuscriptChunk(input: ChunkInput) {
           findings: [
             {
               issueType: "clarity | pacing | exposition | dialogue | tension | character | continuity | style",
+              problemTitle: "short specific title",
+              problemType: "specific editorial category",
               severity: "1-5",
+              priority: "1-5 editorial urgency",
               confidence: "0-1",
               problem: "specific problem or strength",
-              evidence: "short local evidence",
+              whyItMatters: "why this affects the reader or revision",
+              doThisNow: "small concrete next edit",
+              scope: "local",
+              evidence: "short local evidence summary",
+              sourceTextExcerpt: "exact short excerpt from this chunk",
+              evidenceReason: "why this excerpt supports the finding",
+              evidenceAnchors: [
+                {
+                  granularity: "chunk | paragraph",
+                  sourceTextExcerpt: "exact short excerpt",
+                  reason: "why this excerpt supports the finding"
+                }
+              ],
               recommendation: "concrete editorial recommendation",
               rewriteInstruction: "direct instruction for a later rewrite"
             }
@@ -65,6 +87,13 @@ export async function analyzeManuscriptChunk(input: ChunkInput) {
         },
         chapterTitle: input.chapterTitle,
         chunkIndex: input.chunkIndex,
+        sourceAnchor: {
+          chapterId: input.chapterId,
+          chunkId: input.chunkId,
+          sceneId: input.sceneId,
+          paragraphStart: input.paragraphStart,
+          paragraphEnd: input.paragraphEnd
+        },
         previousSummary: input.previousSummary,
         text: input.text
       },
@@ -93,11 +122,32 @@ function stubChunkAnalysis(input: ChunkInput): ChunkAnalysisResult {
     possibleCuts: [],
     findings: [
       {
+        problemTitle: "Editor model not configured",
+        problemType: "configuration",
         issueType: "configuration",
         severity: 1,
+        priority: 1,
         confidence: 1,
         problem: "Live editor model is not configured.",
+        whyItMatters: "Without the live close reader, this row only verifies storage.",
+        doThisNow: "Set OPENAI_API_KEY and rerun the v2 pipeline.",
+        scope: "local",
         evidence: `${wordCount} words analyzed with deterministic stub.`,
+        sourceTextExcerpt: input.text.slice(0, 220),
+        evidenceReason: "The excerpt identifies the local text span covered by this stub finding.",
+        evidenceAnchors: [
+          {
+            manuscriptId: null,
+            chapterId: input.chapterId ?? null,
+            sceneId: input.sceneId ?? null,
+            paragraphStart: input.paragraphStart ?? null,
+            paragraphEnd: input.paragraphEnd ?? null,
+            chunkId: input.chunkId ?? null,
+            granularity: "chunk",
+            sourceTextExcerpt: input.text.slice(0, 220),
+            reason: "The stub can only anchor to the analyzed chunk."
+          }
+        ],
         recommendation: "Set OPENAI_API_KEY and rerun the v2 pipeline.",
         rewriteInstruction: "Preserve the source text until live analysis is available."
       }

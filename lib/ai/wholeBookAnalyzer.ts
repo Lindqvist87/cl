@@ -9,6 +9,7 @@ type WholeBookInput = {
   targetAudience?: string | null;
   wordCount: number;
   chapterSummaries: Array<{
+    id?: string;
     chapterIndex: number;
     title: string;
     summary?: string | null;
@@ -49,10 +50,28 @@ export async function analyzeWholeBook(input: WholeBookInput) {
           topIssues: [
             {
               issueType: "premise | structure | pacing | character | prose | market | theme",
+              problemTitle: "short specific title",
+              problemType: "specific editorial category",
               severity: "1-5",
+              priority: "1-5 editorial urgency",
               confidence: "0-1",
               problem: "specific issue",
+              whyItMatters: "why this matters for the reader or rewrite order",
+              doThisNow: "small concrete next edit",
+              scope: "global",
+              affectedChapters: ["chapter ids or titles if supported by summaries"],
+              affectedSections: ["section labels if supported by summaries"],
               evidence: "summary/profile evidence",
+              sourceTextExcerpt: "summary excerpt when raw text is not provided",
+              evidenceReason: "why this summary/profile signal supports the finding",
+              evidenceAnchors: [
+                {
+                  chapterId: "chapter id when available",
+                  granularity: "chapter | manuscript",
+                  sourceTextExcerpt: "summary excerpt",
+                  reason: "why this supports the finding"
+                }
+              ],
               recommendation: "concrete recommendation",
               rewriteInstruction: "direct rewrite instruction"
             }
@@ -95,11 +114,28 @@ function stubWholeBookAnalysis(input: WholeBookInput): WholeBookAnalysisResult {
     marketFit: "Market fit requires trend and corpus comparison.",
     topIssues: [
       {
+        problemTitle: "Whole-book model not configured",
+        problemType: "configuration",
         issueType: "configuration",
         severity: 1,
+        priority: 1,
         confidence: 1,
         problem: "Live whole-book analysis is not configured.",
+        whyItMatters: "Without live global analysis, this row only verifies stored context.",
+        doThisNow: "Set OPENAI_API_KEY and rerun the full pipeline.",
+        scope: "global",
         evidence: "Pipeline has stored chapter summaries and profile metrics.",
+        sourceTextExcerpt: input.chapterSummaries[0]?.summary ?? input.chapterSummaries[0]?.title,
+        evidenceReason: "The finding is supported by the presence of compact chapter/profile artifacts, not raw manuscript reading.",
+        evidenceAnchors: [
+          {
+            chapterId: input.chapterSummaries[0]?.id ?? null,
+            granularity: input.chapterSummaries[0]?.id ? "chapter" : "manuscript",
+            sourceTextExcerpt:
+              input.chapterSummaries[0]?.summary ?? input.chapterSummaries[0]?.title,
+            reason: "The stub only has chapter summaries and profile metrics."
+          }
+        ],
         recommendation: "Set OPENAI_API_KEY and rerun the full pipeline.",
         rewriteInstruction: "Do not make major structural changes from stub output alone."
       }

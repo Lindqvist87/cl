@@ -41,6 +41,11 @@ import {
 } from "@/lib/corpus/rights";
 import { jsonInput } from "@/lib/json";
 import {
+  formatFindingEvidenceForStorage,
+  normalizeEvidenceAnchors,
+  type EvidenceSourceChunk
+} from "@/lib/editorial/evidence";
+import {
   FULL_MANUSCRIPT_PIPELINE_STEPS,
   isStepComplete,
   markStepComplete,
@@ -465,6 +470,11 @@ async function summarizeChunks(
       manuscriptTitle: manuscript.title,
       targetGenre: manuscript.targetGenre,
       targetAudience: manuscript.targetAudience,
+      chapterId: chunk.chapterId,
+      chunkId: chunk.id,
+      sceneId: chunk.sceneId,
+      paragraphStart: chunk.paragraphStart ?? chunk.startParagraph,
+      paragraphEnd: chunk.paragraphEnd ?? chunk.endParagraph,
       chapterTitle: chunk.chapter.title,
       chunkIndex: chunk.chunkIndex,
       text: chunk.text
@@ -475,6 +485,7 @@ async function summarizeChunks(
       manuscriptId,
       chapterId: chunk.chapterId,
       chunkId: chunk.id,
+      chunk,
       findings: result.json.findings
     });
     await prisma.manuscriptChunk.update({
@@ -612,6 +623,7 @@ async function runChapterAudits(
       manuscriptTitle: manuscript.title,
       targetGenre: manuscript.targetGenre,
       targetAudience: manuscript.targetAudience,
+      chapterId: chapter.id,
       chapterTitle: chapter.title,
       chapterIndex: chapter.chapterIndex || chapter.order,
       text: chapterContext.text,
@@ -685,6 +697,7 @@ async function runWholeBookAudit(manuscriptId: string, runId: string) {
     targetAudience: manuscript.targetAudience,
     wordCount: manuscript.wordCount,
     chapterSummaries: manuscript.chapters.map((chapter) => ({
+      id: chapter.id,
       chapterIndex: chapter.chapterIndex || chapter.order,
       title: chapter.title,
       summary: chapter.summary,
@@ -1052,7 +1065,8 @@ async function createRewritePlan(manuscriptId: string, runId: string) {
   const findings = await prisma.finding.findMany({
     where: { manuscriptId, analysisRunId: runId },
     orderBy: [{ severity: "desc" }, { createdAt: "asc" }],
-    take: 80
+    take: 80,
+    include: { chunk: true }
   });
   const rewriteFindings = findings.filter(
     (finding) => !isTrendContextFinding(finding.issueType)
@@ -1086,6 +1100,10 @@ async function createRewritePlan(manuscriptId: string, runId: string) {
       issueType: finding.issueType,
       severity: finding.severity,
       problem: finding.problem,
+      whyItMatters: null,
+      doThisNow: null,
+      evidence: finding.evidence,
+      evidenceAnchors: normalizeEvidenceAnchors({ finding }),
       recommendation: finding.recommendation,
       rewriteInstruction: finding.rewriteInstruction
     })),
@@ -1321,6 +1339,7 @@ async function saveFindings(input: {
   manuscriptId: string;
   chapterId?: string;
   chunkId?: string;
+  chunk?: EvidenceSourceChunk | null;
   findings?: FindingDraft[];
 }) {
   const findings = input.findings ?? [];
@@ -1347,7 +1366,13 @@ async function saveFindings(input: {
       severity: clampInt(finding.severity, 1, 5),
       confidence: clampNumber(finding.confidence, 0, 1),
       problem: finding.problem || "Unspecified issue",
-      evidence: finding.evidence,
+      evidence: formatFindingEvidenceForStorage(finding, {
+        manuscriptId: input.manuscriptId,
+        chapterId: input.chapterId,
+        chunkId: input.chunkId,
+        chunk: input.chunk,
+        fallbackGranularity: input.chunkId ? "chunk" : input.chapterId ? "chapter" : "manuscript"
+      }),
       recommendation: finding.recommendation || "Review this passage.",
       rewriteInstruction: finding.rewriteInstruction
     }))

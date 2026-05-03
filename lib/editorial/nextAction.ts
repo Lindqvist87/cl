@@ -4,6 +4,11 @@ import {
   latestDecisionByFinding
 } from "@/lib/editorial/decisions";
 import type { EditorialPriority } from "@/lib/editorial/findingAggregation";
+import {
+  normalizeEvidenceAnchors,
+  type EditorialEvidenceAnchor,
+  type EvidenceSourceChunk
+} from "@/lib/editorial/evidence";
 
 export type EditorialChapterInput = {
   id: string;
@@ -17,14 +22,29 @@ export type EditorialChapterInput = {
 
 export type EditorialFindingInput = {
   id: string;
+  manuscriptId?: string | null;
   chapterId?: string | null;
+  sceneId?: string | null;
+  paragraphId?: string | null;
+  paragraphStart?: number | null;
+  paragraphEnd?: number | null;
   chunkId?: string | null;
   issueType: string;
   severity: number;
+  confidence?: number | null;
   problem: string;
+  problemTitle?: string | null;
+  problemType?: string | null;
+  whyItMatters?: string | null;
+  doThisNow?: string | null;
   evidence?: string | null;
+  sourceTextExcerpt?: string | null;
+  evidenceReason?: string | null;
+  evidenceAnchors?: unknown;
   recommendation: string;
   rewriteInstruction?: string | null;
+  scope?: "local" | "chapter" | "global" | null;
+  chunk?: EvidenceSourceChunk | null;
   createdAt?: Date | string;
 };
 
@@ -61,11 +81,14 @@ export type NextEditorialAction = {
   severity: number;
   issueCount: number;
   suggestedFirstStep: string;
+  whyThisBeforeEverythingElse: string;
+  smallestUsefulFirstAction: string;
   whatToIgnoreForNow?: string;
   priority: "critical" | "high" | "medium" | "low";
   score: number;
   relatedIssueIds: string[];
   affectedChapters: string[];
+  supportingEvidence: EditorialEvidenceAnchor[];
   sourcePriorityId?: string;
 };
 
@@ -157,6 +180,10 @@ export function nextBestEditorialAction(
         chapterDecisionStatus: chapterDecision?.status,
         decisionBoost
       });
+      const supportingEvidence = topFinding
+        ? normalizeEvidenceAnchors({ finding: topFinding }).slice(0, 5)
+        : [];
+      const firstStep = suggestedFirstStep(topFinding, planInfo.suggestedFirstStep);
 
       return {
         targetChapter: {
@@ -168,12 +195,19 @@ export function nextBestEditorialAction(
         reason,
         severity: maxSeverity,
         issueCount: unresolvedFindings.length,
-        suggestedFirstStep: suggestedFirstStep(topFinding, planInfo.suggestedFirstStep),
+        suggestedFirstStep: firstStep,
+        whyThisBeforeEverythingElse: fallbackWhyThisFirst({
+          unresolvedCount: unresolvedFindings.length,
+          maxSeverity,
+          planPriority: planInfo.priorityLabel
+        }),
+        smallestUsefulFirstAction: firstStep,
         whatToIgnoreForNow: undefined,
         priority: priorityForScore(score),
         score,
         relatedIssueIds,
         affectedChapters: planInfo.affectedChapters,
+        supportingEvidence,
         decisionBoost
       } satisfies Candidate;
     })
@@ -198,11 +232,14 @@ export function nextBestEditorialAction(
     severity: best.severity,
     issueCount: best.issueCount,
     suggestedFirstStep: best.suggestedFirstStep,
+    whyThisBeforeEverythingElse: best.whyThisBeforeEverythingElse,
+    smallestUsefulFirstAction: best.smallestUsefulFirstAction,
     whatToIgnoreForNow: best.whatToIgnoreForNow,
     priority: best.priority,
     score: Math.round(best.score * 10) / 10,
     relatedIssueIds: best.relatedIssueIds,
     affectedChapters: best.affectedChapters,
+    supportingEvidence: best.supportingEvidence,
     sourcePriorityId: best.sourcePriorityId
   };
 }
@@ -250,13 +287,48 @@ function nextActionFromAggregatedPriorities(
     severity: firstActionablePriority.rawSeverityMax,
     issueCount: firstActionablePriority.issueCount,
     suggestedFirstStep: firstActionablePriority.firstConcreteStep,
+    whyThisBeforeEverythingElse: priorityWhyThisFirst(firstActionablePriority),
+    smallestUsefulFirstAction: firstActionablePriority.firstConcreteStep,
     whatToIgnoreForNow: firstActionablePriority.whatToIgnoreForNow,
     priority: firstActionablePriority.displayPriority,
     score: firstActionablePriority.displayScore,
     relatedIssueIds: firstActionablePriority.rawFindingIds,
     affectedChapters: firstActionablePriority.affectedSectionLabels,
+    supportingEvidence: firstActionablePriority.evidenceAnchors,
     sourcePriorityId: firstActionablePriority.priorityId
   };
+}
+
+function priorityWhyThisFirst(priority: EditorialPriority) {
+  if (priority.structuralPattern === "unclear-dramatic-contract") {
+    return "This comes first because the reader promise governs which later scene fixes are worth making.";
+  }
+
+  if (priority.affectedSectionIds.length >= 3) {
+    return "This comes first because the same pattern affects multiple sections, so one editorial rule can unlock several later fixes.";
+  }
+
+  return "This comes first because it has the strongest combined editorial impact among the open findings.";
+}
+
+function fallbackWhyThisFirst({
+  unresolvedCount,
+  maxSeverity,
+  planPriority
+}: {
+  unresolvedCount: number;
+  maxSeverity: number;
+  planPriority?: string;
+}) {
+  if (maxSeverity >= 4) {
+    return "This comes first because it carries the highest open severity and can distort later revision choices.";
+  }
+
+  if (planPriority) {
+    return "This comes first because it is already marked as important in the rewrite plan.";
+  }
+
+  return `This comes first because ${unresolvedCount} open finding${unresolvedCount === 1 ? "" : "s"} point to the same section.`;
 }
 
 function buildReason({

@@ -30,7 +30,7 @@ export async function compareTrends(input: TrendComparisonInput) {
   }
 
   return requestEditorJson<TrendComparisonResult>({
-    ...modelConfigForRole("chiefEditor"),
+    ...modelConfigForRole("sectionEditor"),
     system: [
       "You are a careful publishing trend analyst.",
       "Return strict JSON only.",
@@ -51,10 +51,24 @@ export async function compareTrends(input: TrendComparisonInput) {
           findings: [
             {
               issueType: "market-positioning | trope | category | audience | signal-quality",
+              problemTitle: "short specific title",
+              problemType: "market-context",
               severity: "1-5",
+              priority: "1-5 editorial urgency",
               confidence: "0-1",
               problem: "specific market issue",
+              whyItMatters: "why this affects positioning or reader promise",
+              doThisNow: "small concrete next edit",
+              scope: "global",
               evidence: "trend signal evidence",
+              evidenceReason: "why this trend evidence supports the finding",
+              evidenceAnchors: [
+                {
+                  granularity: "manuscript",
+                  sourceTextExcerpt: "trend summary or whole-book summary evidence",
+                  reason: "why this supports the finding"
+                }
+              ],
               recommendation: "positioning/category recommendation",
               rewriteInstruction: "optional positioning-only context; no plot or prose command"
             }

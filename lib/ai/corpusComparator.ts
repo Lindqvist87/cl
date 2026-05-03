@@ -114,10 +114,24 @@ const CORPUS_COMPARISON_REQUIRED_SHAPE = {
   findings: [
     {
       issueType: "corpus-benchmark",
+      problemTitle: "short specific title",
+      problemType: "benchmark-pattern",
       severity: "1-5",
+      priority: "1-5 editorial urgency",
       confidence: "0-1",
       problem: "specific benchmark issue",
+      whyItMatters: "why this affects craft, genre fit, or reader promise",
+      doThisNow: "small concrete next edit",
+      scope: "global",
       evidence: "profile or benchmark evidence",
+      evidenceReason: "why the benchmark/profile evidence supports this finding",
+      evidenceAnchors: [
+        {
+          granularity: "manuscript",
+          sourceTextExcerpt: "profile or summary evidence, not copyrighted source text",
+          reason: "why this supports the finding"
+        }
+      ],
       recommendation: "concrete recommendation",
       rewriteInstruction: "direct rewrite instruction"
     }
@@ -271,7 +285,7 @@ export async function compareCorpus(
   }
 
   return requestEditorJson<CorpusComparisonResult>({
-    ...modelConfigForRole("chiefEditor"),
+    ...modelConfigForRole("sectionEditor"),
     system: CORPUS_COMPARISON_SYSTEM_PROMPT,
     user: serializeCorpusComparisonInput(input),
     retries: options.retries

@@ -2,6 +2,7 @@ import type {
   EditorialDisplayPriority,
   EditorialPriority
 } from "@/lib/editorial/findingAggregation";
+import { evidenceAnchorPreview } from "@/lib/editorial/evidence";
 import type { aggregateEditorialWorkspaceData } from "@/lib/editorial/workspaceData";
 
 type EditorialWorkspaceData = ReturnType<typeof aggregateEditorialWorkspaceData>;
@@ -12,6 +13,7 @@ export type AuthorPriorityCard = {
   importanceLabel: string;
   whyItMatters: string;
   recommendedAction: string;
+  evidencePreview: string;
   affectedPartsPreview: string;
   targetSectionId: string | null;
 };
@@ -20,8 +22,11 @@ export type AuthorStartCard = {
   heading: "Börja här";
   title: string;
   explanation: string;
+  whyThisBeforeEverythingElse: string;
   whyItMatters: string;
   firstConcreteStep: string;
+  whatToIgnoreForNow: string;
+  evidencePreview: string;
   affectedPartsPreview: string;
   targetSectionId: string | null;
   primaryEnabled: boolean;
@@ -181,6 +186,7 @@ export function buildAuthorWorkspaceViewModel(
         card.importanceLabel,
         card.title,
         card.recommendedAction,
+        card.evidencePreview,
         card.affectedPartsPreview
       ])
     ]
@@ -199,6 +205,7 @@ export function buildAuthorPriorityCard(
     importanceLabel: importanceLabel(priority.displayPriority),
     whyItMatters: copy.whyItMatters,
     recommendedAction: copy.recommendedAction,
+    evidencePreview: authorEvidencePreview(priority, 2),
     affectedPartsPreview: affectedParts.join(", "),
     targetSectionId:
       priority.affectedSectionIds[0] ??
@@ -313,11 +320,17 @@ function buildAuthorStartCard(
       explanation: hasAnyAnalysisData
         ? "Det finns underlag att granska, men inget enskilt redigeringsgrepp behöver lyftas före allt annat."
         : "När analysen har mer underlag visas den tydligaste första åtgärden här.",
+      whyThisBeforeEverythingElse:
+        "Det finns ännu inget huvudgrepp som behöver gå före allt annat.",
       whyItMatters:
         "En lugn startpunkt gör det lättare att välja rätt nivå innan du ändrar texten.",
       firstConcreteStep: hasAnyAnalysisData
         ? "Öppna detaljerna och välj den del där du själv ser störst läsarfriktion."
         : "Kontrollera manusets delar och återkom när analysen är klar.",
+      whatToIgnoreForNow:
+        "Vänta med putsning och småjusteringar tills första prioriteten är tydlig.",
+      evidencePreview:
+        "Bevis visas när analysen har kopplat observationer till texten.",
       affectedPartsPreview: "Hela manuset",
       targetSectionId: null,
       primaryEnabled: false,
@@ -336,7 +349,14 @@ function buildAuthorStartCard(
     explanation:
       "Det här är den tydligaste första redigeringsrörelsen utifrån de samlade observationerna.",
     whyItMatters: copy.whyItMatters,
-    firstConcreteStep: copy.firstConcreteStep,
+    whyThisBeforeEverythingElse: swedishWhyThisFirst(action.whyThisBeforeEverythingElse),
+    firstConcreteStep: copy.firstConcreteStep || action.smallestUsefulFirstAction,
+    whatToIgnoreForNow: sourcePriority
+      ? ignoreForPriority(sourcePriority)
+      : "Vänta med mindre putsning tills huvudgreppet är testat.",
+    evidencePreview: sourcePriority
+      ? authorEvidencePreview(sourcePriority, 2)
+      : "Bevisen finns i de kopplade observationerna.",
     affectedPartsPreview: affectedParts.join(", "),
     targetSectionId: action.targetChapter.id ?? sourceCard.targetSectionId,
     primaryEnabled: true,
@@ -363,6 +383,77 @@ function affectedPartsForPriority(priority: EditorialPriority, limit: number) {
   }
 
   return visible;
+}
+
+function authorEvidencePreview(priority: EditorialPriority, limit: number) {
+  const anchorText = priority.evidenceAnchors
+    .slice(0, limit)
+    .map(evidenceAnchorPreview);
+
+  if (anchorText.length > 0) {
+    return anchorText.join(" / ");
+  }
+
+  const representativeText = priority.representativeFindings
+    .slice(0, limit)
+    .map((finding) => {
+      const evidence = finding.evidence || finding.problem;
+      return `${authorSectionLabel(finding.sectionLabel)}: "${truncate(evidence, 150)}"`;
+    });
+
+  if (representativeText.length > 0) {
+    return representativeText.join(" / ");
+  }
+
+  return "Bevisen är kopplade till de berörda delarna.";
+}
+
+function ignoreForPriority(priority: EditorialPriority) {
+  const copy: Record<string, string> = {
+    "fragment-sections":
+      "Vänta med lokala scenfixar tills du vet vilka korta delar som verkligen är scener.",
+    "missing-character-anchor":
+      "Vänta med radputsning tills protagonist, perspektiv och karaktärsfäste är tydligt.",
+    "missing-conflict-pressure":
+      "Vänta med prosarytm och mindre kontinuitetsrader tills scenens tryck går att läsa.",
+    "missing-scene-movement":
+      "Vänta med meningsputs tills varje berörd scen har en tydlig vändning.",
+    "abrupt-pov-shift":
+      "Vänta med lokala klarhetsfixar som beror på vems perspektiv scenen ska bära.",
+    "unclear-transition":
+      "Vänta med enskilda övergångsrader tills ordning och handoff-logik sitter.",
+    "unclear-dramatic-contract":
+      "Vänta med isolerade scenfixar som kan ändras när löftet till läsaren är satt.",
+    "late-thriller-ignition":
+      "Vänta med senare småstädning tills berättelsemotorn är placerad i öppningen."
+  };
+
+  return copy[priority.structuralPattern] ??
+    "Vänta med att lösa varje rå observation en och en tills den gemensamma regeln är tydlig.";
+}
+
+function swedishWhyThisFirst(value: string) {
+  if (/reader promise/i.test(value)) {
+    return "Börja här eftersom läsarlöftet styr vilka senare scenfixar som är värda att göra.";
+  }
+
+  if (/multiple sections|same pattern/i.test(value)) {
+    return "Börja här eftersom samma mönster berör flera delar och en tydlig regel låser upp resten.";
+  }
+
+  if (/highest open severity|strongest combined editorial impact/i.test(value)) {
+    return "Börja här eftersom detta har störst redaktionell effekt av de öppna observationerna.";
+  }
+
+  return "Börja här eftersom den här åtgärden ger tydligast riktning för resten av redigeringen.";
+}
+
+function truncate(value: string, maxLength: number) {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength - 3).trimEnd()}...`;
 }
 
 function authorSectionLabel(label: string) {

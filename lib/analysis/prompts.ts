@@ -25,6 +25,7 @@ export function buildChunkAnalysisPrompt(input: {
       "You are a senior manuscript analyst for a production editing system.",
       "Return strict JSON only.",
       "Analyze only the supplied chunk and the supplied memory.",
+      "Every meaningful recommendation must include the closest available source evidence.",
       "Never rely on or quote copyrighted books as training examples.",
       "Be specific, evidence-led, and concise."
     ].join(" "),
@@ -36,8 +37,21 @@ export function buildChunkAnalysisPrompt(input: {
           findings: [
             {
               title: "issue or strength",
+              problemTitle: "short specific title",
+              problemType: "editorial category",
               severity: "critical | high | medium | low",
+              whyItMatters: "why this matters",
+              doThisNow: "small concrete edit",
               evidence: "brief phrase from this chunk or description",
+              sourceTextExcerpt: "short excerpt from this chunk",
+              evidenceReason: "why this excerpt supports the finding",
+              evidenceAnchors: [
+                {
+                  granularity: "chunk | paragraph",
+                  sourceTextExcerpt: "short excerpt",
+                  reason: "why this supports the finding"
+                }
+              ],
               recommendation: "actionable editorial advice"
             }
           ],
@@ -78,7 +92,8 @@ export function buildPassSynthesisPrompt(input: {
     system: [
       "You synthesize chunk-level manuscript analysis into pass-level editorial memory.",
       "Return strict JSON only.",
-      "Use only the supplied summaries and memory, not the full manuscript."
+      "Use only the supplied summaries and memory, not the full manuscript.",
+      "Group and deduplicate similar issues before recommending actions."
     ].join(" "),
     user: JSON.stringify(
       {
@@ -89,6 +104,8 @@ export function buildPassSynthesisPrompt(input: {
             {
               title: "issue",
               severity: "critical | high | medium | low",
+              affectedSections: ["chapter or section labels"],
+              evidenceAnchors: ["source evidence anchors carried forward from chunk summaries"],
               recommendation: "action"
             }
           ],
@@ -128,7 +145,8 @@ export function buildFinalReportPrompt(input: {
     system: [
       "You create manuscript audit reports for authors and editors.",
       "Return strict JSON only.",
-      "Use only the supplied pass summaries and global memory."
+      "Use only the supplied pass summaries and global memory.",
+      "Link each top issue back to supplied evidence where possible."
     ].join(" "),
     user: JSON.stringify(
       {

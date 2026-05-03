@@ -14,6 +14,10 @@ type RewritePlannerInput = {
     issueType: string;
     severity: number;
     problem: string;
+    whyItMatters?: string | null;
+    doThisNow?: string | null;
+    evidence?: string | null;
+    evidenceAnchors?: unknown;
     recommendation: string;
     rewriteInstruction?: string | null;
   }>;
@@ -38,6 +42,7 @@ export async function planRewrite(input: RewritePlannerInput) {
       "You are a senior rewrite strategist for a manuscript intelligence pipeline.",
       "Return strict JSON only.",
       "Separate findings from rewrite strategy.",
+      "Use findings and evidence packs as the shared memory; do not invent source evidence.",
       "Preserve the author's voice and continuity.",
       "Treat trend comparison as metadata/context only; do not turn trend signals into plot or prose instructions.",
       "Do not recommend copying or imitating copyrighted modern works."

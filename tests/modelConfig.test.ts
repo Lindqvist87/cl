@@ -5,6 +5,9 @@ import {
   auditReasoningEffort,
   chiefEditorModel,
   chiefEditorReasoningEffort,
+  localEditorModel,
+  localEditorReasoningEffort,
+  modelConfigForRole,
   resolveModelConfig
 } from "../lib/ai/modelConfig";
 import { analyzeManuscriptChunk } from "../lib/ai/chunkAnalyzer";
@@ -19,32 +22,54 @@ test("model config prefers role-specific env vars", () => {
     AUDIT_MODEL: "audit-env-model",
     AUDIT_REASONING_EFFORT: "low",
     CHIEF_EDITOR_MODEL: "chief-env-model",
-    CHIEF_EDITOR_REASONING_EFFORT: "high",
+    CHIEF_EDITOR_REASONING_EFFORT: "xhigh",
     OPENAI_AUDIT_MODEL: "legacy-audit-model",
-    OPENAI_REWRITE_MODEL: "legacy-rewrite-model"
+    OPENAI_REWRITE_MODEL: "legacy-rewrite-model",
+    OPENAI_EDITOR_MODEL: "legacy-local-model"
   });
 
+  assert.equal(config.localEditorModel, "legacy-local-model");
+  assert.equal(config.localEditorReasoningEffort, "medium");
   assert.equal(config.auditModel, "audit-env-model");
   assert.equal(config.auditReasoningEffort, "low");
+  assert.equal(config.sectionEditorModel, "audit-env-model");
+  assert.equal(config.sectionEditorReasoningEffort, "low");
   assert.equal(config.chiefEditorModel, "chief-env-model");
-  assert.equal(config.chiefEditorReasoningEffort, "high");
+  assert.equal(config.chiefEditorReasoningEffort, "xhigh");
 });
 
 test("model config preserves safe fallbacks when role env vars are missing", () => {
   const defaultConfig = resolveModelConfig({});
 
+  assert.equal(defaultConfig.localEditorModel, "gpt-5.4-mini");
+  assert.equal(defaultConfig.localEditorReasoningEffort, "medium");
   assert.equal(defaultConfig.auditModel, "gpt-5.4-mini");
   assert.equal(defaultConfig.auditReasoningEffort, "medium");
+  assert.equal(defaultConfig.sectionEditorModel, "gpt-5.4-mini");
+  assert.equal(defaultConfig.sectionEditorReasoningEffort, "medium");
   assert.equal(defaultConfig.chiefEditorModel, "gpt-5.4");
   assert.equal(defaultConfig.chiefEditorReasoningEffort, "high");
 
   const legacyConfig = resolveModelConfig({
     OPENAI_AUDIT_MODEL: "legacy-audit-model",
-    OPENAI_REWRITE_MODEL: "legacy-rewrite-model"
+    OPENAI_REWRITE_MODEL: "legacy-rewrite-model",
+    OPENAI_EDITOR_MODEL: "legacy-local-model"
   });
 
+  assert.equal(legacyConfig.localEditorModel, "legacy-local-model");
   assert.equal(legacyConfig.auditModel, "legacy-audit-model");
+  assert.equal(legacyConfig.sectionEditorModel, "legacy-audit-model");
   assert.equal(legacyConfig.chiefEditorModel, "legacy-rewrite-model");
+});
+
+test("model defaults avoid unavailable chief editor family", () => {
+  const defaultConfig = resolveModelConfig({});
+  const unavailableModelPattern = new RegExp(["5", "5"].join("\\."), "i");
+
+  assert.doesNotMatch(defaultConfig.localEditorModel, unavailableModelPattern);
+  assert.doesNotMatch(defaultConfig.auditModel, unavailableModelPattern);
+  assert.doesNotMatch(defaultConfig.sectionEditorModel, unavailableModelPattern);
+  assert.doesNotMatch(defaultConfig.chiefEditorModel, unavailableModelPattern);
 });
 
 test("invalid reasoning efforts fall back to safe defaults", () => {
@@ -54,10 +79,34 @@ test("invalid reasoning efforts fall back to safe defaults", () => {
   });
 
   assert.equal(config.auditReasoningEffort, "medium");
+  assert.equal(config.sectionEditorReasoningEffort, "medium");
   assert.equal(config.chiefEditorReasoningEffort, "high");
 });
 
-test("audit calls use audit model configuration", async () => {
+test("model role mapping keeps local, section, aggregator, and chief explicit", () => {
+  assert.deepEqual(modelConfigForRole("localEditor"), {
+    model: localEditorModel,
+    reasoningEffort: localEditorReasoningEffort
+  });
+  assert.deepEqual(modelConfigForRole("sectionEditor"), {
+    model: auditModel,
+    reasoningEffort: auditReasoningEffort
+  });
+  assert.deepEqual(modelConfigForRole("auditEditor"), {
+    model: auditModel,
+    reasoningEffort: auditReasoningEffort
+  });
+  assert.deepEqual(modelConfigForRole("aggregator"), {
+    model: auditModel,
+    reasoningEffort: auditReasoningEffort
+  });
+  assert.deepEqual(modelConfigForRole("chiefEditor"), {
+    model: chiefEditorModel,
+    reasoningEffort: chiefEditorReasoningEffort
+  });
+});
+
+test("local editor calls use local editor model configuration", async () => {
   const requests: ChatRequest[] = [];
   const restore = setOpenAIClientForTest(
     fakeOpenAIClient(requests, {
@@ -88,9 +137,9 @@ test("audit calls use audit model configuration", async () => {
       text: "A door opens into trouble."
     });
 
-    assert.equal(result.model, auditModel);
-    assert.equal(requests[0].model, auditModel);
-    assert.equal(requests[0].reasoning_effort, auditReasoningEffort);
+    assert.equal(result.model, localEditorModel);
+    assert.equal(requests[0].model, localEditorModel);
+    assert.equal(requests[0].reasoning_effort, localEditorReasoningEffort);
   } finally {
     restore();
   }

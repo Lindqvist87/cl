@@ -231,7 +231,7 @@ async function analyzeChunk(input: {
   };
   memory: ManuscriptMemory;
 }) {
-  const modelConfig = modelConfigForRole("audit");
+  const modelConfig = modelConfigForRole("localEditor");
   const model = getConfiguredModel(modelConfig.model);
 
   if (!hasOpenAIKey()) {
@@ -308,7 +308,7 @@ async function synthesizePass(input: {
     memory: input.memory,
     chunkOutputs
   });
-  const modelConfig = modelConfigForRole("chiefEditor");
+  const modelConfig = modelConfigForRole("sectionEditor");
   const model = getConfiguredModel(modelConfig.model);
   const result = hasOpenAIKey()
     ? await requestStructuredJson<JsonRecord>({
@@ -389,7 +389,7 @@ async function getPassSynthesisInputs(input: {
     }
 
     const sourceSummaries = chunkSummaries.slice(start, start + batchSize);
-    const modelConfig = modelConfigForRole("audit");
+    const modelConfig = modelConfigForRole("sectionEditor");
     const model = getConfiguredModel(modelConfig.model);
     const result = hasOpenAIKey()
       ? await requestStructuredJson<JsonRecord>({

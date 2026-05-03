@@ -66,11 +66,11 @@ MAX_JOBS_PER_INNGEST_RUN="3"
 MAX_SECONDS_PER_INNGEST_RUN="25"
 ```
 
-`AUDIT_MODEL` drives high-volume chunk and chapter analysis. `AUDIT_REASONING_EFFORT` controls the reasoning effort for those calls.
+Local close reading defaults to `gpt-5.4-mini`, with `OPENAI_EDITOR_MODEL` still available as a legacy mini-model fallback. `AUDIT_MODEL` drives the audit/section editor layer for aggregation, deduplication, chapter synthesis, cross-chapter patterns, evidence packs, and candidate prioritization. `AUDIT_REASONING_EFFORT` controls the reasoning effort for that section-editor layer.
 
 `CHIEF_EDITOR_MODEL` drives whole-book audit, corpus/trend synthesis, rewrite planning, and chapter rewrite generation. `CHIEF_EDITOR_REASONING_EFFORT` controls the reasoning effort for those calls.
 
-Allowed reasoning effort values are `low`, `medium`, and `high`. Invalid values fall back to safe defaults. Exact model IDs must be available in the configured OpenAI project/account. `OPENAI_EMBEDDING_MODEL` drives vector creation. `OPENAI_AUDIT_MODEL`, `OPENAI_REWRITE_MODEL`, and `OPENAI_EDITOR_MODEL` remain compatibility fallbacks when the role-based variables are unset. `OPENAI_FAST_MODEL` is not read by this codebase.
+Allowed reasoning effort values are `low`, `medium`, `high`, and `xhigh`. Invalid values fall back to safe defaults. Exact model IDs must be available in the configured OpenAI project/account. `OPENAI_EMBEDDING_MODEL` drives vector creation. `OPENAI_AUDIT_MODEL`, `OPENAI_REWRITE_MODEL`, and `OPENAI_EDITOR_MODEL` remain compatibility fallbacks when the role-based variables are unset. `OPENAI_FAST_MODEL` is not read by this codebase.
 
 `ADMIN_JOB_TOKEN` protects manual job-control routes under `/api/jobs/*`. Send it as `Authorization: Bearer <token>` or `x-admin-job-token` when using the fallback runner scripts.
 

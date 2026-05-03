@@ -1,9 +1,22 @@
+import type { EditorialEvidenceAnchor } from "@/lib/editorial/evidence";
+
 export type FindingDraft = {
+  problemTitle?: string;
+  problemType?: string;
   issueType: string;
   severity: number;
+  priority?: number;
   confidence: number;
   problem: string;
+  whyItMatters?: string;
+  doThisNow?: string;
+  affectedChapters?: string[];
+  affectedSections?: string[];
+  scope?: "local" | "chapter" | "global";
   evidence?: string;
+  sourceTextExcerpt?: string;
+  evidenceReason?: string;
+  evidenceAnchors?: EditorialEvidenceAnchor[];
   recommendation: string;
   rewriteInstruction?: string;
 };

@@ -20,7 +20,10 @@ export default async function ManuscriptWorkspacePage({
     where: { id },
     include: {
       chapters: { orderBy: { order: "asc" } },
-      findings: { orderBy: [{ severity: "desc" }, { createdAt: "asc" }] },
+      findings: {
+        orderBy: [{ severity: "desc" }, { createdAt: "asc" }],
+        include: { chunk: true }
+      },
       decisions: { orderBy: [{ updatedAt: "desc" }, { createdAt: "desc" }] },
       reports: { orderBy: { createdAt: "desc" }, take: 1 },
       rewritePlans: { orderBy: { createdAt: "desc" }, take: 1 },
@@ -211,8 +214,11 @@ function StartHereCard({
     heading: string;
     title: string;
     explanation: string;
+    whyThisBeforeEverythingElse: string;
     whyItMatters: string;
     firstConcreteStep: string;
+    whatToIgnoreForNow: string;
+    evidencePreview: string;
     affectedPartsPreview: string;
     targetSectionId: string | null;
     primaryEnabled: boolean;
@@ -232,9 +238,12 @@ function StartHereCard({
       </p>
 
       <div className="mt-8 grid gap-6 border-t border-line pt-6 md:grid-cols-3">
+        <EditorialFact label="Varför detta först" value={start.whyThisBeforeEverythingElse} />
         <EditorialFact label="Varför det spelar roll" value={start.whyItMatters} />
         <EditorialFact label="Första steg" value={start.firstConcreteStep} />
         <EditorialFact label="Berörda delar" value={start.affectedPartsPreview} />
+        <EditorialFact label="Bevis i texten" value={start.evidencePreview} />
+        <EditorialFact label="Vänta med detta" value={start.whatToIgnoreForNow} />
       </div>
 
       <div className="mt-8">
@@ -269,6 +278,7 @@ function PriorityCard({
     importanceLabel: string;
     whyItMatters: string;
     recommendedAction: string;
+    evidencePreview: string;
     affectedPartsPreview: string;
     targetSectionId: string | null;
   };
@@ -285,6 +295,7 @@ function PriorityCard({
       <div className="mt-5 space-y-4">
         <EditorialFact label="Varför det spelar roll" value={priority.whyItMatters} />
         <EditorialFact label="Gör nu" value={priority.recommendedAction} />
+        <EditorialFact label="Bevis i texten" value={priority.evidencePreview} />
         <EditorialFact label="Berörda delar" value={priority.affectedPartsPreview} />
       </div>
       <div className="mt-auto pt-6">

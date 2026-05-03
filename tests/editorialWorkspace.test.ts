@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { transitionDecisionStatus } from "../lib/editorial/decisions";
 import { buildAuthorWorkspaceViewModel } from "../lib/editorial/authorWorkspace";
+import { resolveEditorialDetailRequest } from "../lib/editorial/detailRequests";
 import { aggregateEditorialFindingPriorities } from "../lib/editorial/findingAggregation";
 import { nextBestEditorialAction } from "../lib/editorial/nextAction";
 import {
@@ -276,6 +277,98 @@ test("near duplicate priorities with the same normalized title merge into one", 
   assert.deepEqual(priorities[0].affectedSectionIds, ["s2", "s3"]);
 });
 
+test("findings preserve structured source anchors when chunk context is available", () => {
+  const priorities = aggregateEditorialFindingPriorities({
+    chapters: aggregationChapters,
+    findings: [
+      {
+        id: "conflict-anchor",
+        manuscriptId: "m1",
+        chapterId: "s2",
+        chunkId: "chunk-warehouse",
+        issueType: "Conflict",
+        severity: 4,
+        confidence: 0.82,
+        problem: "No clear conflict drives the warehouse scene.",
+        evidence: "The scene observes the room without a visible pressure point.",
+        evidenceReason: "The excerpt describes atmosphere but no obstacle or choice.",
+        recommendation: "Add an obstacle and a choice.",
+        chunk: {
+          id: "chunk-warehouse",
+          sceneId: "scene-warehouse",
+          paragraphStart: 12,
+          paragraphEnd: 14,
+          text: "The scene observes the room without a visible pressure point."
+        }
+      }
+    ]
+  });
+
+  assert.equal(priorities.length, 1);
+  assert.equal(priorities[0].evidenceAnchors.length, 1);
+  assert.deepEqual(priorities[0].evidenceAnchors[0], {
+    manuscriptId: "m1",
+    chapterId: "s2",
+    sceneId: "scene-warehouse",
+    paragraphId: null,
+    paragraphStart: 12,
+    paragraphEnd: 14,
+    chunkId: "chunk-warehouse",
+    sourceTextExcerpt: "The scene observes the room without a visible pressure point.",
+    reason: "The excerpt describes atmosphere but no obstacle or choice.",
+    granularity: "chunk",
+    confidence: 0.82,
+    findingId: "conflict-anchor"
+  });
+  assert.equal(
+    priorities[0].representativeFindings[0].evidenceAnchors[0].chunkId,
+    "chunk-warehouse"
+  );
+});
+
+test("chief editor detail requests resolve supporting evidence from lower-level artifacts", () => {
+  const result = resolveEditorialDetailRequest(
+    {
+      type: "find_supporting_evidence",
+      query: "passive protagonist during conflict",
+      sourceScope: { chapterIds: ["s2"] }
+    },
+    {
+      findings: [
+        {
+          id: "passive-protagonist",
+          manuscriptId: "m1",
+          chapterId: "s2",
+          chunkId: "chunk-passive",
+          issueType: "Character",
+          severity: 4,
+          problem: "The protagonist stays passive during the conflict beat.",
+          evidence: "She watches the argument without choosing a side.",
+          recommendation: "Give the protagonist a pressured choice.",
+          chunk: {
+            id: "chunk-passive",
+            paragraphStart: 5,
+            paragraphEnd: 5,
+            text: "She watches the argument without choosing a side."
+          }
+        },
+        {
+          id: "unrelated",
+          chapterId: "s3",
+          issueType: "Pacing",
+          severity: 3,
+          problem: "The aftermath repeats information.",
+          recommendation: "Compress the repeated beat."
+        }
+      ]
+    }
+  );
+
+  assert.deepEqual(result.matchedFindingIds, ["passive-protagonist"]);
+  assert.equal(result.evidenceAnchors[0].chunkId, "chunk-passive");
+  assert.equal(result.evidenceAnchors[0].paragraphStart, 5);
+});
+
 test("corpus benchmark prefix is stripped from display title and guidance", () => {
   const priorities = aggregateEditorialFindingPriorities({
     chapters: aggregationChapters,
@@ -403,6 +496,10 @@ test("author workspace maps aggregated priorities into author-facing cards", () 
     "Det här är den tydligaste första redigeringsrörelsen utifrån de samlade observationerna."
   );
   assert.equal(
+    authorWorkspace.start.whyThisBeforeEverythingElse,
+    "Börja här eftersom samma mönster berör flera delar och en tydlig regel låser upp resten."
+  );
+  assert.equal(
     authorWorkspace.start.whyItMatters,
     "Scener utan tydlig press, konflikt eller insats tappar framåtrörelse och gör senare stegring svagare."
   );
@@ -413,6 +510,14 @@ test("author workspace maps aggregated priorities into author-facing cards", () 
   assert.equal(
     authorWorkspace.start.affectedPartsPreview,
     "Del 2: Warehouse, Del 3: The call, Del 4: Aftermath"
+  );
+  assert.match(
+    authorWorkspace.start.evidencePreview,
+    /manusdel: "The scene observes the room/
+  );
+  assert.equal(
+    authorWorkspace.start.whatToIgnoreForNow,
+    "Vänta med prosarytm och mindre kontinuitetsrader tills scenens tryck går att läsa."
   );
   assert.equal(authorWorkspace.start.primaryButtonLabel, "Visa första berörda del");
   assert.equal(authorWorkspace.start.primaryEnabled, true);
@@ -426,6 +531,8 @@ test("author workspace maps aggregated priorities into author-facing cards", () 
       "Scener utan tydlig press, konflikt eller insats tappar framåtrörelse och gör senare stegring svagare.",
     recommendedAction:
       "Förtydliga vilket hinder, val eller vilken press som driver de berörda delarna.",
+    evidencePreview:
+      'manusdel: "The scene observes the room without a visible pressure point." / manusdel: "The call repeats information without forcing a decision."',
     affectedPartsPreview: "Del 2: Warehouse, Del 3: The call, 1 till",
     targetSectionId: "s2"
   });
@@ -464,6 +571,42 @@ test("author workspace keeps raw findings secondary instead of primary", () => {
     mainLabels,
     /Alla observationer|Analysen är redo|Redigeringsplan|Importerad struktur|Rådata/
   );
+});
+
+test("author-facing top recommendation titles are disambiguated when patterns repeat", () => {
+  const workspace = aggregateEditorialWorkspaceData({
+    manuscript: {
+      id: "m1",
+      title: "Draft",
+      status: "UPLOADED",
+      analysisStatus: "COMPLETED"
+    },
+    chapters: aggregationChapters,
+    findings: [
+      {
+        id: "voice-1",
+        chapterId: "s2",
+        issueType: "Voice",
+        severity: 3,
+        problem: "The description uses an inconsistent register.",
+        recommendation: "Choose one register for this scene."
+      },
+      {
+        id: "logic-1",
+        chapterId: "s3",
+        issueType: "Logic",
+        severity: 3,
+        problem: "The explanation skips a causal step.",
+        recommendation: "Add the missing cause before the reaction."
+      }
+    ],
+    decisions: []
+  });
+  const authorWorkspace = buildAuthorWorkspaceViewModel(workspace);
+  const titles = authorWorkspace.priorityCards.map((card) => card.title);
+
+  assert.equal(titles.length, 2);
+  assert.equal(new Set(titles).size, titles.length);
 });
 
 test("author workspace renders helpful fallback when analysis data is missing", () => {

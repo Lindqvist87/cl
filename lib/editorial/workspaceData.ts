@@ -13,6 +13,7 @@ import {
 } from "@/lib/editorial/nextAction";
 import { aggregateEditorialFindingPriorities } from "@/lib/editorial/findingAggregation";
 import { buildStructureReviewRows } from "@/lib/editorial/structureReview";
+import type { EditorialEvidenceAnchor } from "@/lib/editorial/evidence";
 
 export type EditorialWorkspaceInput = {
   manuscript: {
@@ -47,6 +48,7 @@ export type EditorialIssueDisplay = {
   severity: number;
   issueType: string;
   problem: string;
+  evidence: string | null;
   recommendation: string;
   decisionStatus: EditorialDecisionRecord["status"] | null;
 };
@@ -64,8 +66,11 @@ export type NextEditorialActionDisplay = {
   severity: number;
   issueCount: number;
   suggestedFirstStep: string;
+  whyThisBeforeEverythingElse: string;
+  smallestUsefulFirstAction: string;
   whatToIgnoreForNow: string | null;
   affectedSections: string[];
+  supportingEvidence: EditorialEvidenceAnchor[];
   priority: NextEditorialAction["priority"];
 };
 
@@ -214,8 +219,11 @@ export function buildNextActionDisplayData(
     severity: action.severity,
     issueCount: action.issueCount,
     suggestedFirstStep: action.suggestedFirstStep,
+    whyThisBeforeEverythingElse: action.whyThisBeforeEverythingElse,
+    smallestUsefulFirstAction: action.smallestUsefulFirstAction,
     whatToIgnoreForNow: action.whatToIgnoreForNow ?? null,
     affectedSections: action.affectedChapters,
+    supportingEvidence: action.supportingEvidence,
     priority: action.priority
   };
 }
@@ -258,6 +266,7 @@ function displayIssue(
     severity: finding.severity,
     issueType: finding.issueType || "Editorial",
     problem: finding.problem,
+    evidence: finding.evidence ?? null,
     recommendation: finding.recommendation,
     decisionStatus: decisionByFinding.get(finding.id)?.status ?? null
   };

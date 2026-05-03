@@ -8,6 +8,12 @@ import type {
   EditorialChapterInput,
   EditorialFindingInput
 } from "@/lib/editorial/nextAction";
+import {
+  evidenceAnchorPreview,
+  mergeEvidenceAnchors,
+  normalizeEvidenceAnchors,
+  type EditorialEvidenceAnchor
+} from "@/lib/editorial/evidence";
 
 export type EditorialDisplayPriority = "critical" | "high" | "medium" | "low";
 
@@ -21,8 +27,12 @@ export type EditorialPriorityRepresentativeFinding = {
   severity: number;
   problem: string;
   evidence: string | null;
+  evidenceAnchors: EditorialEvidenceAnchor[];
   recommendation: string;
   rewriteInstruction: string | null;
+  confidence: number | null;
+  whyItMatters: string | null;
+  doThisNow: string | null;
 };
 
 export type EditorialPriority = {
@@ -39,6 +49,7 @@ export type EditorialPriority = {
   affectedSectionLabels: string[];
   issueCount: number;
   representativeFindings: EditorialPriorityRepresentativeFinding[];
+  evidenceAnchors: EditorialEvidenceAnchor[];
   evidenceSummary: string;
   editorialImpact: string;
   recommendedAction: string;
@@ -361,6 +372,11 @@ function buildPriority(
     classifications,
     chapterById
   );
+  const evidenceAnchors = mergeEvidenceAnchors(
+    classifications.flatMap((classification) =>
+      normalizeEvidenceAnchors({ finding: classification.finding })
+    )
+  ).slice(0, 8);
   const hasFragmentContext = classifications.some(
     (classification) => classification.hasFragmentContext
   );
@@ -401,11 +417,13 @@ function buildPriority(
     affectedSectionLabels,
     issueCount: findings.length,
     representativeFindings,
+    evidenceAnchors,
     evidenceSummary: evidenceSummary({
       pattern,
       issueCount: findings.length,
       affectedSectionLabels,
       representatives: representativeFindings,
+      anchors: evidenceAnchors,
       hasFragmentContext
     }),
     editorialImpact: pattern.impact,
@@ -616,7 +634,14 @@ function shouldMergePriorities(a: EditorialPriority, b: EditorialPriority) {
     return true;
   }
 
-  return tokenOverlap(a.recommendedAction, b.recommendedAction) >= 0.5;
+  if (
+    tokenOverlap(a.title, b.title) >= 0.75 &&
+    tokenOverlap(a.recommendedAction, b.recommendedAction) >= 0.4
+  ) {
+    return true;
+  }
+
+  return tokenOverlap(a.recommendedAction, b.recommendedAction) >= 0.6;
 }
 
 function mergePriorities(
@@ -642,6 +667,10 @@ function mergePriorities(
   ])
     .sort((left, right) => compareRepresentativeFindings(chapterById, left, right))
     .slice(0, 3);
+  const evidenceAnchors = mergeEvidenceAnchors([
+    ...a.evidenceAnchors,
+    ...b.evidenceAnchors
+  ]).slice(0, 8);
   const rawSeverityMax = Math.max(a.rawSeverityMax, b.rawSeverityMax);
   const rawSeverityMin = Math.min(
     severityRangeMin(a.rawSeverityRange),
@@ -668,10 +697,12 @@ function mergePriorities(
     affectedSectionLabels,
     issueCount: rawFindingIds.length,
     representativeFindings,
+    evidenceAnchors,
     evidenceSummary: mergedEvidenceSummary({
       issueCount: rawFindingIds.length,
       affectedSectionLabels,
       representatives: representativeFindings,
+      anchors: evidenceAnchors,
       hasFragmentContext: a.hasFragmentContext || b.hasFragmentContext
     }),
     shouldActNow:
@@ -731,8 +762,15 @@ function representativeFindingsForGroup(
       severity: normalizeSeverity(finding.severity),
       problem: finding.problem,
       evidence: finding.evidence?.trim() || null,
+      evidenceAnchors: normalizeEvidenceAnchors({ finding }),
       recommendation: finding.recommendation,
-      rewriteInstruction: finding.rewriteInstruction?.trim() || null
+      rewriteInstruction: finding.rewriteInstruction?.trim() || null,
+      confidence:
+        typeof finding.confidence === "number" && Number.isFinite(finding.confidence)
+          ? finding.confidence
+          : null,
+      whyItMatters: finding.whyItMatters?.trim() || null,
+      doThisNow: finding.doThisNow?.trim() || null
     }));
 }
 
@@ -741,21 +779,21 @@ function evidenceSummary({
   issueCount,
   affectedSectionLabels,
   representatives,
+  anchors,
   hasFragmentContext
 }: {
   pattern: PatternDefinition;
   issueCount: number;
   affectedSectionLabels: string[];
   representatives: EditorialPriorityRepresentativeFinding[];
+  anchors: EditorialEvidenceAnchor[];
   hasFragmentContext: boolean;
 }) {
   const sectionSummary =
     affectedSectionLabels.length > 0
       ? formatSectionList(affectedSectionLabels)
       : "manuscript-level findings";
-  const examples = representatives
-    .map((finding) => truncate(finding.evidence || finding.problem, 110))
-    .filter(Boolean);
+  const examples = evidenceExamples(anchors, representatives).filter(Boolean);
   const exampleText = examples.length > 0 ? ` Examples: ${examples.join(" / ")}` : "";
   const fragmentNote =
     hasFragmentContext || pattern.id === "fragment-sections"
@@ -769,26 +807,43 @@ function mergedEvidenceSummary({
   issueCount,
   affectedSectionLabels,
   representatives,
+  anchors,
   hasFragmentContext
 }: {
   issueCount: number;
   affectedSectionLabels: string[];
   representatives: EditorialPriorityRepresentativeFinding[];
+  anchors: EditorialEvidenceAnchor[];
   hasFragmentContext: boolean;
 }) {
   const sectionSummary =
     affectedSectionLabels.length > 0
       ? formatSectionList(affectedSectionLabels)
       : "manuscript-level findings";
-  const examples = representatives
-    .map((finding) => truncate(finding.evidence || finding.problem, 110))
-    .filter(Boolean);
+  const examples = evidenceExamples(anchors, representatives).filter(Boolean);
   const fragmentNote = hasFragmentContext
     ? " Some evidence comes from very short or title-like sections."
     : "";
   const exampleText = examples.length > 0 ? ` Examples: ${examples.join(" / ")}` : "";
 
   return `${issueCount} related findings across ${sectionSummary}.${fragmentNote}${exampleText}`;
+}
+
+function evidenceExamples(
+  anchors: EditorialEvidenceAnchor[],
+  representatives: EditorialPriorityRepresentativeFinding[]
+) {
+  const anchorExamples = anchors
+    .slice(0, 3)
+    .map((anchor) => truncate(evidenceAnchorPreview(anchor), 110));
+
+  if (anchorExamples.length > 0) {
+    return anchorExamples;
+  }
+
+  return representatives.map((finding) =>
+    truncate(finding.evidence || finding.problem, 110)
+  );
 }
 
 function titleForPriority(

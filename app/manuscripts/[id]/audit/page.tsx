@@ -21,7 +21,7 @@ export default async function ManuscriptAuditPage({
       chapters: { orderBy: { order: "asc" } },
       findings: {
         orderBy: [{ severity: "desc" }, { createdAt: "asc" }],
-        include: { chapter: true },
+        include: { chapter: true, chunk: true },
         take: 80
       },
       rewritePlans: { orderBy: { createdAt: "desc" }, take: 1 },

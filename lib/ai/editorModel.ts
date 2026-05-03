@@ -1,3 +1,4 @@
+import type { ChatCompletionCreateParamsNonStreaming } from "openai/resources/chat/completions";
 import { env } from "@/lib/env";
 import {
   getOpenAIClient,
@@ -8,6 +9,10 @@ import {
   auditReasoningEffort,
   chiefEditorModel,
   chiefEditorReasoningEffort,
+  localEditorModel,
+  localEditorReasoningEffort,
+  sectionEditorModel,
+  sectionEditorReasoningEffort,
   type ReasoningEffort
 } from "@/lib/ai/modelConfig";
 import { usageLogFromOpenAIUsage, type AiUsageLog } from "@/lib/ai/usage";
@@ -34,8 +39,16 @@ export function getAuditModel() {
   return auditModel;
 }
 
+export function getLocalEditorModel() {
+  return localEditorModel;
+}
+
 export function getRewriteModel() {
   return chiefEditorModel;
+}
+
+export function getSectionEditorModel() {
+  return sectionEditorModel;
 }
 
 export function getChiefEditorModel() {
@@ -46,8 +59,16 @@ export function getAuditReasoningEffort() {
   return auditReasoningEffort;
 }
 
+export function getLocalEditorReasoningEffort() {
+  return localEditorReasoningEffort;
+}
+
 export function getChiefEditorReasoningEffort() {
   return chiefEditorReasoningEffort;
+}
+
+export function getSectionEditorReasoningEffort() {
+  return sectionEditorReasoningEffort;
 }
 
 export function getEditorModel() {
@@ -71,7 +92,7 @@ export async function requestEditorJson<T>({
 
   while (attempt <= retries) {
     try {
-      const completion = await getOpenAIClient().chat.completions.create({
+      const requestBody = {
         model,
         reasoning_effort: reasoningEffort,
         ...(temperature === undefined ? {} : { temperature }),
@@ -80,7 +101,10 @@ export async function requestEditorJson<T>({
           { role: "system", content: system },
           { role: "user", content: user }
         ]
-      });
+      };
+      const completion = await getOpenAIClient().chat.completions.create(
+        requestBody as unknown as ChatCompletionCreateParamsNonStreaming
+      );
 
       const rawText = completion.choices[0]?.message.content ?? "{}";
 
