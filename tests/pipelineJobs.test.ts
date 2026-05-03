@@ -105,6 +105,18 @@ test("stuck manuscript with no jobs gets resumable jobs from checkpoint", async 
       [prisma.analysisRun, analysisRunPatch(run)],
       [prisma.pipelineJob, pipelineJobPatch(jobs)],
       [
+        prisma.analysisOutput,
+        {
+          count: async () => 0
+        }
+      ],
+      [
+        prisma.manuscriptChunk,
+        {
+          count: async () => 0
+        }
+      ],
+      [
         prisma.workerHeartbeat,
         {
           upsert: async (args: { update: Record<string, unknown> }) => args.update

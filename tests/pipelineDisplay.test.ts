@@ -119,8 +119,8 @@ test("pipeline display stays on summarizeChunks when later checkpoint progress i
       currentStep: "runChapterAudits",
       stepMetadata: {
         runChapterAudits: {
-          audited: 40,
-          remaining: 108,
+          audited: 72,
+          remaining: 76,
           complete: false
         }
       }
@@ -139,7 +139,7 @@ test("pipeline display stays on summarizeChunks when later checkpoint progress i
       {
         type: "runChapterAudits",
         status: PIPELINE_JOB_STATUS.BLOCKED,
-        result: { audited: 40, remaining: 108, complete: false },
+        result: { audited: 72, remaining: 76, complete: false },
         createdAt: "2026-05-03T08:00:00.000Z"
       }
     ],
@@ -186,7 +186,7 @@ test("pipeline display moves to chapter audit progress only after chunk summarie
       {
         type: "runChapterAudits",
         status: PIPELINE_JOB_STATUS.QUEUED,
-        result: { audited: 40, remaining: 108, complete: false },
+        result: { audited: 72, remaining: 76, complete: false },
         createdAt: "2026-05-03T08:00:00.000Z"
       }
     ],
@@ -200,9 +200,9 @@ test("pipeline display moves to chapter audit progress only after chunk summarie
   });
 
   assert.equal(display.currentStep, "runChapterAudits");
-  assert.equal(display.analyzedCount, 40);
-  assert.equal(display.remainingCount, 108);
-  assert.equal(display.stepProgressLabel, "40 / 148 section audits completed");
+  assert.equal(display.analyzedCount, 72);
+  assert.equal(display.remainingCount, 76);
+  assert.equal(display.stepProgressLabel, "72 / 148 section audits completed");
 });
 
 test("pipeline display separates core completion from optional rewrite drafts", () => {

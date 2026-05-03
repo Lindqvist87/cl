@@ -19,6 +19,7 @@ import type { AuditReportJson } from "@/lib/types";
 import { buildPipelineStatusDisplay } from "@/lib/pipeline/display";
 import { authorAnalysisAction } from "@/lib/pipeline/authorActions";
 import { getChunkSummaryProgress } from "@/lib/pipeline/chunkSummaryProgress";
+import { reconcileCheckpointWithDurableState } from "@/lib/pipeline/durableReconciliation";
 import { getInngestRuntimeConfig } from "@/src/inngest/events";
 import { buildStructureReviewRows } from "@/lib/editorial/structureReview";
 
@@ -55,6 +56,10 @@ export default async function ManuscriptPage({
   const structured = report?.structured as AuditReportJson | undefined;
   const latestRun = manuscript.runs[0];
   const chunkSummaryProgress = await getChunkSummaryProgress(id, latestRun?.id);
+  const reconciliation = reconcileCheckpointWithDurableState({
+    checkpoint: latestRun?.checkpoint,
+    chunkAnalysis: chunkSummaryProgress
+  });
   const latestRewritePlan = manuscript.rewritePlans[0];
   const latestRewrite = manuscript.rewrites[0];
   const rewriteDraftCount = new Set(
@@ -64,7 +69,7 @@ export default async function ManuscriptPage({
   ).size;
   const rewriteDraftsComplete = rewriteDraftCount >= manuscript.chapterCount;
   const pipelineStatus = buildPipelineStatusDisplay({
-    run: latestRun,
+    run: latestRun ? { ...latestRun, checkpoint: reconciliation.checkpoint } : null,
     jobs: manuscript.pipelineJobs,
     totals: {
       chunks: chunkSummaryProgress.total,

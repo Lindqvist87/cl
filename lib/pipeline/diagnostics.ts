@@ -20,6 +20,7 @@ import { buildPipelineStatusDisplay } from "@/lib/pipeline/display";
 import { getWorkspaceReadinessForManuscript } from "@/lib/pipeline/workspaceReadiness";
 import { getModelRoleDiagnostics } from "@/lib/ai/modelConfig";
 import { getChunkSummaryProgress } from "@/lib/pipeline/chunkSummaryProgress";
+import { reconcileCheckpointWithDurableState } from "@/lib/pipeline/durableReconciliation";
 import { prisma } from "@/lib/prisma";
 
 export type PipelineJobDiagnostic = {
@@ -73,7 +74,11 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
     manuscriptId,
     run?.id
   );
-  const checkpoint = normalizeCheckpoint(run?.checkpoint);
+  const reconciliation = reconcileCheckpointWithDurableState({
+    checkpoint: run?.checkpoint,
+    chunkAnalysis: chunkSummaryProgress
+  });
+  const checkpoint = normalizeCheckpoint(reconciliation.checkpoint);
   const completedSteps = new Set(checkpoint.completedSteps ?? []);
   const currentStep =
     stepOrNull(checkpoint.currentStep) ??
@@ -108,7 +113,7 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
     ? {}
     : zeroRunReasonForJobs({ state: runnerState, jobs, now });
   const pipelineStatus = buildPipelineStatusDisplay({
-    run,
+    run: run ? { ...run, checkpoint: reconciliation.checkpoint } : null,
     jobs,
     totals: {
       chunks: chunkSummaryProgress.total,
@@ -121,6 +126,12 @@ export async function getManuscriptPipelineDiagnostics(manuscriptId: string) {
 
   return {
     manuscriptId,
+    chunkAnalysisTotal: reconciliation.chunkAnalysisTotal,
+    chunkAnalysisCompleted: reconciliation.chunkAnalysisCompleted,
+    summarizeChunksJobStatus:
+      jobs.find((job) => job.type === "summarizeChunks")?.status ?? null,
+    checkpointPhase: reconciliation.checkpointPhase,
+    selectedDisplayPhase: pipelineStatus.currentStep,
     state: runnerState,
     run: run
       ? {

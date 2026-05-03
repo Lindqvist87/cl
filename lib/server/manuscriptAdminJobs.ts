@@ -6,6 +6,7 @@ import {
 } from "@/lib/pipeline/steps";
 import { buildPipelineStatusDisplay } from "@/lib/pipeline/display";
 import { getChunkSummaryProgress } from "@/lib/pipeline/chunkSummaryProgress";
+import { reconcileCheckpointWithDurableState } from "@/lib/pipeline/durableReconciliation";
 import { prisma } from "@/lib/prisma";
 
 const DEFAULT_MAX_JOBS = 5;
@@ -75,14 +76,18 @@ async function getManuscriptRunProgress(manuscriptId: string) {
     manuscriptId,
     run?.id
   );
-  const checkpoint = normalizeCheckpoint(run?.checkpoint);
+  const reconciliation = reconcileCheckpointWithDurableState({
+    checkpoint: run?.checkpoint,
+    chunkAnalysis: chunkSummaryProgress
+  });
+  const checkpoint = normalizeCheckpoint(reconciliation.checkpoint);
   const currentStep = stepOrUndefined(checkpoint.currentStep);
   const metadata = currentStep
     ? recordOrNull(checkpoint.stepMetadata?.[currentStep])
     : null;
   const summary = pipelineProgress(checkpoint);
   const display = buildPipelineStatusDisplay({
-    run,
+    run: run ? { ...run, checkpoint: reconciliation.checkpoint } : null,
     jobs,
     totals: {
       chunks: chunkSummaryProgress.total,

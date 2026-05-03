@@ -133,11 +133,7 @@ export function buildPipelineStatusDisplay(input: {
   const rawCompletedCoreStepSet = new Set(
     (checkpoint.completedSteps ?? []).filter(isCoreManuscriptPipelineStep)
   );
-  const forceSummarizeChunks = shouldForceSummarizeChunks({
-    completedStepSet: rawCompletedCoreStepSet,
-    jobs: orderedJobs,
-    totals: input.totals
-  });
+  const forceSummarizeChunks = shouldForceSummarizeChunks(input.totals);
   const completedCoreStepSet = forceSummarizeChunks
     ? pruneCompletedStepsFrom(rawCompletedCoreStepSet, "summarizeChunks")
     : rawCompletedCoreStepSet;
@@ -355,29 +351,14 @@ function sortPipelineJobs(jobs: PipelineDisplayJob[]) {
   });
 }
 
-function shouldForceSummarizeChunks(input: {
-  completedStepSet: Set<string>;
-  jobs: PipelineDisplayJob[];
-  totals?: PipelineDisplayTotals;
-}) {
-  const total = input.totals?.chunks;
-  const summarized = input.totals?.summarizedChunks;
-  if (
-    typeof total !== "number" ||
-    typeof summarized !== "number" ||
-    total <= 0 ||
-    summarized >= total
-  ) {
-    return false;
-  }
-
+function shouldForceSummarizeChunks(totals?: PipelineDisplayTotals) {
+  const total = totals?.chunks;
+  const summarized = totals?.summarizedChunks;
   return (
-    input.completedStepSet.has("createEmbeddingsForChunks") ||
-    input.jobs.some(
-      (job) =>
-        job.type === "createEmbeddingsForChunks" &&
-        job.status === PIPELINE_JOB_STATUS.COMPLETED
-    )
+    typeof total === "number" &&
+    typeof summarized === "number" &&
+    total > 0 &&
+    summarized < total
   );
 }
 

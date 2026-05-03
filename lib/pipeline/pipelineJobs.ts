@@ -53,6 +53,10 @@ import {
   type ManuscriptPipelineStep
 } from "@/lib/pipeline/steps";
 import { getChunkSummaryProgress } from "@/lib/pipeline/chunkSummaryProgress";
+import {
+  reconcileCheckpointWithDurableState,
+  stepIndex
+} from "@/lib/pipeline/durableReconciliation";
 import { prisma } from "@/lib/prisma";
 import {
   draftChapterRewrite,
@@ -134,11 +138,11 @@ export async function ensureManuscriptPipelineJobs(
 
   const run = await findOrCreatePipelineRun(manuscriptId);
   let checkpoint = normalizeCheckpoint(run.checkpoint);
-  const reconciliation = await reconcileCheckpointWithActualProgress(
-    manuscriptId,
-    run.id,
-    checkpoint
-  );
+  const chunkAnalysis = await getChunkSummaryProgress(manuscriptId, run.id);
+  const reconciliation = reconcileCheckpointWithDurableState({
+    checkpoint,
+    chunkAnalysis
+  });
   if (reconciliation.changed) {
     checkpoint = await persistPipelineCheckpoint(run.id, reconciliation.checkpoint);
   }
@@ -231,73 +235,6 @@ export async function ensureManuscriptPipelineJobs(
   return { run, jobs };
 }
 
-async function reconcileCheckpointWithActualProgress(
-  manuscriptId: string,
-  runId: string,
-  checkpoint: ReturnType<typeof normalizeCheckpoint>
-) {
-  if (!checkpointCanHaveStaleChunkSummaryCompletion(checkpoint)) {
-    return { checkpoint, changed: false, reopenFromStep: null as string | null };
-  }
-
-  const progress = await getChunkSummaryProgress(manuscriptId, runId);
-  if (progress.total <= 0 || progress.summarized >= progress.total) {
-    return { checkpoint, changed: false, reopenFromStep: null as string | null };
-  }
-
-  const step = "summarizeChunks";
-  const existingMetadata =
-    checkpoint.stepMetadata?.[step] &&
-    typeof checkpoint.stepMetadata[step] === "object" &&
-    !Array.isArray(checkpoint.stepMetadata[step])
-      ? (checkpoint.stepMetadata[step] as Record<string, unknown>)
-      : {};
-  const completedSteps = (checkpoint.completedSteps ?? []).filter((candidate) => {
-    const index = stepIndex(candidate);
-    return index >= 0 && index < stepIndex(step);
-  });
-
-  return {
-    changed: true,
-    reopenFromStep: step,
-    checkpoint: {
-      ...checkpoint,
-      currentStep: step,
-      completedSteps,
-      stepMetadata: {
-        ...(checkpoint.stepMetadata ?? {}),
-        [step]: {
-          ...existingMetadata,
-          summarized: progress.summarized,
-          total: progress.total,
-          remaining: progress.remaining,
-          complete: false
-        }
-      }
-    }
-  };
-}
-
-function checkpointCanHaveStaleChunkSummaryCompletion(
-  checkpoint: ReturnType<typeof normalizeCheckpoint>
-) {
-  const completed = new Set(checkpoint.completedSteps ?? []);
-  const currentIndex = stepIndex(checkpoint.currentStep);
-  const summarizeIndex = stepIndex("summarizeChunks");
-
-  return (
-    completed.has("summarizeChunks") ||
-    currentIndex > summarizeIndex
-  );
-}
-
-function stepIndex(step: unknown) {
-  return typeof step === "string"
-    ? FULL_MANUSCRIPT_PIPELINE_STEPS.indexOf(
-        step as (typeof FULL_MANUSCRIPT_PIPELINE_STEPS)[number]
-      )
-    : -1;
-}
 
 export async function ensureChapterRewriteJob(input: {
   manuscriptId: string;
