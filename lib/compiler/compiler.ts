@@ -289,22 +289,35 @@ export async function compileChapterCapsules(
       take: 80
     });
     const inputPackage = {
+      promptVersion: PROMPT_VERSION,
+      manuscript: {
+        id: manuscript.id,
+        title: manuscript.title,
+        targetGenre: manuscript.targetGenre,
+        targetAudience: manuscript.targetAudience
+      },
       chapter: {
         id: chapter.id,
         title: chapter.title,
+        order: chapter.order,
         chapterIndex: chapter.chapterIndex || chapter.order,
         wordCount: chapter.wordCount,
-        summary: chapter.summary
+        textHash: hashText(chapter.text ?? "")
       },
       sceneDigests: sceneDigests.map((artifact) => artifact.output),
       facts: facts.map(compactFact),
       events: events.map(compactEvent),
-      profile: compactProfile(manuscript.profile),
-      previousCapsule: await previousChapterCapsule(manuscriptId, chapter.order)
+      profile: compactProfile(manuscript.profile)
     };
     const inputHash = hashJson(inputPackage);
     const existing = await prisma.compilerArtifact.findFirst({
-      where: { manuscriptId, artifactType: "CHAPTER_CAPSULE", inputHash }
+      where: {
+        manuscriptId,
+        chapterId: chapter.id,
+        artifactType: "CHAPTER_CAPSULE",
+        inputHash,
+        status: "COMPLETED"
+      }
     });
 
     if (!existing) {
@@ -870,27 +883,6 @@ async function createEditorialDecisionsFromActions(
   });
 }
 
-async function previousChapterCapsule(manuscriptId: string, chapterOrder: number) {
-  const previousChapter = await prisma.manuscriptChapter.findFirst({
-    where: { manuscriptId, order: { lt: chapterOrder } },
-    orderBy: { order: "desc" }
-  });
-  if (!previousChapter) {
-    return null;
-  }
-
-  const artifact = await prisma.compilerArtifact.findFirst({
-    where: {
-      manuscriptId,
-      chapterId: previousChapter.id,
-      artifactType: "CHAPTER_CAPSULE"
-    },
-    orderBy: { createdAt: "desc" }
-  });
-
-  return artifact?.output ?? null;
-}
-
 function sceneDigestInputHash(
   manuscript: {
     id: string;
@@ -1096,8 +1088,8 @@ function numberOrDefault(value: unknown, fallback: number) {
 
 function normalizeMaxItems(value: number | undefined, fallback: number) {
   if (value === undefined || !Number.isFinite(value)) {
-    return Math.max(1, fallback);
+    return Math.max(0, fallback);
   }
 
-  return Math.max(1, Math.floor(value));
+  return Math.max(0, Math.floor(value));
 }

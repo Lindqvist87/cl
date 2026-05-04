@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildManuscriptNodes } from "../lib/compiler/nodes";
 import {
+  compileChapterCapsules,
   compileSceneDigests,
   extractNarrativeMemory
 } from "../lib/compiler/compiler";
@@ -136,6 +137,81 @@ test("extractNarrativeMemory completes when there are no scene digests", async (
   });
 });
 
+test("compileChapterCapsules resumes pending chapters in small manual batches", async () => {
+  const db = createChapterCapsuleDb(6);
+  const requests: Array<Record<string, unknown>> = [];
+  const restoreOpenAI = setOpenAIClientForTest(
+    fakeOpenAIClient(requests, {
+      chapterSummary: "Compiled chapter summary.",
+      chapterFunction: "Moves the manuscript forward.",
+      characterMovement: {},
+      plotMovement: {},
+      pacingAssessment: "Steady.",
+      continuityRisks: [],
+      styleFingerprint: {},
+      revisionPressure: "low",
+      mustPreserve: [],
+      suggestedEditorialFocus: []
+    })
+  );
+
+  try {
+    await withPatchedPrisma(createChapterCapsulePatches(db), async () => {
+      const first = await compileChapterCapsules(db.manuscript.id, {
+        maxItems: 2
+      });
+      const second = await compileChapterCapsules(db.manuscript.id, {
+        maxItems: 2
+      });
+      const third = await compileChapterCapsules(db.manuscript.id, {
+        maxItems: 2
+      });
+      const fourth = await compileChapterCapsules(db.manuscript.id, {
+        maxItems: 2
+      });
+
+      assert.deepEqual(first, {
+        compiled: 2,
+        total: 6,
+        remaining: 4,
+        complete: false
+      });
+      assert.deepEqual(second, {
+        compiled: 2,
+        total: 6,
+        remaining: 2,
+        complete: false
+      });
+      assert.deepEqual(third, {
+        compiled: 2,
+        total: 6,
+        remaining: 0,
+        complete: true
+      });
+      assert.deepEqual(fourth, {
+        compiled: 0,
+        total: 6,
+        remaining: 0,
+        complete: true
+      });
+
+      const capsules = db.artifacts.filter(
+        (artifact) => artifact.artifactType === "CHAPTER_CAPSULE"
+      );
+
+      assert.equal(requests.length, 6);
+      assert.equal(capsules.length, 6);
+      assert.equal(new Set(capsules.map((artifact) => artifact.chapterId)).size, 6);
+      assert.deepEqual(
+        capsules.map((artifact) => artifact.chapterId),
+        db.chapters.map((chapter) => chapter.id)
+      );
+    });
+  } finally {
+    restoreOpenAI();
+  }
+});
+
 function createCompilerDb() {
   const chapter = {
     id: "chapter-1",
@@ -232,6 +308,87 @@ function createCompilerDb() {
     characters: [] as Array<Record<string, unknown>>,
     events: [] as Array<Record<string, unknown>>,
     styles: [] as Array<Record<string, unknown>>
+  };
+}
+
+function createChapterCapsuleDb(chapterCount: number) {
+  const manuscriptId = "compiler-capsule-manuscript";
+  const chapters = Array.from({ length: chapterCount }, (_, index) => {
+    const item = index + 1;
+
+    return {
+      id: `chapter-${item}`,
+      manuscriptId,
+      order: item,
+      chapterIndex: item,
+      title: `Chapter ${item}`,
+      heading: `Chapter ${item}`,
+      text: `Chapter ${item} source text.`,
+      summary: null as string | null,
+      wordCount: 4,
+      status: "CHAPTER_READY",
+      startOffset: 0,
+      endOffset: 24,
+      createdAt: new Date(`2026-05-01T08:00:0${item}Z`)
+    };
+  });
+  const nodes = chapters.map((chapter) => ({
+    id: `chapter-node-${chapter.order}`,
+    key: `node:chapter:${chapter.order}`,
+    manuscriptId,
+    type: "CHAPTER",
+    chapterId: chapter.id
+  }));
+  const sceneDigests = chapters.map((chapter) => ({
+    id: `scene-digest-${chapter.order}`,
+    manuscriptId,
+    nodeId: `scene-node-${chapter.order}`,
+    chapterId: chapter.id,
+    sceneId: `scene-${chapter.order}`,
+    artifactType: "SCENE_DIGEST",
+    model: "stub",
+    reasoningEffort: "none",
+    promptVersion: "compiler-v1",
+    inputHash: `scene-digest-hash-${chapter.order}`,
+    output: {
+      summary: `Scene summary ${chapter.order}.`,
+      continuityFacts: [],
+      characterAppearances: [],
+      keyEvents: [],
+      styleNotes: []
+    },
+    rawText: "{}",
+    status: "COMPLETED",
+    error: null,
+    createdAt: new Date(`2026-05-01T09:00:0${chapter.order}Z`)
+  }));
+
+  return {
+    manuscript: {
+      id: manuscriptId,
+      title: "Capsule Manuscript",
+      targetGenre: "Fantasy",
+      targetAudience: "Adult",
+      sourceFileName: "capsule.txt",
+      originalText: chapters.map((chapter) => chapter.text).join("\n\n"),
+      wordCount: chapterCount * 4,
+      chapterCount,
+      profile: {
+        wordCount: chapterCount * 4,
+        chapterCount,
+        avgChapterWords: 4,
+        dialogueRatio: 0,
+        expositionRatio: 0.4,
+        actionRatio: 0.4,
+        pacingCurve: [],
+        styleFingerprint: {}
+      }
+    },
+    chapters,
+    nodes,
+    artifacts: [...sceneDigests] as Array<Record<string, unknown>>,
+    facts: [] as Array<Record<string, unknown>>,
+    events: [] as Array<Record<string, unknown>>
   };
 }
 
@@ -373,6 +530,112 @@ function createNarrativeMemoryExtractionPatches(
     [prisma.characterState, tx.characterState],
     [prisma.plotEvent, tx.plotEvent],
     [prisma.styleFingerprint, tx.styleFingerprint]
+  ] as Array<[object, Record<string, unknown>]>;
+}
+
+function createChapterCapsulePatches(
+  db: ReturnType<typeof createChapterCapsuleDb>
+) {
+  return [
+    [
+      prisma.manuscript,
+      {
+        findUniqueOrThrow: async () => ({
+          ...db.manuscript,
+          chapters: db.chapters,
+          profile: db.manuscript.profile
+        })
+      }
+    ],
+    [
+      prisma.compilerArtifact,
+      {
+        findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+          db.artifacts.filter((artifact) => matchesWhere(artifact, args.where)),
+        findFirst: async (args: { where?: Record<string, unknown> } = {}) =>
+          db.artifacts.find((artifact) => matchesWhere(artifact, args.where)) ??
+          null,
+        upsert: async (args: {
+          where: {
+            manuscriptId_artifactType_inputHash: {
+              manuscriptId: string;
+              artifactType: string;
+              inputHash: string;
+            };
+          };
+          create: Record<string, unknown>;
+          update: Record<string, unknown>;
+        }) => {
+          const key = args.where.manuscriptId_artifactType_inputHash;
+          const existing = db.artifacts.find(
+            (artifact) =>
+              artifact.manuscriptId === key.manuscriptId &&
+              artifact.artifactType === key.artifactType &&
+              artifact.inputHash === key.inputHash
+          );
+
+          if (existing) {
+            Object.assign(existing, args.update);
+            return existing;
+          }
+
+          const artifact = {
+            id: `artifact-${db.artifacts.length + 1}`,
+            status: "COMPLETED",
+            error: null,
+            createdAt: new Date(),
+            ...args.create
+          };
+          db.artifacts.push(artifact);
+          return artifact;
+        }
+      }
+    ],
+    [
+      prisma.narrativeFact,
+      {
+        findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+          db.facts.filter((fact) => matchesWhere(fact, args.where))
+      }
+    ],
+    [
+      prisma.plotEvent,
+      {
+        findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+          db.events.filter((event) => matchesWhere(event, args.where))
+      }
+    ],
+    [
+      prisma.manuscriptNode,
+      {
+        findFirst: async (args: { where?: Record<string, unknown> } = {}) =>
+          db.nodes.find((node) => matchesWhere(node, args.where)) ?? null,
+        updateMany: async (args: {
+          where?: Record<string, unknown>;
+          data: Record<string, unknown>;
+        }) => {
+          const nodes = db.nodes.filter((node) => matchesWhere(node, args.where));
+          nodes.forEach((node) => Object.assign(node, args.data));
+          return { count: nodes.length };
+        }
+      }
+    ],
+    [
+      prisma.manuscriptChapter,
+      {
+        update: async (args: {
+          where: { id: string };
+          data: Record<string, unknown>;
+        }) => {
+          const chapter = db.chapters.find(
+            (candidate) => candidate.id === args.where.id
+          );
+          assert.ok(chapter);
+          Object.assign(chapter, args.data);
+          return chapter;
+        }
+      }
+    ]
   ] as Array<[object, Record<string, unknown>]>;
 }
 

@@ -60,7 +60,7 @@ import {
 import type { JsonRecord } from "@/lib/types";
 
 const DEFAULT_LOCK_MS = 10 * 60 * 1000;
-const DEFAULT_MAX_ITEMS_PER_STEP = 4;
+const DEFAULT_MAX_ITEMS_PER_STEP = 2;
 
 export type PipelineStartMode = "FULL_PIPELINE" | "RESUME" | "REWRITE_ONLY";
 

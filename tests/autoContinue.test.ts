@@ -10,7 +10,7 @@ import type {
 } from "../lib/pipeline/pipelineJobs";
 
 test("auto-continue loops through multiple batches while work remains", async () => {
-  const calls: Array<{ maxJobs?: number }> = [];
+  const calls: Array<{ maxJobs?: number; maxItemsPerStep?: number }> = [];
   const batches = [
     runReadyResult({
       jobsRun: 2,
@@ -37,7 +37,10 @@ test("auto-continue loops through multiple batches while work remains", async ()
     },
     {
       runReadyJobs: async (options) => {
-        calls.push({ maxJobs: options?.maxJobs });
+        calls.push({
+          maxJobs: options?.maxJobs,
+          maxItemsPerStep: options?.maxItemsPerStep
+        });
         const next = batches.shift();
         assert.ok(next);
         return next;
@@ -54,6 +57,7 @@ test("auto-continue loops through multiple batches while work remains", async ()
   assert.equal(result.batchSummaries.length, 2);
   assert.equal(calls.length, 2);
   assert.equal(calls[0].maxJobs, 3);
+  assert.equal(calls[0].maxItemsPerStep, 2);
 });
 
 test("auto-continue stops on active running lock", async () => {
