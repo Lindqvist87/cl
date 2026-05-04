@@ -130,6 +130,7 @@ Use `/trends` to add public metadata signals. Trend rows are metadata and snippe
 
 ```bash
 DATABASE_URL="<Neon Postgres connection string>"
+DATABASE_URL_UNPOOLED="<Neon direct/unpooled connection string>"
 OPENAI_API_KEY="<OpenAI API key>"
 AUDIT_MODEL="gpt-5.4-mini"
 AUDIT_REASONING_EFFORT="medium"
@@ -142,15 +143,25 @@ INNGEST_EVENT_KEY="<Inngest event key>"
 INNGEST_SIGNING_KEY="<Inngest signing key>"
 ```
 
-3. Run Prisma migrations against Neon during deployment or from a trusted local machine:
+3. Let the Vercel build run Prisma migrations against the target Neon branch:
 
 ```bash
-npx prisma migrate deploy
+npm run build
 ```
 
-`DATABASE_URL_UNPOOLED` is preferred for deployment migrations when set. `SKIP_PRISMA_MIGRATE=1` is a temporary deployment escape hatch only; use it when migrations are intentionally managed outside the Vercel build.
+The repository build command runs `scripts/apply-migrations-if-configured.mjs`, which calls `prisma migrate deploy` before `next build`. `DATABASE_URL_UNPOOLED` is preferred for deployment migrations when set; `DATABASE_URL` remains the runtime fallback. Vercel builds fail before runtime when neither URL is present. `SKIP_PRISMA_MIGRATE=1` is a temporary deployment escape hatch only; use it when migrations are intentionally managed outside the Vercel build.
 
 4. Deploy the Next.js app to Vercel.
+
+PR #34 adds the compiler foundation migration at `prisma/migrations/20260503190000_manuscript_compiler_foundation/migration.sql`. Apply that migration to the Vercel/Neon preview branch before testing the pipeline, otherwise `buildManuscriptNodes` will fail when it writes `ManuscriptNode` rows.
+
+Manual Neon verification:
+
+```sql
+SELECT to_regclass('public."ManuscriptNode"');
+```
+
+The result should be `ManuscriptNode` after the PR #34 migration has been deployed.
 
 ## Durable Background Execution With Inngest
 

@@ -1,19 +1,46 @@
 import { spawnSync } from "node:child_process";
 
-const databaseUrl = process.env.DATABASE_URL;
-const databaseUrlUnpooled = process.env.DATABASE_URL_UNPOOLED;
+const getNonEmptyEnv = (name) => {
+  const value = process.env[name];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+};
+
+const databaseUrl = getNonEmptyEnv("DATABASE_URL");
+const databaseUrlUnpooled = getNonEmptyEnv("DATABASE_URL_UNPOOLED");
 const useUnpooledDatabaseUrl = Boolean(databaseUrlUnpooled);
+const vercelEnv = getNonEmptyEnv("VERCEL_ENV");
+const isVercelBuild = process.env.VERCEL === "1" || Boolean(vercelEnv);
 
 if (process.env.SKIP_PRISMA_MIGRATE === "1") {
   console.log("Skipping Prisma migrations because SKIP_PRISMA_MIGRATE=1.");
   process.exit(0);
 }
 
+if (process.env.SKIP_PRISMA_MIGRATE) {
+  console.log(
+    "Ignoring SKIP_PRISMA_MIGRATE because only SKIP_PRISMA_MIGRATE=1 skips migrations."
+  );
+}
+
 const migrationDatabaseUrl = databaseUrlUnpooled || databaseUrl;
 
 if (!migrationDatabaseUrl) {
+  const missingUrlMessage =
+    "DATABASE_URL and DATABASE_URL_UNPOOLED are not set.";
+
+  if (isVercelBuild) {
+    console.error(
+      [
+        `Prisma migrations cannot run during the Vercel ${vercelEnv ?? "build"} build because ${missingUrlMessage}`,
+        "Set the Neon preview/production DATABASE_URL, or set DATABASE_URL_UNPOOLED for build-time migrations.",
+        "Use SKIP_PRISMA_MIGRATE=1 only when migrations are applied outside this build."
+      ].join("\n")
+    );
+    process.exit(1);
+  }
+
   console.log(
-    "Skipping Prisma migrations because DATABASE_URL and DATABASE_URL_UNPOOLED are not set."
+    `Skipping Prisma migrations because ${missingUrlMessage}`
   );
   process.exit(0);
 }
@@ -45,7 +72,8 @@ try {
     stdio: ["inherit", "pipe", "pipe"],
     env: process.env,
     encoding: "utf8",
-    maxBuffer: 10 * 1024 * 1024
+    maxBuffer: 10 * 1024 * 1024,
+    shell: process.platform === "win32"
   });
 } finally {
   if (useUnpooledDatabaseUrl) {
