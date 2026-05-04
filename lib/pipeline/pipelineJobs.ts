@@ -66,6 +66,7 @@ export type PipelineStartMode = "FULL_PIPELINE" | "RESUME" | "REWRITE_ONLY";
 
 export type RunPipelineJobOptions = {
   workerId?: string;
+  workerType?: "INNGEST" | "VERCEL_CRON" | "MANUAL";
   maxItemsPerStep?: number;
 };
 
@@ -459,10 +460,13 @@ export async function runPipelineJob(
     const result = MANUSCRIPT_PIPELINE_STEPS.includes(
       locked.type as ManuscriptPipelineStep
     )
-      ? await runManuscriptPipelineStepJob(
-          locked,
-          positiveInt(options.maxItemsPerStep, DEFAULT_MAX_ITEMS_PER_STEP)
-        )
+      ? await runManuscriptPipelineStepJob(locked, {
+          maxItemsPerStep: positiveInt(
+            options.maxItemsPerStep,
+            DEFAULT_MAX_ITEMS_PER_STEP
+          ),
+          forceCompilerFallback: shouldForceCompilerFallback(options)
+        })
       : isCorpusPipelineJobType(locked.type)
         ? await runCorpusPipelineStepJob(locked)
       : locked.type === PIPELINE_JOB_TYPES.CHAPTER_REWRITE
@@ -638,7 +642,8 @@ export async function releaseStaleLocks(scopeOrManuscriptId?: string | PipelineJ
 
   for (const job of staleJobs) {
     const hasIncompleteProgress = hasIncompleteStepResult(job.result);
-    const status = hasIncompleteProgress
+    const shouldRequeue = hasIncompleteProgress || isResumableCompilerJob(job);
+    const status = shouldRequeue
       ? PIPELINE_JOB_STATUS.QUEUED
       : nextStatusAfterJobError({
           attempts: job.attempts,
@@ -648,10 +653,10 @@ export async function releaseStaleLocks(scopeOrManuscriptId?: string | PipelineJ
       where: { id: job.id },
       data: {
         status,
-        error: hasIncompleteProgress
+        error: shouldRequeue
           ? null
           : job.error ?? "Job lock expired before completion.",
-        ...(hasIncompleteProgress
+        ...(shouldRequeue
           ? { attempts: attemptsAfterPartialProgress(job) }
           : {}),
         lockedAt: null,
@@ -697,7 +702,10 @@ export async function recordWorkerHeartbeat(
 
 async function runManuscriptPipelineStepJob(
   job: PipelineJob,
-  maxItemsPerStep: number
+  options: {
+    maxItemsPerStep: number;
+    forceCompilerFallback: boolean;
+  }
 ): Promise<RunPipelineJobResult> {
   if (!job.manuscriptId) {
     throw new Error("Pipeline step job is missing manuscriptId.");
@@ -725,7 +733,8 @@ async function runManuscriptPipelineStepJob(
     markStepStarted(checkpoint, step)
   );
   const metadata = await runPipelineStep(step, job.manuscriptId, run.id, {
-    maxItems: maxItemsPerStep
+    maxItems: options.maxItemsPerStep,
+    forceCompilerFallback: options.forceCompilerFallback
   });
 
   if (!isPipelineStepRunComplete(metadata)) {
@@ -1154,6 +1163,17 @@ function attemptsAfterPartialProgress(job: PipelineJob) {
 function hasIncompleteStepResult(result: unknown) {
   const record = toJsonRecord(result);
   return record.complete === false || numberOrZero(record.remaining) > 0;
+}
+
+function isResumableCompilerJob(job: PipelineJob) {
+  return (
+    job.type === "compileWholeBookMap" ||
+    job.type === "createNextBestEditorialActions"
+  );
+}
+
+function shouldForceCompilerFallback(options: RunPipelineJobOptions) {
+  return options.workerType === "MANUAL";
 }
 
 function numberOrZero(value: unknown) {

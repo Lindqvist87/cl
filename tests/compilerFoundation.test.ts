@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import { buildManuscriptNodes } from "../lib/compiler/nodes";
 import {
   compileChapterCapsules,
+  compileWholeBookMap,
+  createNextBestEditorialActions,
   compileSceneDigests,
   extractNarrativeMemory
 } from "../lib/compiler/compiler";
@@ -212,6 +214,139 @@ test("compileChapterCapsules resumes pending chapters in small manual batches", 
   }
 });
 
+test("compileWholeBookMap creates one artifact and reuses current input", async () => {
+  const db = createChapterCapsuleDb(3);
+  const oldVercelEnv = process.env.VERCEL_ENV;
+  const oldInngest = process.env.ENABLE_INNGEST_WORKER;
+  const oldOpenAIKey = process.env.OPENAI_API_KEY;
+  seedChapterCapsules(db);
+  delete process.env.VERCEL_ENV;
+  process.env.ENABLE_INNGEST_WORKER = "true";
+  process.env.OPENAI_API_KEY = "test-openai-key";
+  const requests: Array<Record<string, unknown>> = [];
+  const restoreOpenAI = setOpenAIClientForTest(
+    fakeOpenAIClient(requests, wholeBookMapJson())
+  );
+
+  try {
+    await withPatchedPrisma(createChapterCapsulePatches(db), async () => {
+      const first = await compileWholeBookMap(db.manuscript.id);
+      const second = await compileWholeBookMap(db.manuscript.id);
+      const wholeBookMaps = db.artifacts.filter(
+        (artifact) => artifact.artifactType === "WHOLE_BOOK_MAP"
+      );
+
+      assert.deepEqual(first, {
+        wholeBookMap: true,
+        fallback: false,
+        complete: true
+      });
+      assert.deepEqual(second, { reused: true, complete: true });
+      assert.equal(requests.length, 1);
+      assert.equal(wholeBookMaps.length, 1);
+      assert.equal(wholeBookMaps[0].status, "COMPLETED");
+      assert.equal(wholeBookMaps[0].model, "gpt-5.4");
+    });
+  } finally {
+    restoreOpenAI();
+    restoreEnv("VERCEL_ENV", oldVercelEnv);
+    restoreEnv("ENABLE_INNGEST_WORKER", oldInngest);
+    restoreEnv("OPENAI_API_KEY", oldOpenAIKey);
+  }
+});
+
+test("compileWholeBookMap uses preview fallback without model calls", async () => {
+  const db = createChapterCapsuleDb(2);
+  const oldVercelEnv = process.env.VERCEL_ENV;
+  const oldOpenAIKey = process.env.OPENAI_API_KEY;
+  seedChapterCapsules(db);
+  process.env.VERCEL_ENV = "preview";
+  process.env.OPENAI_API_KEY = "test-openai-key";
+  const requests: Array<Record<string, unknown>> = [];
+  const restoreOpenAI = setOpenAIClientForTest(
+    fakeOpenAIClient(requests, wholeBookMapJson())
+  );
+
+  try {
+    await withPatchedPrisma(createChapterCapsulePatches(db), async () => {
+      const result = await compileWholeBookMap(db.manuscript.id);
+      const second = await compileWholeBookMap(db.manuscript.id);
+      const wholeBookMaps = db.artifacts.filter(
+        (artifact) => artifact.artifactType === "WHOLE_BOOK_MAP"
+      );
+
+      assert.deepEqual(result, {
+        wholeBookMap: true,
+        fallback: true,
+        complete: true
+      });
+      assert.deepEqual(second, { reused: true, complete: true });
+      assert.equal(requests.length, 0);
+      assert.equal(wholeBookMaps.length, 1);
+      assert.equal(wholeBookMaps[0].model, "stub");
+    });
+  } finally {
+    restoreOpenAI();
+    restoreEnv("VERCEL_ENV", oldVercelEnv);
+    restoreEnv("OPENAI_API_KEY", oldOpenAIKey);
+  }
+});
+
+test("createNextBestEditorialActions uses preview fallback and reuses output", async () => {
+  const db = createChapterCapsuleDb(2);
+  const oldVercelEnv = process.env.VERCEL_ENV;
+  const oldOpenAIKey = process.env.OPENAI_API_KEY;
+  seedChapterCapsules(db);
+  db.artifacts.push({
+    id: "whole-book-map-1",
+    manuscriptId: db.manuscript.id,
+    nodeId: "book-node",
+    chapterId: null,
+    sceneId: null,
+    artifactType: "WHOLE_BOOK_MAP",
+    model: "stub",
+    reasoningEffort: "none",
+    promptVersion: "compiler-v1",
+    inputHash: "whole-book-map-hash",
+    output: wholeBookMapJson(),
+    rawText: "{}",
+    status: "COMPLETED",
+    error: null,
+    createdAt: new Date("2026-05-01T11:00:00Z")
+  });
+  process.env.VERCEL_ENV = "preview";
+  process.env.OPENAI_API_KEY = "test-openai-key";
+  const requests: Array<Record<string, unknown>> = [];
+  const restoreOpenAI = setOpenAIClientForTest(
+    fakeOpenAIClient(requests, { actions: [] })
+  );
+
+  try {
+    await withPatchedPrisma(createChapterCapsulePatches(db), async () => {
+      const first = await createNextBestEditorialActions(db.manuscript.id);
+      const second = await createNextBestEditorialActions(db.manuscript.id);
+      const actions = db.artifacts.filter(
+        (artifact) => artifact.artifactType === "NEXT_BEST_ACTIONS"
+      );
+
+      assert.deepEqual(first, {
+        actionCount: 1,
+        fallback: true,
+        complete: true
+      });
+      assert.deepEqual(second, { reused: true, complete: true });
+      assert.equal(requests.length, 0);
+      assert.equal(actions.length, 1);
+      assert.equal(actions[0].model, "stub");
+      assert.equal(db.decisions.length, 1);
+    });
+  } finally {
+    restoreOpenAI();
+    restoreEnv("VERCEL_ENV", oldVercelEnv);
+    restoreEnv("OPENAI_API_KEY", oldOpenAIKey);
+  }
+});
+
 function createCompilerDb() {
   const chapter = {
     id: "chapter-1",
@@ -388,8 +523,37 @@ function createChapterCapsuleDb(chapterCount: number) {
     nodes,
     artifacts: [...sceneDigests] as Array<Record<string, unknown>>,
     facts: [] as Array<Record<string, unknown>>,
-    events: [] as Array<Record<string, unknown>>
+    events: [] as Array<Record<string, unknown>>,
+    findings: [] as Array<Record<string, unknown>>,
+    decisions: [] as Array<Record<string, unknown>>
   };
+}
+
+function seedChapterCapsules(db: ReturnType<typeof createChapterCapsuleDb>) {
+  db.artifacts.push(
+    ...db.chapters.map((chapter) => ({
+      id: `chapter-capsule-${chapter.order}`,
+      manuscriptId: db.manuscript.id,
+      nodeId: `chapter-node-${chapter.order}`,
+      chapterId: chapter.id,
+      sceneId: null,
+      artifactType: "CHAPTER_CAPSULE",
+      model: "stub",
+      reasoningEffort: "none",
+      promptVersion: "compiler-v1",
+      inputHash: `chapter-capsule-hash-${chapter.order}`,
+      output: {
+        chapterSummary: `Chapter ${chapter.order} summary.`,
+        chapterFunction: "Moves the manuscript forward.",
+        continuityRisks: [],
+        suggestedEditorialFocus: []
+      },
+      rawText: "{}",
+      status: "COMPLETED",
+      error: null,
+      createdAt: new Date(`2026-05-01T10:00:0${chapter.order}Z`)
+    }))
+  );
 }
 
 function createNodePatches(db: ReturnType<typeof createCompilerDb>) {
@@ -606,6 +770,28 @@ function createChapterCapsulePatches(
       }
     ],
     [
+      prisma.finding,
+      {
+        findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+          db.findings.filter((finding) => matchesWhere(finding, args.where))
+      }
+    ],
+    [
+      prisma.rewritePlan,
+      {
+        findFirst: async () => null
+      }
+    ],
+    [
+      prisma.editorialDecision,
+      {
+        createMany: async (args: { data: Array<Record<string, unknown>> }) => {
+          db.decisions.push(...args.data);
+          return { count: args.data.length };
+        }
+      }
+    ],
+    [
       prisma.manuscriptNode,
       {
         findFirst: async (args: { where?: Record<string, unknown> } = {}) =>
@@ -739,6 +925,25 @@ function fakeOpenAIClient(
   } as unknown as OpenAIClient;
 }
 
+function wholeBookMapJson() {
+  return {
+    bookPremise: "A compact whole-book premise.",
+    whatTheBookIsTryingToBe: "A complete editorial map.",
+    structureMap: {},
+    mainArc: {},
+    characterArcs: {},
+    themeMap: {},
+    pacingCurve: {},
+    continuityRiskMap: {},
+    topStructuralIssues: [],
+    topVoiceRisks: [],
+    topCommercialRisks: [],
+    revisionStrategy: "Proceed to next editorial actions.",
+    confidence: 0.7,
+    uncertainties: []
+  };
+}
+
 async function withPatchedPrisma<T>(
   patches: Array<[object, Record<string, unknown>]>,
   callback: () => Promise<T>
@@ -774,6 +979,14 @@ async function withPatchedPrisma<T>(
         delete (original.target as Record<string, unknown>)[original.key];
       }
     }
+  }
+}
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
   }
 }
 

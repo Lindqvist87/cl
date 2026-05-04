@@ -15,6 +15,7 @@ const PROMPT_VERSION = "compiler-v1";
 
 type StepOptions = {
   maxItems?: number;
+  forceCompilerFallback?: boolean;
 };
 
 type CompilerResult<T> = {
@@ -405,7 +406,10 @@ export async function compileChapterCapsules(
   };
 }
 
-export async function compileWholeBookMap(manuscriptId: string) {
+export async function compileWholeBookMap(
+  manuscriptId: string,
+  options: StepOptions = {}
+) {
   const manuscript = await prisma.manuscript.findUniqueOrThrow({
     where: { id: manuscriptId },
     include: { profile: true }
@@ -423,7 +427,9 @@ export async function compileWholeBookMap(manuscriptId: string) {
     take: 120
   });
   const inputPackage = {
+    promptVersion: PROMPT_VERSION,
     manuscript: {
+      id: manuscript.id,
       title: manuscript.title,
       targetGenre: manuscript.targetGenre,
       targetAudience: manuscript.targetAudience,
@@ -437,49 +443,57 @@ export async function compileWholeBookMap(manuscriptId: string) {
   };
   const inputHash = hashJson(inputPackage);
   const existing = await prisma.compilerArtifact.findFirst({
-    where: { manuscriptId, artifactType: "WHOLE_BOOK_MAP", inputHash }
+    where: {
+      manuscriptId,
+      artifactType: "WHOLE_BOOK_MAP",
+      inputHash,
+      status: "COMPLETED"
+    }
   });
 
   if (existing) {
-    return { reused: true };
+    return { reused: true, complete: true };
   }
 
   const node = await prisma.manuscriptNode.findFirst({
     where: { manuscriptId, type: "BOOK" }
   });
-  const result = await requestCompilerJson<WholeBookMap>({
-    role: "wholeBookCompiler",
-    stub: () => stubWholeBookMap(inputPackage),
-    system: [
-      "You compile a whole-book manuscript map from durable memory artifacts.",
-      "Return strict JSON only.",
-      "Do not ask for or assume raw full-manuscript text."
-    ].join(" "),
-    user: JSON.stringify(
-      {
-        task: "Compile the whole-book map.",
-        requiredShape: {
-          bookPremise: "premise",
-          whatTheBookIsTryingToBe: "editorial identity",
-          structureMap: "JSON map",
-          mainArc: "main arc",
-          characterArcs: "JSON map",
-          themeMap: "JSON map",
-          pacingCurve: "JSON curve",
-          continuityRiskMap: "JSON map",
-          topStructuralIssues: ["issues"],
-          topVoiceRisks: ["risks"],
-          topCommercialRisks: ["risks"],
-          revisionStrategy: "strategy",
-          confidence: "0-1",
-          uncertainties: ["uncertainties"]
-        },
-        context: inputPackage
-      },
-      null,
-      2
-    )
-  });
+  const fallback = shouldUseCompilerFallback(options);
+  const result = fallback
+    ? stubCompilerResult(stubWholeBookMap(inputPackage))
+    : await requestCompilerJson<WholeBookMap>({
+        role: "wholeBookCompiler",
+        stub: () => stubWholeBookMap(inputPackage),
+        system: [
+          "You compile a whole-book manuscript map from durable memory artifacts.",
+          "Return strict JSON only.",
+          "Do not ask for or assume raw full-manuscript text."
+        ].join(" "),
+        user: JSON.stringify(
+          {
+            task: "Compile the whole-book map.",
+            requiredShape: {
+              bookPremise: "premise",
+              whatTheBookIsTryingToBe: "editorial identity",
+              structureMap: "JSON map",
+              mainArc: "main arc",
+              characterArcs: "JSON map",
+              themeMap: "JSON map",
+              pacingCurve: "JSON curve",
+              continuityRiskMap: "JSON map",
+              topStructuralIssues: ["issues"],
+              topVoiceRisks: ["risks"],
+              topCommercialRisks: ["risks"],
+              revisionStrategy: "strategy",
+              confidence: "0-1",
+              uncertainties: ["uncertainties"]
+            },
+            context: inputPackage
+          },
+          null,
+          2
+        )
+      });
 
   await saveCompilerArtifact({
     manuscriptId,
@@ -503,18 +517,29 @@ export async function compileWholeBookMap(manuscriptId: string) {
     }
   });
 
-  return { wholeBookMap: true };
+  return { wholeBookMap: true, fallback, complete: true };
 }
 
-export async function createNextBestEditorialActions(manuscriptId: string) {
+export async function createNextBestEditorialActions(
+  manuscriptId: string,
+  options: StepOptions = {}
+) {
   const [wholeBookMap, chapterCapsules, findings, rewritePlan] =
     await Promise.all([
       prisma.compilerArtifact.findFirst({
-        where: { manuscriptId, artifactType: "WHOLE_BOOK_MAP" },
+        where: {
+          manuscriptId,
+          artifactType: "WHOLE_BOOK_MAP",
+          status: "COMPLETED"
+        },
         orderBy: { createdAt: "desc" }
       }),
       prisma.compilerArtifact.findMany({
-        where: { manuscriptId, artifactType: "CHAPTER_CAPSULE" },
+        where: {
+          manuscriptId,
+          artifactType: "CHAPTER_CAPSULE",
+          status: "COMPLETED"
+        },
         orderBy: { createdAt: "asc" }
       }),
       prisma.finding.findMany({
@@ -548,44 +573,52 @@ export async function createNextBestEditorialActions(manuscriptId: string) {
   };
   const inputHash = hashJson(inputPackage);
   const existing = await prisma.compilerArtifact.findFirst({
-    where: { manuscriptId, artifactType: "NEXT_BEST_ACTIONS", inputHash }
+    where: {
+      manuscriptId,
+      artifactType: "NEXT_BEST_ACTIONS",
+      inputHash,
+      status: "COMPLETED"
+    }
   });
 
   if (existing) {
-    return { reused: true };
+    return { reused: true, complete: true };
   }
 
-  const result = await requestCompilerJson<NextBestActions>({
-    role: "chiefEditor",
-    stub: () => stubNextBestActions(inputPackage),
-    system: [
-      "You are the chief editor choosing next best editorial actions.",
-      "Return strict JSON only.",
-      "Base actions on compiler memory and findings. Do not generate chapter rewrites."
-    ].join(" "),
-    user: JSON.stringify(
-      {
-        task: "Create prioritized next best editorial actions.",
-        requiredShape: {
-          actions: [
-            {
-              title: "action title",
-              reason: "why this matters",
-              scope: "manuscript | chapter | scene",
-              chapterId: "optional chapter id",
-              priority: "1-5",
-              impactOnWhole: "whole-book impact",
-              riskIfIgnored: "risk",
-              suggestedNextStep: "specific next step"
-            }
-          ]
-        },
-        context: inputPackage
-      },
-      null,
-      2
-    )
-  });
+  const fallback = shouldUseCompilerFallback(options);
+  const result = fallback
+    ? stubCompilerResult(stubNextBestActions(inputPackage))
+    : await requestCompilerJson<NextBestActions>({
+        role: "chiefEditor",
+        stub: () => stubNextBestActions(inputPackage),
+        system: [
+          "You are the chief editor choosing next best editorial actions.",
+          "Return strict JSON only.",
+          "Base actions on compiler memory and findings. Do not generate chapter rewrites."
+        ].join(" "),
+        user: JSON.stringify(
+          {
+            task: "Create prioritized next best editorial actions.",
+            requiredShape: {
+              actions: [
+                {
+                  title: "action title",
+                  reason: "why this matters",
+                  scope: "manuscript | chapter | scene",
+                  chapterId: "optional chapter id",
+                  priority: "1-5",
+                  impactOnWhole: "whole-book impact",
+                  riskIfIgnored: "risk",
+                  suggestedNextStep: "specific next step"
+                }
+              ]
+            },
+            context: inputPackage
+          },
+          null,
+          2
+        )
+      });
 
   await saveCompilerArtifact({
     manuscriptId,
@@ -595,7 +628,11 @@ export async function createNextBestEditorialActions(manuscriptId: string) {
   });
   await createEditorialDecisionsFromActions(manuscriptId, result.json.actions ?? []);
 
-  return { actionCount: result.json.actions?.length ?? 0 };
+  return {
+    actionCount: result.json.actions?.length ?? 0,
+    fallback,
+    complete: true
+  };
 }
 
 async function requestCompilerJson<T extends JsonRecord>(input: {
@@ -628,6 +665,23 @@ async function requestCompilerJson<T extends JsonRecord>(input: {
     model: result.model,
     reasoningEffort: roleConfig.reasoningEffort
   };
+}
+
+function stubCompilerResult<T extends JsonRecord>(json: T): CompilerResult<T> {
+  return {
+    json,
+    rawText: JSON.stringify(json),
+    model: "stub",
+    reasoningEffort: "none"
+  };
+}
+
+function shouldUseCompilerFallback(options: StepOptions = {}) {
+  return (
+    options.forceCompilerFallback === true ||
+    process.env.VERCEL_ENV === "preview" ||
+    process.env.ENABLE_INNGEST_WORKER === "false"
+  );
 }
 
 async function saveCompilerArtifact(input: {

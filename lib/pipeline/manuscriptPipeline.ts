@@ -74,6 +74,7 @@ import type {
 
 export type PipelineStepRunOptions = {
   maxItems?: number;
+  forceCompilerFallback?: boolean;
 };
 
 export type PipelineStepRunResult = Record<string, unknown> & {
@@ -271,9 +272,9 @@ export async function runPipelineStep(
     case "compileChapterCapsules":
       return compileChapterCapsules(manuscriptId, options);
     case "compileWholeBookMap":
-      return compileWholeBookMap(manuscriptId);
+      return compileWholeBookMap(manuscriptId, options);
     case "createNextBestEditorialActions":
-      return createNextBestEditorialActions(manuscriptId);
+      return createNextBestEditorialActions(manuscriptId, options);
     case "runChapterAudits":
       return runChapterAudits(manuscriptId, runId, options);
     case "runWholeBookAudit":
