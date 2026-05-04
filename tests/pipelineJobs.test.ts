@@ -599,6 +599,103 @@ test("repeated summarizeChunks partial runs finish and unblock summarizeChapters
   }
 });
 
+test("repeated extractNarrativeMemory partial runs finish and unblock compileChapterCapsules", async () => {
+  const manuscriptId = "manuscript-narrative-memory-partial";
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks",
+      "createEmbeddingsForChunks",
+      "summarizeChunks",
+      "summarizeChapters",
+      "createManuscriptProfile",
+      "buildManuscriptNodes",
+      "compileSceneDigests"
+    ],
+    currentStep: "extractNarrativeMemory"
+  });
+  const extractJob = mutableJob("extract-memory-job", {
+    manuscriptId,
+    type: "extractNarrativeMemory",
+    status: PIPELINE_JOB_STATUS.QUEUED,
+    idempotencyKey: "extract-memory-job",
+    maxAttempts: 3
+  });
+  const capsuleJob = mutableJob("chapter-capsules-job", {
+    manuscriptId,
+    type: "compileChapterCapsules",
+    status: PIPELINE_JOB_STATUS.BLOCKED,
+    idempotencyKey: "chapter-capsules-job",
+    dependencyIds: [extractJob.id],
+    maxAttempts: 3
+  });
+  const jobs = [extractJob, capsuleJob];
+  const artifacts = sceneDigestArtifactFixtures(manuscriptId, 6);
+  const memory = {
+    facts: [] as Array<Record<string, unknown>>,
+    characters: [] as Array<Record<string, unknown>>,
+    events: [] as Array<Record<string, unknown>>,
+    styles: [] as Array<Record<string, unknown>>
+  };
+
+  await withPatchedPrisma(
+    narrativeMemoryJobPatches({ manuscriptId, run, jobs, artifacts, memory }),
+    async () => {
+      const first = await runPipelineJob(extractJob.id, {
+        maxItemsPerStep: 4,
+        workerId: "test:extract-1"
+      });
+
+      assert.equal(first.status, "queued");
+      assert.deepEqual(extractJob.result, {
+        refreshed: 4,
+        total: 6,
+        remaining: 2,
+        complete: false
+      });
+      assert.deepEqual(first.readyJobIds, [extractJob.id]);
+      assert.equal(capsuleJob.status, PIPELINE_JOB_STATUS.BLOCKED);
+
+      const second = await runPipelineJob(extractJob.id, {
+        maxItemsPerStep: 4,
+        workerId: "test:extract-2"
+      });
+
+      assert.equal(second.status, "completed");
+      assert.deepEqual(extractJob.result, {
+        refreshed: 2,
+        total: 6,
+        remaining: 0,
+        complete: true
+      });
+      assert.equal(extractJob.status, PIPELINE_JOB_STATUS.COMPLETED);
+      assert.equal(capsuleJob.status, PIPELINE_JOB_STATUS.QUEUED);
+      assert.deepEqual(second.readyJobIds, [capsuleJob.id]);
+      assert.deepEqual(
+        memory.facts.map((fact) => recordValue(fact.metadata)?.sourceArtifactId),
+        [
+          "scene-digest-artifact-1",
+          "scene-digest-artifact-2",
+          "scene-digest-artifact-3",
+          "scene-digest-artifact-4",
+          "scene-digest-artifact-5",
+          "scene-digest-artifact-6"
+        ]
+      );
+
+      const checkpoint = normalizeCheckpoint(run.checkpoint);
+      assert.equal(isStepComplete(checkpoint, "extractNarrativeMemory"), true);
+      assert.equal(checkpoint.currentStep ?? undefined, undefined);
+      assert.equal(
+        (checkpoint.stepMetadata?.extractNarrativeMemory as Record<string, unknown>)
+          .remaining,
+        0
+      );
+    }
+  );
+});
+
 test("job.created can run one eligible job", () => {
   assert.equal(
     canAttemptJob({
@@ -909,6 +1006,133 @@ function manuscriptRunnerPatches(input: {
   ];
 }
 
+function narrativeMemoryJobPatches(input: {
+  manuscriptId: string;
+  run: MutableRun;
+  jobs: MutableJob[];
+  artifacts: Array<Record<string, unknown>>;
+  memory: {
+    facts: Array<Record<string, unknown>>;
+    characters: Array<Record<string, unknown>>;
+    events: Array<Record<string, unknown>>;
+    styles: Array<Record<string, unknown>>;
+  };
+}): Array<[object, Record<string, unknown>]> {
+  const tx = narrativeMemoryTransaction(input.memory);
+
+  return [
+    ...manuscriptRunnerPatches({
+      manuscriptId: input.manuscriptId,
+      run: input.run,
+      jobs: input.jobs
+    }),
+    [
+      prisma,
+      {
+        $transaction: async (
+          callback: (transactionClient: typeof tx) => Promise<unknown>
+        ) => callback(tx)
+      }
+    ],
+    [
+      prisma.compilerArtifact,
+      {
+        findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+          input.artifacts.filter((artifact) => matchesWhere(artifact, args.where))
+      }
+    ],
+    [prisma.narrativeFact, tx.narrativeFact],
+    [prisma.characterState, tx.characterState],
+    [prisma.plotEvent, tx.plotEvent],
+    [prisma.styleFingerprint, tx.styleFingerprint]
+  ];
+}
+
+function narrativeMemoryTransaction(memory: {
+  facts: Array<Record<string, unknown>>;
+  characters: Array<Record<string, unknown>>;
+  events: Array<Record<string, unknown>>;
+  styles: Array<Record<string, unknown>>;
+}) {
+  return {
+    narrativeFact: narrativeMemoryDelegate(memory.facts),
+    characterState: narrativeMemoryDelegate(memory.characters),
+    plotEvent: narrativeMemoryDelegate(memory.events),
+    styleFingerprint: narrativeStyleFingerprintDelegate(memory.styles)
+  };
+}
+
+function narrativeMemoryDelegate(rows: Array<Record<string, unknown>>) {
+  return {
+    findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+      rows.filter((row) => matchesWhere(row, args.where)),
+    deleteMany: async (args: { where?: Record<string, unknown> } = {}) => {
+      const before = rows.length;
+      const remaining = rows.filter((row) => !matchesWhere(row, args.where));
+      rows.splice(0, rows.length, ...remaining);
+      return { count: before - rows.length };
+    },
+    createMany: async (args: { data: Array<Record<string, unknown>> }) => {
+      rows.push(
+        ...args.data.map((row, index) => ({
+          id: `memory-${rows.length + index + 1}`,
+          ...row
+        }))
+      );
+      return { count: args.data.length };
+    }
+  };
+}
+
+function narrativeStyleFingerprintDelegate(rows: Array<Record<string, unknown>>) {
+  return {
+    findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+      rows.filter((row) => matchesWhere(row, args.where)),
+    deleteMany: async (args: { where?: Record<string, unknown> } = {}) => {
+      const before = rows.length;
+      const remaining = rows.filter((row) => !matchesWhere(row, args.where));
+      rows.splice(0, rows.length, ...remaining);
+      return { count: before - rows.length };
+    },
+    create: async (args: { data: Record<string, unknown> }) => {
+      const row = { id: `style-${rows.length + 1}`, ...args.data };
+      rows.push(row);
+      return row;
+    }
+  };
+}
+
+function sceneDigestArtifactFixtures(manuscriptId: string, count: number) {
+  return Array.from({ length: count }, (_, index) => {
+    const item = index + 1;
+
+    return {
+      id: `scene-digest-artifact-${item}`,
+      manuscriptId,
+      nodeId: `scene-node-${item}`,
+      chapterId: "chapter-1",
+      sceneId: `scene-${item}`,
+      artifactType: "SCENE_DIGEST",
+      model: "stub",
+      reasoningEffort: "none",
+      promptVersion: "compiler-v1",
+      inputHash: `scene-digest-${item}`,
+      output: {
+        summary: `Scene ${item} summary.`,
+        continuityFacts: [{ factText: `Fact ${item}.` }],
+        characterAppearances: [],
+        keyEvents: [],
+        styleNotes: ["Direct prose"],
+        mustNotForget: []
+      },
+      rawText: "{}",
+      status: "COMPLETED",
+      error: null,
+      createdAt: new Date(`2026-05-01T08:00:0${item}Z`)
+    };
+  });
+}
+
 function summarizeChunksPatches(input: {
   manuscriptId: string;
   run: MutableRun;
@@ -1145,6 +1369,62 @@ function filterJobs(jobs: MutableJob[], where: Record<string, unknown> = {}) {
 
     return true;
   });
+}
+
+function matchesWhere(item: Record<string, unknown>, where: Record<string, unknown> = {}) {
+  if (!where) {
+    return true;
+  }
+
+  const or = Array.isArray(where.OR) ? where.OR : [];
+  if (or.length > 0 && !or.some((part) => matchesWhere(item, recordValue(part) ?? {}))) {
+    return false;
+  }
+
+  for (const [key, expected] of Object.entries(where)) {
+    if (key === "OR") {
+      continue;
+    }
+    if (!matchesField(item[key], expected)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function matchesField(actual: unknown, expected: unknown): boolean {
+  if (expected === null || typeof expected !== "object" || expected instanceof Date) {
+    return actual === expected;
+  }
+
+  const record = recordValue(expected);
+  if (!record) {
+    return actual === expected;
+  }
+
+  if (Array.isArray(record.in)) {
+    return record.in.includes(actual);
+  }
+
+  if (record.path && record.equals !== undefined) {
+    return nestedValue(actual, record.path) === record.equals;
+  }
+
+  return Object.entries(record).every(([key, value]) =>
+    matchesField(recordValue(actual)?.[key], value)
+  );
+}
+
+function nestedValue(value: unknown, path: unknown) {
+  if (!Array.isArray(path)) {
+    return undefined;
+  }
+
+  return path.reduce<unknown>((current, segment) => {
+    const record = recordValue(current);
+    return record ? record[String(segment)] : undefined;
+  }, value);
 }
 
 async function withPatchedPrisma<T>(

@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildManuscriptNodes } from "../lib/compiler/nodes";
-import { compileSceneDigests } from "../lib/compiler/compiler";
+import {
+  compileSceneDigests,
+  extractNarrativeMemory
+} from "../lib/compiler/compiler";
 import { prisma } from "../lib/prisma";
 import {
   setOpenAIClientForTest,
@@ -74,6 +77,63 @@ test("compileSceneDigests saves artifact and durable memory rows", async () => {
   } finally {
     restoreOpenAI();
   }
+});
+
+test("extractNarrativeMemory resumes pending scene digests across manual batches", async () => {
+  const db = createCompilerDb();
+  db.artifacts.push(...sceneDigestArtifacts(db.manuscript.id, 6));
+
+  await withPatchedPrisma(createNarrativeMemoryExtractionPatches(db), async () => {
+    const first = await extractNarrativeMemory(db.manuscript.id, { maxItems: 4 });
+    const second = await extractNarrativeMemory(db.manuscript.id, { maxItems: 4 });
+    const third = await extractNarrativeMemory(db.manuscript.id, { maxItems: 4 });
+
+    assert.deepEqual(first, {
+      refreshed: 4,
+      total: 6,
+      remaining: 2,
+      complete: false
+    });
+    assert.deepEqual(second, {
+      refreshed: 2,
+      total: 6,
+      remaining: 0,
+      complete: true
+    });
+    assert.deepEqual(third, {
+      refreshed: 0,
+      total: 6,
+      remaining: 0,
+      complete: true
+    });
+    assert.deepEqual(
+      db.facts.map((fact) => recordValue(fact.metadata)?.sourceArtifactId),
+      [
+        "artifact-1",
+        "artifact-2",
+        "artifact-3",
+        "artifact-4",
+        "artifact-5",
+        "artifact-6"
+      ]
+    );
+    assert.equal(db.styles.length, 6);
+  });
+});
+
+test("extractNarrativeMemory completes when there are no scene digests", async () => {
+  const db = createCompilerDb();
+
+  await withPatchedPrisma(createNarrativeMemoryExtractionPatches(db), async () => {
+    const result = await extractNarrativeMemory(db.manuscript.id, { maxItems: 4 });
+
+    assert.deepEqual(result, {
+      refreshed: 0,
+      total: 0,
+      remaining: 0,
+      complete: true
+    });
+  });
 });
 
 function createCompilerDb() {
@@ -210,22 +270,7 @@ function createNodePatches(db: ReturnType<typeof createCompilerDb>) {
 }
 
 function createSceneDigestPatches(db: ReturnType<typeof createCompilerDb>) {
-  const tx = {
-    narrativeFact: memoryDelegate(db.facts),
-    characterState: memoryDelegate(db.characters),
-    plotEvent: memoryDelegate(db.events),
-    styleFingerprint: {
-      deleteMany: async () => {
-        db.styles = [];
-        return { count: 0 };
-      },
-      create: async (args: { data: Record<string, unknown> }) => {
-        const row = { id: `style-${db.styles.length + 1}`, ...args.data };
-        db.styles.push(row);
-        return row;
-      }
-    }
-  };
+  const tx = memoryTransaction(db);
 
   return [
     [
@@ -303,11 +348,52 @@ function createSceneDigestPatches(db: ReturnType<typeof createCompilerDb>) {
   ] as Array<[object, Record<string, unknown>]>;
 }
 
+function createNarrativeMemoryExtractionPatches(
+  db: ReturnType<typeof createCompilerDb>
+) {
+  const tx = memoryTransaction(db);
+
+  return [
+    [
+      prisma,
+      {
+        $transaction: async (
+          callback: (transactionClient: typeof tx) => Promise<unknown>
+        ) => callback(tx)
+      }
+    ],
+    [
+      prisma.compilerArtifact,
+      {
+        findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+          db.artifacts.filter((artifact) => matchesWhere(artifact, args.where))
+      }
+    ],
+    [prisma.narrativeFact, tx.narrativeFact],
+    [prisma.characterState, tx.characterState],
+    [prisma.plotEvent, tx.plotEvent],
+    [prisma.styleFingerprint, tx.styleFingerprint]
+  ] as Array<[object, Record<string, unknown>]>;
+}
+
+function memoryTransaction(db: ReturnType<typeof createCompilerDb>) {
+  return {
+    narrativeFact: memoryDelegate(db.facts),
+    characterState: memoryDelegate(db.characters),
+    plotEvent: memoryDelegate(db.events),
+    styleFingerprint: styleFingerprintDelegate(db)
+  };
+}
+
 function memoryDelegate(rows: Array<Record<string, unknown>>) {
   return {
-    deleteMany: async () => {
-      rows.splice(0, rows.length);
-      return { count: 0 };
+    findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+      rows.filter((row) => matchesWhere(row, args.where)),
+    deleteMany: async (args: { where?: Record<string, unknown> } = {}) => {
+      const before = rows.length;
+      const remaining = rows.filter((row) => !matchesWhere(row, args.where));
+      rows.splice(0, rows.length, ...remaining);
+      return { count: before - rows.length };
     },
     createMany: async (args: { data: Array<Record<string, unknown>> }) => {
       rows.push(
@@ -319,6 +405,54 @@ function memoryDelegate(rows: Array<Record<string, unknown>>) {
       return { count: args.data.length };
     }
   };
+}
+
+function styleFingerprintDelegate(db: ReturnType<typeof createCompilerDb>) {
+  return {
+    findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+      db.styles.filter((style) => matchesWhere(style, args.where)),
+    deleteMany: async (args: { where?: Record<string, unknown> } = {}) => {
+      const before = db.styles.length;
+      db.styles = db.styles.filter((style) => !matchesWhere(style, args.where));
+      return { count: before - db.styles.length };
+    },
+    create: async (args: { data: Record<string, unknown> }) => {
+      const row = { id: `style-${db.styles.length + 1}`, ...args.data };
+      db.styles.push(row);
+      return row;
+    }
+  };
+}
+
+function sceneDigestArtifacts(manuscriptId: string, count: number) {
+  return Array.from({ length: count }, (_, index) => {
+    const item = index + 1;
+
+    return {
+      id: `artifact-${item}`,
+      manuscriptId,
+      nodeId: `scene-node-${item}`,
+      chapterId: "chapter-1",
+      sceneId: `scene-${item}`,
+      artifactType: "SCENE_DIGEST",
+      model: "stub",
+      reasoningEffort: "none",
+      promptVersion: "compiler-v1",
+      inputHash: `scene-digest-${item}`,
+      output: {
+        summary: `Scene ${item} summary.`,
+        continuityFacts: [{ factText: `Fact ${item}.` }],
+        characterAppearances: [],
+        keyEvents: [],
+        styleNotes: ["Direct prose"],
+        mustNotForget: []
+      },
+      rawText: "{}",
+      status: "COMPLETED",
+      error: null,
+      createdAt: new Date(`2026-05-01T08:00:0${item}Z`)
+    };
+  });
 }
 
 function fakeOpenAIClient(
@@ -378,4 +512,66 @@ async function withPatchedPrisma<T>(
       }
     }
   }
+}
+
+function matchesWhere(item: Record<string, unknown>, where: Record<string, unknown> = {}) {
+  if (!where) {
+    return true;
+  }
+
+  const or = Array.isArray(where.OR) ? where.OR : [];
+  if (or.length > 0 && !or.some((part) => matchesWhere(item, recordValue(part) ?? {}))) {
+    return false;
+  }
+
+  for (const [key, expected] of Object.entries(where)) {
+    if (key === "OR") {
+      continue;
+    }
+    if (!matchesField(item[key], expected)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function matchesField(actual: unknown, expected: unknown): boolean {
+  if (expected === null || typeof expected !== "object" || expected instanceof Date) {
+    return actual === expected;
+  }
+
+  const record = recordValue(expected);
+  if (!record) {
+    return actual === expected;
+  }
+
+  if (Array.isArray(record.in)) {
+    return record.in.includes(actual);
+  }
+
+  if (record.path && record.equals !== undefined) {
+    return nestedValue(actual, record.path) === record.equals;
+  }
+
+  return Object.entries(record).every(([key, value]) =>
+    matchesField(recordValue(actual)?.[key], value)
+  );
+}
+
+function nestedValue(value: unknown, path: unknown) {
+  if (!Array.isArray(path)) {
+    return undefined;
+  }
+
+  return path.reduce<unknown>((current, segment) => {
+    const record = recordValue(current);
+    return record ? record[String(segment)] : undefined;
+  }, value);
+}
+
+function recordValue(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }

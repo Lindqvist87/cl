@@ -222,14 +222,21 @@ export async function extractNarrativeMemory(
     where: { manuscriptId, artifactType: "SCENE_DIGEST", status: "COMPLETED" },
     orderBy: { createdAt: "asc" }
   });
-  const maxItems = normalizeMaxItems(options.maxItems, artifacts.length);
+  const refreshedArtifactIds = await refreshedSceneDigestArtifactIds(
+    manuscriptId,
+    artifacts
+  );
+  type SceneDigestArtifact = (typeof artifacts)[number];
+  const pending = artifacts.filter(
+    (artifact): artifact is SceneDigestArtifact & { sceneId: string } =>
+      typeof artifact.sceneId === "string" &&
+      artifact.sceneId.length > 0 &&
+      !refreshedArtifactIds.has(artifact.id)
+  );
+  const maxItems = normalizeMaxItems(options.maxItems, pending.length);
   let refreshed = 0;
 
-  for (const artifact of artifacts.slice(0, maxItems)) {
-    if (!artifact.sceneId) {
-      continue;
-    }
-
+  for (const artifact of pending.slice(0, maxItems)) {
     await saveSceneMemoryFromDigest({
       manuscriptId,
       nodeId: artifact.nodeId,
@@ -241,7 +248,7 @@ export async function extractNarrativeMemory(
     refreshed += 1;
   }
 
-  const remaining = Math.max(artifacts.length - refreshed, 0);
+  const remaining = Math.max(pending.length - refreshed, 0);
   return {
     refreshed,
     total: artifacts.length,
@@ -777,6 +784,67 @@ async function saveSceneMemoryFromDigest(input: {
       }
     });
   });
+}
+
+async function refreshedSceneDigestArtifactIds(
+  manuscriptId: string,
+  artifacts: Array<{ id: string; sceneId?: string | null }>
+) {
+  const artifactsWithScenes = artifacts.filter(
+    (artifact): artifact is { id: string; sceneId: string } =>
+      typeof artifact.sceneId === "string" && artifact.sceneId.length > 0
+  );
+  const validArtifactIds = new Set(
+    artifactsWithScenes.map((artifact) => artifact.id)
+  );
+
+  if (artifactsWithScenes.length === 0) {
+    return validArtifactIds;
+  }
+
+  const metadataSourceFilters = artifactsWithScenes.map((artifact) => ({
+    sceneId: artifact.sceneId,
+    metadata: { path: ["sourceArtifactId"], equals: artifact.id }
+  }));
+  const styleSourceFilters = artifactsWithScenes.map((artifact) => ({
+    sceneId: artifact.sceneId,
+    metrics: { path: ["sourceArtifactId"], equals: artifact.id }
+  }));
+  const [facts, characters, events, styles] = await Promise.all([
+    prisma.narrativeFact.findMany({
+      where: { manuscriptId, OR: metadataSourceFilters },
+      select: { metadata: true }
+    }),
+    prisma.characterState.findMany({
+      where: { manuscriptId, OR: metadataSourceFilters },
+      select: { metadata: true }
+    }),
+    prisma.plotEvent.findMany({
+      where: { manuscriptId, OR: metadataSourceFilters },
+      select: { metadata: true }
+    }),
+    prisma.styleFingerprint.findMany({
+      where: { manuscriptId, OR: styleSourceFilters },
+      select: { metrics: true }
+    })
+  ]);
+  const refreshed = new Set<string>();
+
+  for (const row of [...facts, ...characters, ...events]) {
+    const sourceArtifactId = stringOrNull(toRecord(row.metadata).sourceArtifactId);
+    if (sourceArtifactId && validArtifactIds.has(sourceArtifactId)) {
+      refreshed.add(sourceArtifactId);
+    }
+  }
+
+  for (const row of styles) {
+    const sourceArtifactId = stringOrNull(toRecord(row.metrics).sourceArtifactId);
+    if (sourceArtifactId && validArtifactIds.has(sourceArtifactId)) {
+      refreshed.add(sourceArtifactId);
+    }
+  }
+
+  return refreshed;
 }
 
 async function createEditorialDecisionsFromActions(
