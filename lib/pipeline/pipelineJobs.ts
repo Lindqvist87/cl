@@ -340,7 +340,7 @@ export async function runReadyPipelineJobs(options: RunReadyJobsOptions = {}) {
     results.push(result);
     readyJobIds.push(...result.readyJobIds);
 
-    if (result.status === "locked") {
+    if (result.status === "locked" || result.status === "queued") {
       break;
     }
   }
@@ -637,15 +637,23 @@ export async function releaseStaleLocks(scopeOrManuscriptId?: string | PipelineJ
   const recoveredJobs = staleJobs.map((job) => pipelineBlockingJob(job, now));
 
   for (const job of staleJobs) {
-    const status = nextStatusAfterJobError({
-      attempts: job.attempts,
-      maxAttempts: job.maxAttempts
-    });
+    const hasIncompleteProgress = hasIncompleteStepResult(job.result);
+    const status = hasIncompleteProgress
+      ? PIPELINE_JOB_STATUS.QUEUED
+      : nextStatusAfterJobError({
+          attempts: job.attempts,
+          maxAttempts: job.maxAttempts
+        });
     const updated = await prisma.pipelineJob.update({
       where: { id: job.id },
       data: {
         status,
-        error: job.error ?? "Job lock expired before completion.",
+        error: hasIncompleteProgress
+          ? null
+          : job.error ?? "Job lock expired before completion.",
+        ...(hasIncompleteProgress
+          ? { attempts: attemptsAfterPartialProgress(job) }
+          : {}),
         lockedAt: null,
         lockedBy: null,
         lockExpiresAt: null,
@@ -738,6 +746,7 @@ async function runManuscriptPipelineStepJob(
         lockExpiresAt: null
       }
     });
+    await updateManuscriptPipelineStatus(job.manuscriptId);
     return jobResult(queued, "queued", [queued.id]);
   }
 
@@ -1140,6 +1149,15 @@ function retryDelayMs(attempts: number) {
 function attemptsAfterPartialProgress(job: PipelineJob) {
   const beforeThisRun = Math.max(job.attempts - 1, 0);
   return Math.min(beforeThisRun, Math.max(job.maxAttempts - 1, 0));
+}
+
+function hasIncompleteStepResult(result: unknown) {
+  const record = toJsonRecord(result);
+  return record.complete === false || numberOrZero(record.remaining) > 0;
+}
+
+function numberOrZero(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function maxAttemptsForJobType(type: string) {

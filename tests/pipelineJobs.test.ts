@@ -22,9 +22,11 @@ import {
   ensureManuscriptPipelineJobs,
   ensureChapterRewriteDraftsJob,
   pipelineJobScopeWhere,
+  releaseStaleLocks,
   runPipelineJob,
   runReadyPipelineJobs
 } from "../lib/pipeline/pipelineJobs";
+import { pipelineStepJobKey } from "../lib/pipeline/jobPlanner";
 import {
   isStepComplete,
   normalizeCheckpoint
@@ -498,6 +500,11 @@ test("partial summarizeChunks progress requeues without exhausting maxAttempts",
 
         assert.equal(result.status, "queued");
         assert.equal(job.status, PIPELINE_JOB_STATUS.QUEUED);
+        assert.equal(job.error, null);
+        assert.equal(job.readyAt, null);
+        assert.equal(job.lockedAt, null);
+        assert.equal(job.lockedBy, null);
+        assert.equal(job.lockExpiresAt, null);
         assert.equal(job.attempts < job.maxAttempts, true);
         assert.equal(job.attempts, 2);
         assert.deepEqual(job.result, {
@@ -829,6 +836,212 @@ test("repeated compileChapterCapsules partial runs finish and unblock compileWho
           ).remaining,
           0
         );
+      }
+    );
+  } finally {
+    restoreOpenAI();
+  }
+});
+
+test("manual ready runner pauses after one partial compileChapterCapsules batch", async () => {
+  const manuscriptId = "manuscript-chapter-capsules-manual-partial";
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks",
+      "createEmbeddingsForChunks",
+      "summarizeChunks",
+      "summarizeChapters",
+      "createManuscriptProfile",
+      "buildManuscriptNodes",
+      "compileSceneDigests",
+      "extractNarrativeMemory"
+    ],
+    currentStep: "compileChapterCapsules"
+  });
+  const capsuleJob = mutableJob("chapter-capsules-job", {
+    manuscriptId,
+    type: "compileChapterCapsules",
+    status: PIPELINE_JOB_STATUS.QUEUED,
+    idempotencyKey: pipelineStepJobKey(manuscriptId, "compileChapterCapsules"),
+    maxAttempts: 3
+  });
+  const wholeBookJob = mutableJob("whole-book-map-job", {
+    manuscriptId,
+    type: "compileWholeBookMap",
+    status: PIPELINE_JOB_STATUS.BLOCKED,
+    idempotencyKey: pipelineStepJobKey(manuscriptId, "compileWholeBookMap"),
+    dependencyIds: [capsuleJob.id],
+    maxAttempts: 3
+  });
+  const jobs = [capsuleJob, wholeBookJob];
+  const db = chapterCapsulePipelineDb(manuscriptId, 6);
+  const requests: Array<Record<string, unknown>> = [];
+  const restoreOpenAI = setOpenAIClientForTest(
+    fakeOpenAIClient(requests, chapterCapsuleJson())
+  );
+
+  try {
+    await withPatchedPrisma(
+      chapterCapsuleJobPatches({ manuscriptId, run, jobs, db }),
+      async () => {
+        const first = await runReadyPipelineJobs({
+          manuscriptId,
+          maxJobs: 5,
+          maxSeconds: 20,
+          maxItemsPerStep: 2,
+          workerType: "MANUAL",
+          workerId: "test:manual-capsules-1"
+        });
+
+        assert.equal(first.jobsRun, 1);
+        assert.equal(first.results[0]?.status, "queued");
+        assert.equal(requests.length, 2);
+        assert.equal(capsuleJob.status, PIPELINE_JOB_STATUS.QUEUED);
+        assert.deepEqual(capsuleJob.result, {
+          compiled: 2,
+          total: 6,
+          remaining: 4,
+          complete: false
+        });
+        assert.equal(capsuleJob.lockedAt, null);
+        assert.equal(capsuleJob.lockedBy, null);
+        assert.equal(capsuleJob.lockExpiresAt, null);
+        assert.equal(wholeBookJob.status, PIPELINE_JOB_STATUS.BLOCKED);
+
+        const second = await runReadyPipelineJobs({
+          manuscriptId,
+          maxJobs: 5,
+          maxSeconds: 20,
+          maxItemsPerStep: 2,
+          workerType: "MANUAL",
+          workerId: "test:manual-capsules-2"
+        });
+
+        assert.equal(second.jobsRun, 1);
+        assert.equal(second.results[0]?.jobId, capsuleJob.id);
+        assert.equal(second.results[0]?.status, "queued");
+        assert.equal(requests.length, 4);
+        assert.deepEqual(capsuleJob.result, {
+          compiled: 2,
+          total: 6,
+          remaining: 2,
+          complete: false
+        });
+
+        const third = await runReadyPipelineJobs({
+          manuscriptId,
+          maxJobs: 1,
+          maxSeconds: 20,
+          maxItemsPerStep: 2,
+          workerType: "MANUAL",
+          workerId: "test:manual-capsules-3"
+        });
+
+        assert.equal(third.jobsRun, 1);
+        assert.equal(third.results[0]?.status, "completed");
+        assert.equal(requests.length, 6);
+        assert.equal(capsuleJob.status, PIPELINE_JOB_STATUS.COMPLETED);
+        assert.equal(wholeBookJob.status, PIPELINE_JOB_STATUS.QUEUED);
+        assert.deepEqual(third.readyJobIds, [wholeBookJob.id]);
+      }
+    );
+  } finally {
+    restoreOpenAI();
+  }
+});
+
+test("stale running partial step is recovered as queued and can resume", async () => {
+  const manuscriptId = "manuscript-stale-partial-capsules";
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks",
+      "createEmbeddingsForChunks",
+      "summarizeChunks",
+      "summarizeChapters",
+      "createManuscriptProfile",
+      "buildManuscriptNodes",
+      "compileSceneDigests",
+      "extractNarrativeMemory"
+    ],
+    currentStep: "compileChapterCapsules"
+  });
+  const capsuleJob = mutableJob("chapter-capsules-job", {
+    manuscriptId,
+    type: "compileChapterCapsules",
+    status: PIPELINE_JOB_STATUS.RUNNING,
+    idempotencyKey: pipelineStepJobKey(manuscriptId, "compileChapterCapsules"),
+    result: {
+      compiled: 2,
+      total: 6,
+      remaining: 4,
+      complete: false
+    },
+    attempts: 2,
+    maxAttempts: 3,
+    lockedAt: new Date("2026-04-29T04:50:00Z"),
+    lockedBy: "manual:stale",
+    lockExpiresAt: new Date("2026-04-29T04:59:00Z")
+  });
+  const wholeBookJob = mutableJob("whole-book-map-job", {
+    manuscriptId,
+    type: "compileWholeBookMap",
+    status: PIPELINE_JOB_STATUS.BLOCKED,
+    idempotencyKey: pipelineStepJobKey(manuscriptId, "compileWholeBookMap"),
+    dependencyIds: [capsuleJob.id],
+    maxAttempts: 3
+  });
+  const jobs = [capsuleJob, wholeBookJob];
+  const db = chapterCapsulePipelineDb(manuscriptId, 6);
+  const requests: Array<Record<string, unknown>> = [];
+  const restoreOpenAI = setOpenAIClientForTest(
+    fakeOpenAIClient(requests, chapterCapsuleJson())
+  );
+
+  try {
+    await withPatchedPrisma(
+      chapterCapsuleJobPatches({ manuscriptId, run, jobs, db }),
+      async () => {
+        const recovered = await releaseStaleLocks(manuscriptId);
+
+        assert.deepEqual(
+          recovered.map((job) => job.id),
+          [capsuleJob.id]
+        );
+        assert.equal(capsuleJob.status, PIPELINE_JOB_STATUS.QUEUED);
+        assert.equal(capsuleJob.error, null);
+        assert.equal(capsuleJob.readyAt, null);
+        assert.equal(capsuleJob.lockedAt, null);
+        assert.equal(capsuleJob.lockedBy, null);
+        assert.equal(capsuleJob.lockExpiresAt, null);
+        assert.equal(capsuleJob.attempts, 1);
+
+        const retry = await runReadyPipelineJobs({
+          manuscriptId,
+          maxJobs: 5,
+          maxSeconds: 20,
+          maxItemsPerStep: 2,
+          workerType: "MANUAL",
+          workerId: "test:manual-stale-capsules"
+        });
+
+        assert.equal(retry.jobsRun, 1);
+        assert.equal(retry.results[0]?.jobId, capsuleJob.id);
+        assert.equal(retry.results[0]?.status, "queued");
+        assert.equal(requests.length, 2);
+        assert.equal(capsuleJob.status, PIPELINE_JOB_STATUS.QUEUED);
+        assert.equal(capsuleJob.lockedAt, null);
+        assert.equal(capsuleJob.lockedBy, null);
+        assert.equal(capsuleJob.lockExpiresAt, null);
+        assert.deepEqual(capsuleJob.result, {
+          compiled: 2,
+          total: 6,
+          remaining: 4,
+          complete: false
+        });
       }
     );
   } finally {
@@ -1769,6 +1982,21 @@ function nestedValue(value: unknown, path: unknown) {
     const record = recordValue(current);
     return record ? record[String(segment)] : undefined;
   }, value);
+}
+
+function chapterCapsuleJson() {
+  return {
+    chapterSummary: "Compiled chapter summary.",
+    chapterFunction: "Moves the manuscript forward.",
+    characterMovement: {},
+    plotMovement: {},
+    pacingAssessment: "Steady.",
+    continuityRisks: [],
+    styleFingerprint: {},
+    revisionPressure: "low",
+    mustPreserve: [],
+    suggestedEditorialFocus: []
+  };
 }
 
 function fakeOpenAIClient(
