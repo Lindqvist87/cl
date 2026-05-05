@@ -14,6 +14,7 @@ export async function startManuscriptPipeline(input: {
   manuscriptId: string;
   mode: PipelineStartMode;
   requestedBy?: string | null;
+  runInlineWhenInngestDisabled?: boolean;
 }) {
   const config = getInngestRuntimeConfig();
   const ensured = await ensureManuscriptPipelineJobs(
@@ -45,6 +46,20 @@ export async function startManuscriptPipeline(input: {
     };
   }
 
+  if (input.runInlineWhenInngestDisabled === false) {
+    return {
+      executionMode: "QUEUED",
+      accepted: true,
+      runId: ensured.run.id,
+      manuscriptId: input.manuscriptId,
+      jobCount: ensured.jobs.length,
+      warnings: [
+        ...config.warnings,
+        "Inngest is not configured; jobs were queued but not run in the upload request."
+      ]
+    };
+  }
+
   const batch = await runReadyPipelineJobs({
     manuscriptId: input.manuscriptId,
     maxJobs: config.maxJobsPerRun,
@@ -68,6 +83,10 @@ export function pipelineStartHttpStatus(result: {
   executionMode: string;
   accepted: boolean;
 }) {
+  if (result.executionMode === "QUEUED") {
+    return 202;
+  }
+
   if (result.executionMode === "INNGEST") {
     return result.accepted ? 202 : 503;
   }

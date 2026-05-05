@@ -33,6 +33,7 @@ type ChapterRewriteInput = {
     evidence?: string;
     suggestedUse?: string;
   }>;
+  contextPack?: unknown;
   rewriteScope?: {
     type: "chapter" | "chunk";
     sectionIndex?: number;
@@ -48,7 +49,7 @@ export async function rewriteChapter(input: ChapterRewriteInput) {
   }
 
   return requestEditorJson<ChapterRewriteResult>({
-    ...modelConfigForRole("chiefEditor"),
+    ...modelConfigForRole("rewrite"),
     system: [
       "You rewrite one manuscript chapter at a time.",
       "Return strict JSON only.",
@@ -97,6 +98,7 @@ export async function rewriteChapter(input: ChapterRewriteInput) {
         previousChapterSummaries: input.previousChapterSummaries,
         previousSectionSummaries: input.previousSectionSummaries ?? [],
         continuityRules: input.continuityRules,
+        contextPack: input.contextPack ?? null,
         corpusPatternNotes: input.corpusPatternNotes ?? [],
         corpusPolicy: {
           receivesFullCorpusBooks: false,

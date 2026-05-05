@@ -15,6 +15,7 @@ import {
   isCompletedJob,
   isJobCancelled,
   isLockStale,
+  MANUAL_FINAL_SYNTHESIS_LOCK_MS,
   nextStatusAfterJobError,
   PIPELINE_JOB_STATUS
 } from "../lib/pipeline/jobRules";
@@ -22,14 +23,20 @@ import {
   ensureManuscriptPipelineJobs,
   ensureChapterRewriteDraftsJob,
   pipelineJobScopeWhere,
+  releaseStaleLocks,
   runPipelineJob,
   runReadyPipelineJobs
 } from "../lib/pipeline/pipelineJobs";
+import { pipelineStepJobKey } from "../lib/pipeline/jobPlanner";
 import {
   isStepComplete,
   normalizeCheckpoint
 } from "../lib/pipeline/steps";
 import { manuscriptAdminJobRunner } from "../lib/server/manuscriptAdminJobs";
+import {
+  setOpenAIClientForTest,
+  type OpenAIClient
+} from "../lib/analysis/openai";
 import { prisma } from "../lib/prisma";
 
 type MutableJob = PipelineJob;
@@ -112,7 +119,7 @@ test("stuck manuscript with no jobs gets resumable jobs from checkpoint", async 
       const ensured = await ensureManuscriptPipelineJobs(manuscriptId, "RESUME");
 
       assert.equal(ensured.run.id, run.id);
-      assert.equal(jobs.length, 12);
+      assert.equal(jobs.length, 18);
       assert.deepEqual(
         jobs.slice(0, 4).map((job) => job.status),
         Array(4).fill(PIPELINE_JOB_STATUS.COMPLETED)
@@ -125,6 +132,12 @@ test("stuck manuscript with no jobs gets resumable jobs from checkpoint", async 
           "summarizeChunks",
           "summarizeChapters",
           "createManuscriptProfile",
+          "buildManuscriptNodes",
+          "compileSceneDigests",
+          "extractNarrativeMemory",
+          "compileChapterCapsules",
+          "compileWholeBookMap",
+          "createNextBestEditorialActions",
           "runChapterAudits",
           "runWholeBookAudit",
           "compareAgainstCorpus",
@@ -363,17 +376,54 @@ test("ready runner recovers stale running manuscript jobs before retrying them",
         workerId: "manual:test-stale-lock"
       });
 
-      assert.equal(result.jobsRun, 0);
-      assert.equal(result.reason, "stale_running_job_recovered");
-      assert.equal(result.blockingJob?.id, "stale-audits-job");
-      assert.equal(result.blockingJob?.stale, true);
+      assert.equal(result.jobsRun, 1);
+      assert.equal(result.reason, undefined);
+      assert.equal(result.recoveredStaleJobs[0]?.id, "stale-audits-job");
+      assert.equal(result.recoveredStaleJobs[0]?.stale, true);
+      assert.equal(jobs[0].status, PIPELINE_JOB_STATUS.COMPLETED);
+      assert.equal(jobs[0].lockedAt, null);
+      assert.equal(jobs[0].lockedBy, null);
+      assert.equal(jobs[0].lockExpiresAt, null);
+      assert.equal(result.remainingReadyJobs, 1);
+    }
+  );
+});
+
+test("stale running manuscript jobs without lock expiry are recovered", async () => {
+  const manuscriptId = "manuscript-stale-running-without-expiry";
+  const checkpoint = checkpointBeforeRunChapterAudits();
+  const runningPlan = plannedPipelineJobs(manuscriptId, checkpoint).find(
+    (job) => job.type === "runChapterAudits"
+  );
+  assert.ok(runningPlan);
+
+  const jobs: MutableJob[] = [
+    mutableJob("old-running-audits-job", {
+      manuscriptId,
+      type: "runChapterAudits",
+      status: PIPELINE_JOB_STATUS.RUNNING,
+      idempotencyKey: runningPlan.idempotencyKey,
+      lockedAt: new Date(Date.now() - 20 * 60 * 1000),
+      lockedBy: "legacy-worker-without-expiry",
+      lockExpiresAt: null,
+      attempts: 1,
+      maxAttempts: 3
+    })
+  ];
+  const run = mutableRun(manuscriptId, checkpoint);
+
+  await withPatchedPrisma(
+    manuscriptRunnerPatches({ manuscriptId, run, jobs }),
+    async () => {
+      const recovered = await releaseStaleLocks(manuscriptId);
+
+      assert.equal(recovered[0]?.id, "old-running-audits-job");
+      assert.equal(recovered[0]?.stale, true);
       assert.equal(jobs[0].status, PIPELINE_JOB_STATUS.RETRYING);
       assert.equal(jobs[0].lockedAt, null);
       assert.equal(jobs[0].lockedBy, null);
       assert.equal(jobs[0].lockExpiresAt, null);
-      assert.ok(jobs[0].readyAt instanceof Date);
-      assert.equal(result.remainingReadyJobs, 1);
-      assert.match(result.message ?? "", /Recovered stale running job runChapterAudits/);
+      assert.equal(jobs[0].error, "Job lock expired before completion.");
     }
   );
 });
@@ -490,6 +540,11 @@ test("partial summarizeChunks progress requeues without exhausting maxAttempts",
 
         assert.equal(result.status, "queued");
         assert.equal(job.status, PIPELINE_JOB_STATUS.QUEUED);
+        assert.equal(job.error, null);
+        assert.equal(job.readyAt, null);
+        assert.equal(job.lockedAt, null);
+        assert.equal(job.lockedBy, null);
+        assert.equal(job.lockExpiresAt, null);
         assert.equal(job.attempts < job.maxAttempts, true);
         assert.equal(job.attempts, 2);
         assert.deepEqual(job.result, {
@@ -595,6 +650,550 @@ test("repeated summarizeChunks partial runs finish and unblock summarizeChapters
   }
 });
 
+test("repeated extractNarrativeMemory partial runs finish and unblock compileChapterCapsules", async () => {
+  const manuscriptId = "manuscript-narrative-memory-partial";
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks",
+      "createEmbeddingsForChunks",
+      "summarizeChunks",
+      "summarizeChapters",
+      "createManuscriptProfile",
+      "buildManuscriptNodes",
+      "compileSceneDigests"
+    ],
+    currentStep: "extractNarrativeMemory"
+  });
+  const extractJob = mutableJob("extract-memory-job", {
+    manuscriptId,
+    type: "extractNarrativeMemory",
+    status: PIPELINE_JOB_STATUS.QUEUED,
+    idempotencyKey: "extract-memory-job",
+    maxAttempts: 3
+  });
+  const capsuleJob = mutableJob("chapter-capsules-job", {
+    manuscriptId,
+    type: "compileChapterCapsules",
+    status: PIPELINE_JOB_STATUS.BLOCKED,
+    idempotencyKey: "chapter-capsules-job",
+    dependencyIds: [extractJob.id],
+    maxAttempts: 3
+  });
+  const jobs = [extractJob, capsuleJob];
+  const artifacts = sceneDigestArtifactFixtures(manuscriptId, 6);
+  const memory = {
+    facts: [] as Array<Record<string, unknown>>,
+    characters: [] as Array<Record<string, unknown>>,
+    events: [] as Array<Record<string, unknown>>,
+    styles: [] as Array<Record<string, unknown>>
+  };
+
+  await withPatchedPrisma(
+    narrativeMemoryJobPatches({ manuscriptId, run, jobs, artifacts, memory }),
+    async () => {
+      const first = await runPipelineJob(extractJob.id, {
+        maxItemsPerStep: 4,
+        workerId: "test:extract-1"
+      });
+
+      assert.equal(first.status, "queued");
+      assert.deepEqual(extractJob.result, {
+        refreshed: 4,
+        total: 6,
+        remaining: 2,
+        complete: false
+      });
+      assert.deepEqual(first.readyJobIds, [extractJob.id]);
+      assert.equal(capsuleJob.status, PIPELINE_JOB_STATUS.BLOCKED);
+
+      const second = await runPipelineJob(extractJob.id, {
+        maxItemsPerStep: 4,
+        workerId: "test:extract-2"
+      });
+
+      assert.equal(second.status, "completed");
+      assert.deepEqual(extractJob.result, {
+        refreshed: 2,
+        total: 6,
+        remaining: 0,
+        complete: true
+      });
+      assert.equal(extractJob.status, PIPELINE_JOB_STATUS.COMPLETED);
+      assert.equal(capsuleJob.status, PIPELINE_JOB_STATUS.QUEUED);
+      assert.deepEqual(second.readyJobIds, [capsuleJob.id]);
+      assert.deepEqual(
+        memory.facts.map((fact) => recordValue(fact.metadata)?.sourceArtifactId),
+        [
+          "scene-digest-artifact-1",
+          "scene-digest-artifact-2",
+          "scene-digest-artifact-3",
+          "scene-digest-artifact-4",
+          "scene-digest-artifact-5",
+          "scene-digest-artifact-6"
+        ]
+      );
+
+      const checkpoint = normalizeCheckpoint(run.checkpoint);
+      assert.equal(isStepComplete(checkpoint, "extractNarrativeMemory"), true);
+      assert.equal(checkpoint.currentStep ?? undefined, undefined);
+      assert.equal(
+        (checkpoint.stepMetadata?.extractNarrativeMemory as Record<string, unknown>)
+          .remaining,
+        0
+      );
+    }
+  );
+});
+
+test("repeated compileChapterCapsules partial runs finish and unblock compileWholeBookMap", async () => {
+  const manuscriptId = "manuscript-chapter-capsules-partial";
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks",
+      "createEmbeddingsForChunks",
+      "summarizeChunks",
+      "summarizeChapters",
+      "createManuscriptProfile",
+      "buildManuscriptNodes",
+      "compileSceneDigests",
+      "extractNarrativeMemory"
+    ],
+    currentStep: "compileChapterCapsules"
+  });
+  const capsuleJob = mutableJob("chapter-capsules-job", {
+    manuscriptId,
+    type: "compileChapterCapsules",
+    status: PIPELINE_JOB_STATUS.QUEUED,
+    idempotencyKey: "chapter-capsules-job",
+    maxAttempts: 3
+  });
+  const wholeBookJob = mutableJob("whole-book-map-job", {
+    manuscriptId,
+    type: "compileWholeBookMap",
+    status: PIPELINE_JOB_STATUS.BLOCKED,
+    idempotencyKey: "whole-book-map-job",
+    dependencyIds: [capsuleJob.id],
+    maxAttempts: 3
+  });
+  const jobs = [capsuleJob, wholeBookJob];
+  const db = chapterCapsulePipelineDb(manuscriptId, 6);
+  const requests: Array<Record<string, unknown>> = [];
+  const restoreOpenAI = setOpenAIClientForTest(
+    fakeOpenAIClient(requests, {
+      chapterSummary: "Compiled chapter summary.",
+      chapterFunction: "Moves the manuscript forward.",
+      characterMovement: {},
+      plotMovement: {},
+      pacingAssessment: "Steady.",
+      continuityRisks: [],
+      styleFingerprint: {},
+      revisionPressure: "low",
+      mustPreserve: [],
+      suggestedEditorialFocus: []
+    })
+  );
+
+  try {
+    await withPatchedPrisma(
+      chapterCapsuleJobPatches({ manuscriptId, run, jobs, db }),
+      async () => {
+        const first = await runPipelineJob(capsuleJob.id, {
+          maxItemsPerStep: 2,
+          workerId: "test:capsules-1"
+        });
+
+        assert.equal(first.status, "queued");
+        assert.deepEqual(capsuleJob.result, {
+          compiled: 2,
+          total: 6,
+          remaining: 4,
+          complete: false
+        });
+        assert.deepEqual(first.readyJobIds, [capsuleJob.id]);
+        assert.equal(wholeBookJob.status, PIPELINE_JOB_STATUS.BLOCKED);
+
+        const second = await runPipelineJob(capsuleJob.id, {
+          maxItemsPerStep: 2,
+          workerId: "test:capsules-2"
+        });
+
+        assert.equal(second.status, "queued");
+        assert.deepEqual(capsuleJob.result, {
+          compiled: 2,
+          total: 6,
+          remaining: 2,
+          complete: false
+        });
+        assert.deepEqual(second.readyJobIds, [capsuleJob.id]);
+        assert.equal(wholeBookJob.status, PIPELINE_JOB_STATUS.BLOCKED);
+
+        const third = await runPipelineJob(capsuleJob.id, {
+          maxItemsPerStep: 2,
+          workerId: "test:capsules-3"
+        });
+
+        assert.equal(third.status, "completed");
+        assert.deepEqual(capsuleJob.result, {
+          compiled: 2,
+          total: 6,
+          remaining: 0,
+          complete: true
+        });
+        assert.equal(capsuleJob.status, PIPELINE_JOB_STATUS.COMPLETED);
+        assert.equal(wholeBookJob.status, PIPELINE_JOB_STATUS.QUEUED);
+        assert.deepEqual(third.readyJobIds, [wholeBookJob.id]);
+
+        const fourth = await runPipelineJob(capsuleJob.id, {
+          maxItemsPerStep: 2,
+          workerId: "test:capsules-4"
+        });
+
+        assert.equal(fourth.status, "completed");
+        assert.equal(requests.length, 6);
+
+        const capsules = db.artifacts.filter(
+          (artifact) => artifact.artifactType === "CHAPTER_CAPSULE"
+        );
+        assert.equal(capsules.length, 6);
+        assert.equal(
+          new Set(capsules.map((artifact) => artifact.chapterId)).size,
+          6
+        );
+
+        const checkpoint = normalizeCheckpoint(run.checkpoint);
+        assert.equal(isStepComplete(checkpoint, "compileChapterCapsules"), true);
+        assert.equal(checkpoint.currentStep ?? undefined, undefined);
+        assert.equal(
+          (
+            checkpoint.stepMetadata?.compileChapterCapsules as Record<
+              string,
+              unknown
+            >
+          ).remaining,
+          0
+        );
+      }
+    );
+  } finally {
+    restoreOpenAI();
+  }
+});
+
+test("manual ready runner pauses after one partial compileChapterCapsules batch", async () => {
+  const manuscriptId = "manuscript-chapter-capsules-manual-partial";
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks",
+      "createEmbeddingsForChunks",
+      "summarizeChunks",
+      "summarizeChapters",
+      "createManuscriptProfile",
+      "buildManuscriptNodes",
+      "compileSceneDigests",
+      "extractNarrativeMemory"
+    ],
+    currentStep: "compileChapterCapsules"
+  });
+  const capsuleJob = mutableJob("chapter-capsules-job", {
+    manuscriptId,
+    type: "compileChapterCapsules",
+    status: PIPELINE_JOB_STATUS.QUEUED,
+    idempotencyKey: pipelineStepJobKey(manuscriptId, "compileChapterCapsules"),
+    maxAttempts: 3
+  });
+  const wholeBookJob = mutableJob("whole-book-map-job", {
+    manuscriptId,
+    type: "compileWholeBookMap",
+    status: PIPELINE_JOB_STATUS.BLOCKED,
+    idempotencyKey: pipelineStepJobKey(manuscriptId, "compileWholeBookMap"),
+    dependencyIds: [capsuleJob.id],
+    maxAttempts: 3
+  });
+  const jobs = [capsuleJob, wholeBookJob];
+  const db = chapterCapsulePipelineDb(manuscriptId, 6);
+  const requests: Array<Record<string, unknown>> = [];
+  const restoreOpenAI = setOpenAIClientForTest(
+    fakeOpenAIClient(requests, chapterCapsuleJson())
+  );
+
+  try {
+    await withPatchedPrisma(
+      chapterCapsuleJobPatches({ manuscriptId, run, jobs, db }),
+      async () => {
+        const first = await runReadyPipelineJobs({
+          manuscriptId,
+          maxJobs: 5,
+          maxSeconds: 20,
+          maxItemsPerStep: 2,
+          workerType: "MANUAL",
+          workerId: "test:manual-capsules-1"
+        });
+
+        assert.equal(first.jobsRun, 1);
+        assert.equal(first.results[0]?.status, "queued");
+        assert.equal(requests.length, 2);
+        assert.equal(capsuleJob.status, PIPELINE_JOB_STATUS.QUEUED);
+        assert.deepEqual(capsuleJob.result, {
+          compiled: 2,
+          total: 6,
+          remaining: 4,
+          complete: false
+        });
+        assert.equal(capsuleJob.lockedAt, null);
+        assert.equal(capsuleJob.lockedBy, null);
+        assert.equal(capsuleJob.lockExpiresAt, null);
+        assert.equal(wholeBookJob.status, PIPELINE_JOB_STATUS.BLOCKED);
+
+        const second = await runReadyPipelineJobs({
+          manuscriptId,
+          maxJobs: 5,
+          maxSeconds: 20,
+          maxItemsPerStep: 2,
+          workerType: "MANUAL",
+          workerId: "test:manual-capsules-2"
+        });
+
+        assert.equal(second.jobsRun, 1);
+        assert.equal(second.results[0]?.jobId, capsuleJob.id);
+        assert.equal(second.results[0]?.status, "queued");
+        assert.equal(requests.length, 4);
+        assert.deepEqual(capsuleJob.result, {
+          compiled: 2,
+          total: 6,
+          remaining: 2,
+          complete: false
+        });
+
+        const third = await runReadyPipelineJobs({
+          manuscriptId,
+          maxJobs: 1,
+          maxSeconds: 20,
+          maxItemsPerStep: 2,
+          workerType: "MANUAL",
+          workerId: "test:manual-capsules-3"
+        });
+
+        assert.equal(third.jobsRun, 1);
+        assert.equal(third.results[0]?.status, "completed");
+        assert.equal(requests.length, 6);
+        assert.equal(capsuleJob.status, PIPELINE_JOB_STATUS.COMPLETED);
+        assert.equal(wholeBookJob.status, PIPELINE_JOB_STATUS.QUEUED);
+        assert.deepEqual(third.readyJobIds, [wholeBookJob.id]);
+      }
+    );
+  } finally {
+    restoreOpenAI();
+  }
+});
+
+test("stale running compileWholeBookMap recovers and unblocks next editorial actions", async () => {
+  const manuscriptId = "manuscript-stale-whole-book-map";
+  const oldVercelEnv = process.env.VERCEL_ENV;
+  const oldOpenAIKey = process.env.OPENAI_API_KEY;
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks",
+      "createEmbeddingsForChunks",
+      "summarizeChunks",
+      "summarizeChapters",
+      "createManuscriptProfile",
+      "buildManuscriptNodes",
+      "compileSceneDigests",
+      "extractNarrativeMemory",
+      "compileChapterCapsules"
+    ],
+    currentStep: "compileWholeBookMap"
+  });
+  const wholeBookJob = mutableJob("whole-book-map-job", {
+    manuscriptId,
+    type: "compileWholeBookMap",
+    status: PIPELINE_JOB_STATUS.RUNNING,
+    idempotencyKey: pipelineStepJobKey(manuscriptId, "compileWholeBookMap"),
+    attempts: 2,
+    maxAttempts: 3,
+    error: "Job lock expired before completion.",
+    lockedAt: new Date("2026-04-29T04:50:00Z"),
+    lockedBy: "manual:stale-whole-book",
+    lockExpiresAt: new Date("2026-04-29T04:59:00Z")
+  });
+  const nextActionsJob = mutableJob("next-actions-job", {
+    manuscriptId,
+    type: "createNextBestEditorialActions",
+    status: PIPELINE_JOB_STATUS.BLOCKED,
+    idempotencyKey: pipelineStepJobKey(
+      manuscriptId,
+      "createNextBestEditorialActions"
+    ),
+    dependencyIds: [wholeBookJob.id],
+    maxAttempts: 3
+  });
+  const jobs = [wholeBookJob, nextActionsJob];
+  const db = chapterCapsulePipelineDb(manuscriptId, 3);
+  const requests: Array<Record<string, unknown>> = [];
+  const restoreOpenAI = setOpenAIClientForTest(
+    fakeOpenAIClient(requests, wholeBookMapJson())
+  );
+  seedChapterCapsuleArtifacts(db);
+  process.env.VERCEL_ENV = "preview";
+  process.env.OPENAI_API_KEY = "test-openai-key";
+
+  try {
+    await withPatchedPrisma(
+      chapterCapsuleJobPatches({ manuscriptId, run, jobs, db }),
+      async () => {
+        const result = await runReadyPipelineJobs({
+          manuscriptId,
+          maxJobs: 2,
+          maxSeconds: 20,
+          maxItemsPerStep: 2,
+          workerType: "MANUAL",
+          workerId: "test:manual-stale-whole-book"
+        });
+        const wholeBookMaps = db.artifacts.filter(
+          (artifact) => artifact.artifactType === "WHOLE_BOOK_MAP"
+        );
+
+        assert.equal(result.recoveredStaleJobs[0]?.id, wholeBookJob.id);
+        assert.equal(result.jobsRun, 2);
+        assert.equal(result.results[0]?.jobId, wholeBookJob.id);
+        assert.equal(result.results[0]?.status, "completed");
+        assert.equal(result.results[1]?.jobId, nextActionsJob.id);
+        assert.equal(result.results[1]?.status, "completed");
+        assert.equal(wholeBookJob.status, PIPELINE_JOB_STATUS.COMPLETED);
+        assert.equal(wholeBookJob.error, null);
+        assert.equal(wholeBookJob.lockedAt, null);
+        assert.equal(wholeBookJob.lockedBy, null);
+        assert.equal(wholeBookJob.lockExpiresAt, null);
+        assert.deepEqual(wholeBookJob.result, {
+          wholeBookMap: true,
+          fallback: true,
+          complete: true
+        });
+        assert.equal(nextActionsJob.status, PIPELINE_JOB_STATUS.COMPLETED);
+        assert.equal(result.readyJobIds.includes(nextActionsJob.id), true);
+        assert.equal(requests.length, 0);
+        assert.equal(wholeBookMaps.length, 1);
+        assert.equal(wholeBookMaps[0].model, "stub");
+        assert.equal(
+          db.artifacts.filter(
+            (artifact) => artifact.artifactType === "NEXT_BEST_ACTIONS"
+          ).length,
+          1
+        );
+      }
+    );
+  } finally {
+    restoreOpenAI();
+    restoreEnv("VERCEL_ENV", oldVercelEnv);
+    restoreEnv("OPENAI_API_KEY", oldOpenAIKey);
+  }
+});
+
+test("stale running partial step is recovered as queued and can resume", async () => {
+  const manuscriptId = "manuscript-stale-partial-capsules";
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks",
+      "createEmbeddingsForChunks",
+      "summarizeChunks",
+      "summarizeChapters",
+      "createManuscriptProfile",
+      "buildManuscriptNodes",
+      "compileSceneDigests",
+      "extractNarrativeMemory"
+    ],
+    currentStep: "compileChapterCapsules"
+  });
+  const capsuleJob = mutableJob("chapter-capsules-job", {
+    manuscriptId,
+    type: "compileChapterCapsules",
+    status: PIPELINE_JOB_STATUS.RUNNING,
+    idempotencyKey: pipelineStepJobKey(manuscriptId, "compileChapterCapsules"),
+    result: {
+      compiled: 2,
+      total: 6,
+      remaining: 4,
+      complete: false
+    },
+    attempts: 2,
+    maxAttempts: 3,
+    lockedAt: new Date("2026-04-29T04:50:00Z"),
+    lockedBy: "manual:stale",
+    lockExpiresAt: new Date("2026-04-29T04:59:00Z")
+  });
+  const wholeBookJob = mutableJob("whole-book-map-job", {
+    manuscriptId,
+    type: "compileWholeBookMap",
+    status: PIPELINE_JOB_STATUS.BLOCKED,
+    idempotencyKey: pipelineStepJobKey(manuscriptId, "compileWholeBookMap"),
+    dependencyIds: [capsuleJob.id],
+    maxAttempts: 3
+  });
+  const jobs = [capsuleJob, wholeBookJob];
+  const db = chapterCapsulePipelineDb(manuscriptId, 6);
+  const requests: Array<Record<string, unknown>> = [];
+  const restoreOpenAI = setOpenAIClientForTest(
+    fakeOpenAIClient(requests, chapterCapsuleJson())
+  );
+
+  try {
+    await withPatchedPrisma(
+      chapterCapsuleJobPatches({ manuscriptId, run, jobs, db }),
+      async () => {
+        const recovered = await releaseStaleLocks(manuscriptId);
+
+        assert.deepEqual(
+          recovered.map((job) => job.id),
+          [capsuleJob.id]
+        );
+        assert.equal(capsuleJob.status, PIPELINE_JOB_STATUS.QUEUED);
+        assert.equal(capsuleJob.error, null);
+        assert.equal(capsuleJob.readyAt, null);
+        assert.equal(capsuleJob.lockedAt, null);
+        assert.equal(capsuleJob.lockedBy, null);
+        assert.equal(capsuleJob.lockExpiresAt, null);
+        assert.equal(capsuleJob.attempts, 1);
+
+        const retry = await runReadyPipelineJobs({
+          manuscriptId,
+          maxJobs: 5,
+          maxSeconds: 20,
+          maxItemsPerStep: 2,
+          workerType: "MANUAL",
+          workerId: "test:manual-stale-capsules"
+        });
+
+        assert.equal(retry.jobsRun, 1);
+        assert.equal(retry.results[0]?.jobId, capsuleJob.id);
+        assert.equal(retry.results[0]?.status, "queued");
+        assert.equal(requests.length, 2);
+        assert.equal(capsuleJob.status, PIPELINE_JOB_STATUS.QUEUED);
+        assert.equal(capsuleJob.lockedAt, null);
+        assert.equal(capsuleJob.lockedBy, null);
+        assert.equal(capsuleJob.lockExpiresAt, null);
+        assert.deepEqual(capsuleJob.result, {
+          compiled: 2,
+          total: 6,
+          remaining: 4,
+          complete: false
+        });
+      }
+    );
+  } finally {
+    restoreOpenAI();
+  }
+});
+
 test("job.created can run one eligible job", () => {
   assert.equal(
     canAttemptJob({
@@ -626,6 +1225,37 @@ test("active locks prevent duplicate execution until stale", () => {
         status: PIPELINE_JOB_STATUS.QUEUED,
         lockedAt: new Date("2026-04-29T04:00:00Z"),
         lockExpiresAt: new Date("2026-04-29T05:00:00Z")
+      },
+      now
+    ),
+    true
+  );
+});
+
+test("manual final synthesis locks use the short import-safe stale window", () => {
+  const now = new Date("2026-04-29T05:00:00Z");
+
+  assert.equal(
+    isLockStale(
+      {
+        type: "runWholeBookAudit",
+        status: PIPELINE_JOB_STATUS.RUNNING,
+        lockedBy: "manual:manuscript:test",
+        lockedAt: new Date(now.getTime() - MANUAL_FINAL_SYNTHESIS_LOCK_MS + 1000),
+        lockExpiresAt: new Date(now.getTime() + 8 * 60 * 1000)
+      },
+      now
+    ),
+    false
+  );
+  assert.equal(
+    isLockStale(
+      {
+        type: "runWholeBookAudit",
+        status: PIPELINE_JOB_STATUS.RUNNING,
+        lockedBy: "manual:manuscript:test",
+        lockedAt: new Date(now.getTime() - MANUAL_FINAL_SYNTHESIS_LOCK_MS - 1000),
+        lockExpiresAt: new Date(now.getTime() + 8 * 60 * 1000)
       },
       now
     ),
@@ -702,6 +1332,10 @@ test("pipeline start responses only accept successful Inngest dispatches", () =>
   assert.equal(
     pipelineStartHttpStatus({ executionMode: "INNGEST", accepted: false }),
     503
+  );
+  assert.equal(
+    pipelineStartHttpStatus({ executionMode: "QUEUED", accepted: true }),
+    202
   );
   assert.equal(
     pipelineStartHttpStatus({ executionMode: "MANUAL", accepted: false }),
@@ -854,7 +1488,13 @@ function checkpointBeforeRunChapterAudits() {
       "createEmbeddingsForChunks",
       "summarizeChunks",
       "summarizeChapters",
-      "createManuscriptProfile"
+      "createManuscriptProfile",
+      "buildManuscriptNodes",
+      "compileSceneDigests",
+      "extractNarrativeMemory",
+      "compileChapterCapsules",
+      "compileWholeBookMap",
+      "createNextBestEditorialActions"
     ],
     currentStep: "runChapterAudits"
   };
@@ -870,6 +1510,14 @@ function manuscriptRunnerPatches(input: {
       prisma.manuscript,
       {
         findUnique: async () => ({ id: input.manuscriptId }),
+        findUniqueOrThrow: async () => ({
+          id: input.manuscriptId,
+          title: "Test Manuscript",
+          targetGenre: "Fantasy",
+          targetAudience: "Adult",
+          chapters: [],
+          chunks: []
+        }),
         update: async (args: { data: Record<string, unknown> }) => ({
           id: input.manuscriptId,
           ...args.data
@@ -882,6 +1530,392 @@ function manuscriptRunnerPatches(input: {
       prisma.workerHeartbeat,
       {
         upsert: async (args: { update: Record<string, unknown> }) => args.update
+      }
+    ]
+  ];
+}
+
+function narrativeMemoryJobPatches(input: {
+  manuscriptId: string;
+  run: MutableRun;
+  jobs: MutableJob[];
+  artifacts: Array<Record<string, unknown>>;
+  memory: {
+    facts: Array<Record<string, unknown>>;
+    characters: Array<Record<string, unknown>>;
+    events: Array<Record<string, unknown>>;
+    styles: Array<Record<string, unknown>>;
+  };
+}): Array<[object, Record<string, unknown>]> {
+  const tx = narrativeMemoryTransaction(input.memory);
+
+  return [
+    ...manuscriptRunnerPatches({
+      manuscriptId: input.manuscriptId,
+      run: input.run,
+      jobs: input.jobs
+    }),
+    [
+      prisma,
+      {
+        $transaction: async (
+          callback: (transactionClient: typeof tx) => Promise<unknown>
+        ) => callback(tx)
+      }
+    ],
+    [
+      prisma.compilerArtifact,
+      {
+        findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+          input.artifacts.filter((artifact) => matchesWhere(artifact, args.where))
+      }
+    ],
+    [prisma.narrativeFact, tx.narrativeFact],
+    [prisma.characterState, tx.characterState],
+    [prisma.plotEvent, tx.plotEvent],
+    [prisma.styleFingerprint, tx.styleFingerprint]
+  ];
+}
+
+function narrativeMemoryTransaction(memory: {
+  facts: Array<Record<string, unknown>>;
+  characters: Array<Record<string, unknown>>;
+  events: Array<Record<string, unknown>>;
+  styles: Array<Record<string, unknown>>;
+}) {
+  return {
+    narrativeFact: narrativeMemoryDelegate(memory.facts),
+    characterState: narrativeMemoryDelegate(memory.characters),
+    plotEvent: narrativeMemoryDelegate(memory.events),
+    styleFingerprint: narrativeStyleFingerprintDelegate(memory.styles)
+  };
+}
+
+function narrativeMemoryDelegate(rows: Array<Record<string, unknown>>) {
+  return {
+    findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+      rows.filter((row) => matchesWhere(row, args.where)),
+    deleteMany: async (args: { where?: Record<string, unknown> } = {}) => {
+      const before = rows.length;
+      const remaining = rows.filter((row) => !matchesWhere(row, args.where));
+      rows.splice(0, rows.length, ...remaining);
+      return { count: before - rows.length };
+    },
+    createMany: async (args: { data: Array<Record<string, unknown>> }) => {
+      rows.push(
+        ...args.data.map((row, index) => ({
+          id: `memory-${rows.length + index + 1}`,
+          ...row
+        }))
+      );
+      return { count: args.data.length };
+    }
+  };
+}
+
+function narrativeStyleFingerprintDelegate(rows: Array<Record<string, unknown>>) {
+  return {
+    findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+      rows.filter((row) => matchesWhere(row, args.where)),
+    deleteMany: async (args: { where?: Record<string, unknown> } = {}) => {
+      const before = rows.length;
+      const remaining = rows.filter((row) => !matchesWhere(row, args.where));
+      rows.splice(0, rows.length, ...remaining);
+      return { count: before - rows.length };
+    },
+    create: async (args: { data: Record<string, unknown> }) => {
+      const row = { id: `style-${rows.length + 1}`, ...args.data };
+      rows.push(row);
+      return row;
+    }
+  };
+}
+
+function sceneDigestArtifactFixtures(manuscriptId: string, count: number) {
+  return Array.from({ length: count }, (_, index) => {
+    const item = index + 1;
+
+    return {
+      id: `scene-digest-artifact-${item}`,
+      manuscriptId,
+      nodeId: `scene-node-${item}`,
+      chapterId: "chapter-1",
+      sceneId: `scene-${item}`,
+      artifactType: "SCENE_DIGEST",
+      model: "stub",
+      reasoningEffort: "none",
+      promptVersion: "compiler-v1",
+      inputHash: `scene-digest-${item}`,
+      output: {
+        summary: `Scene ${item} summary.`,
+        continuityFacts: [{ factText: `Fact ${item}.` }],
+        characterAppearances: [],
+        keyEvents: [],
+        styleNotes: ["Direct prose"],
+        mustNotForget: []
+      },
+      rawText: "{}",
+      status: "COMPLETED",
+      error: null,
+      createdAt: new Date(`2026-05-01T08:00:0${item}Z`)
+    };
+  });
+}
+
+function chapterCapsulePipelineDb(manuscriptId: string, chapterCount: number) {
+  const chapters = Array.from({ length: chapterCount }, (_, index) => {
+    const item = index + 1;
+
+    return {
+      id: `chapter-${item}`,
+      manuscriptId,
+      order: item,
+      chapterIndex: item,
+      title: `Chapter ${item}`,
+      heading: `Chapter ${item}`,
+      text: `Chapter ${item} source text.`,
+      summary: null as string | null,
+      wordCount: 4,
+      status: "CHAPTER_READY",
+      startOffset: 0,
+      endOffset: 24,
+      createdAt: new Date(`2026-05-01T08:00:0${item}Z`)
+    };
+  });
+  const nodes = chapters.map((chapter) => ({
+    id: `chapter-node-${chapter.order}`,
+    key: `node:chapter:${chapter.order}`,
+    manuscriptId,
+    type: "CHAPTER",
+    chapterId: chapter.id
+  }));
+  const sceneDigests = chapters.map((chapter) => ({
+    id: `scene-digest-${chapter.order}`,
+    manuscriptId,
+    nodeId: `scene-node-${chapter.order}`,
+    chapterId: chapter.id,
+    sceneId: `scene-${chapter.order}`,
+    artifactType: "SCENE_DIGEST",
+    model: "stub",
+    reasoningEffort: "none",
+    promptVersion: "compiler-v1",
+    inputHash: `scene-digest-hash-${chapter.order}`,
+    output: {
+      summary: `Scene summary ${chapter.order}.`,
+      continuityFacts: [],
+      characterAppearances: [],
+      keyEvents: [],
+      styleNotes: []
+    },
+    rawText: "{}",
+    status: "COMPLETED",
+    error: null,
+    createdAt: new Date(`2026-05-01T09:00:0${chapter.order}Z`)
+  }));
+
+  return {
+    manuscript: {
+      id: manuscriptId,
+      title: "Capsule Pipeline Manuscript",
+      targetGenre: "Fantasy",
+      targetAudience: "Adult",
+      chapterCount,
+      chunkCount: chapterCount,
+      status: "IMPORTED",
+      analysisStatus: "QUEUED",
+      profile: {
+        wordCount: chapterCount * 4,
+        chapterCount,
+        avgChapterWords: 4,
+        dialogueRatio: 0,
+        expositionRatio: 0.4,
+        actionRatio: 0.4,
+        pacingCurve: [],
+        styleFingerprint: {}
+      }
+    },
+    chapters,
+    nodes,
+    artifacts: [...sceneDigests] as Array<Record<string, unknown>>,
+    facts: [] as Array<Record<string, unknown>>,
+    events: [] as Array<Record<string, unknown>>,
+    findings: [] as Array<Record<string, unknown>>,
+    decisions: [] as Array<Record<string, unknown>>
+  };
+}
+
+function seedChapterCapsuleArtifacts(
+  db: ReturnType<typeof chapterCapsulePipelineDb>
+) {
+  db.artifacts.push(
+    ...db.chapters.map((chapter) => ({
+      id: `chapter-capsule-${chapter.order}`,
+      manuscriptId: db.manuscript.id,
+      nodeId: `chapter-node-${chapter.order}`,
+      chapterId: chapter.id,
+      sceneId: null,
+      artifactType: "CHAPTER_CAPSULE",
+      model: "stub",
+      reasoningEffort: "none",
+      promptVersion: "compiler-v1",
+      inputHash: `chapter-capsule-hash-${chapter.order}`,
+      output: {
+        chapterSummary: `Chapter ${chapter.order} summary.`,
+        chapterFunction: "Moves the manuscript forward.",
+        continuityRisks: [],
+        suggestedEditorialFocus: []
+      },
+      rawText: "{}",
+      status: "COMPLETED",
+      error: null,
+      createdAt: new Date(`2026-05-01T10:00:0${chapter.order}Z`)
+    }))
+  );
+}
+
+function chapterCapsuleJobPatches(input: {
+  manuscriptId: string;
+  run: MutableRun;
+  jobs: MutableJob[];
+  db: ReturnType<typeof chapterCapsulePipelineDb>;
+}): Array<[object, Record<string, unknown>]> {
+  return [
+    ...manuscriptRunnerPatches({
+      manuscriptId: input.manuscriptId,
+      run: input.run,
+      jobs: input.jobs
+    }),
+    [
+      prisma.manuscript,
+      {
+        findUnique: async () => input.db.manuscript,
+        findUniqueOrThrow: async () => ({
+          ...input.db.manuscript,
+          chapters: input.db.chapters,
+          profile: input.db.manuscript.profile
+        }),
+        update: async (args: { data: Record<string, unknown> }) => {
+          Object.assign(input.db.manuscript, args.data);
+          return input.db.manuscript;
+        }
+      }
+    ],
+    [
+      prisma.compilerArtifact,
+      {
+        findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+          input.db.artifacts.filter((artifact) =>
+            matchesWhere(artifact, args.where)
+          ),
+        findFirst: async (args: { where?: Record<string, unknown> } = {}) =>
+          input.db.artifacts.find((artifact) =>
+            matchesWhere(artifact, args.where)
+          ) ?? null,
+        upsert: async (args: {
+          where: {
+            manuscriptId_artifactType_inputHash: {
+              manuscriptId: string;
+              artifactType: string;
+              inputHash: string;
+            };
+          };
+          create: Record<string, unknown>;
+          update: Record<string, unknown>;
+        }) => {
+          const key = args.where.manuscriptId_artifactType_inputHash;
+          const existing = input.db.artifacts.find(
+            (artifact) =>
+              artifact.manuscriptId === key.manuscriptId &&
+              artifact.artifactType === key.artifactType &&
+              artifact.inputHash === key.inputHash
+          );
+
+          if (existing) {
+            Object.assign(existing, args.update);
+            return existing;
+          }
+
+          const artifact = {
+            id: `artifact-${input.db.artifacts.length + 1}`,
+            status: "COMPLETED",
+            error: null,
+            createdAt: new Date(),
+            ...args.create
+          };
+          input.db.artifacts.push(artifact);
+          return artifact;
+        }
+      }
+    ],
+    [
+      prisma.narrativeFact,
+      {
+        findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+          input.db.facts.filter((fact) => matchesWhere(fact, args.where))
+      }
+    ],
+    [
+      prisma.plotEvent,
+      {
+        findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+          input.db.events.filter((event) => matchesWhere(event, args.where))
+      }
+    ],
+    [
+      prisma.finding,
+      {
+        findMany: async (args: { where?: Record<string, unknown> } = {}) =>
+          input.db.findings.filter((finding) =>
+            matchesWhere(finding, args.where)
+          )
+      }
+    ],
+    [
+      prisma.rewritePlan,
+      {
+        findFirst: async () => null
+      }
+    ],
+    [
+      prisma.editorialDecision,
+      {
+        createMany: async (args: { data: Array<Record<string, unknown>> }) => {
+          input.db.decisions.push(...args.data);
+          return { count: args.data.length };
+        }
+      }
+    ],
+    [
+      prisma.manuscriptNode,
+      {
+        findFirst: async (args: { where?: Record<string, unknown> } = {}) =>
+          input.db.nodes.find((node) => matchesWhere(node, args.where)) ?? null,
+        updateMany: async (args: {
+          where?: Record<string, unknown>;
+          data: Record<string, unknown>;
+        }) => {
+          const nodes = input.db.nodes.filter((node) =>
+            matchesWhere(node, args.where)
+          );
+          nodes.forEach((node) => Object.assign(node, args.data));
+          return { count: nodes.length };
+        }
+      }
+    ],
+    [
+      prisma.manuscriptChapter,
+      {
+        update: async (args: {
+          where: { id: string };
+          data: Record<string, unknown>;
+        }) => {
+          const chapter = input.db.chapters.find(
+            (candidate) => candidate.id === args.where.id
+          );
+          assert.ok(chapter);
+          Object.assign(chapter, args.data);
+          return chapter;
+        }
       }
     ]
   ];
@@ -1123,6 +2157,117 @@ function filterJobs(jobs: MutableJob[], where: Record<string, unknown> = {}) {
 
     return true;
   });
+}
+
+function matchesWhere(item: Record<string, unknown>, where: Record<string, unknown> = {}) {
+  if (!where) {
+    return true;
+  }
+
+  const or = Array.isArray(where.OR) ? where.OR : [];
+  if (or.length > 0 && !or.some((part) => matchesWhere(item, recordValue(part) ?? {}))) {
+    return false;
+  }
+
+  for (const [key, expected] of Object.entries(where)) {
+    if (key === "OR") {
+      continue;
+    }
+    if (!matchesField(item[key], expected)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function matchesField(actual: unknown, expected: unknown): boolean {
+  if (expected === null || typeof expected !== "object" || expected instanceof Date) {
+    return actual === expected;
+  }
+
+  const record = recordValue(expected);
+  if (!record) {
+    return actual === expected;
+  }
+
+  if (Array.isArray(record.in)) {
+    return record.in.includes(actual);
+  }
+
+  if (record.path && record.equals !== undefined) {
+    return nestedValue(actual, record.path) === record.equals;
+  }
+
+  return Object.entries(record).every(([key, value]) =>
+    matchesField(recordValue(actual)?.[key], value)
+  );
+}
+
+function nestedValue(value: unknown, path: unknown) {
+  if (!Array.isArray(path)) {
+    return undefined;
+  }
+
+  return path.reduce<unknown>((current, segment) => {
+    const record = recordValue(current);
+    return record ? record[String(segment)] : undefined;
+  }, value);
+}
+
+function chapterCapsuleJson() {
+  return {
+    chapterSummary: "Compiled chapter summary.",
+    chapterFunction: "Moves the manuscript forward.",
+    characterMovement: {},
+    plotMovement: {},
+    pacingAssessment: "Steady.",
+    continuityRisks: [],
+    styleFingerprint: {},
+    revisionPressure: "low",
+    mustPreserve: [],
+    suggestedEditorialFocus: []
+  };
+}
+
+function wholeBookMapJson() {
+  return {
+    bookPremise: "A compact whole-book premise.",
+    whatTheBookIsTryingToBe: "A complete editorial map.",
+    structureMap: {},
+    mainArc: {},
+    characterArcs: {},
+    themeMap: {},
+    pacingCurve: {},
+    continuityRiskMap: {},
+    topStructuralIssues: [],
+    topVoiceRisks: [],
+    topCommercialRisks: [],
+    revisionStrategy: "Proceed to next editorial actions.",
+    confidence: 0.7,
+    uncertainties: []
+  };
+}
+
+function fakeOpenAIClient(
+  requests: Array<Record<string, unknown>>,
+  jsonResponse: unknown
+): OpenAIClient {
+  return {
+    chat: {
+      completions: {
+        create: async (request: Record<string, unknown>) => {
+          requests.push(request);
+          return {
+            choices: [{ message: { content: JSON.stringify(jsonResponse) } }]
+          };
+        }
+      }
+    },
+    embeddings: {
+      create: async () => ({ data: [{ embedding: [0.1] }] })
+    }
+  } as unknown as OpenAIClient;
 }
 
 async function withPatchedPrisma<T>(

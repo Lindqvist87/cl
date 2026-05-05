@@ -26,7 +26,7 @@ import { prisma } from "@/lib/prisma";
 const DEFAULT_MAX_BATCHES = 5;
 const DEFAULT_MAX_SECONDS = 240;
 const DEFAULT_MAX_JOBS_PER_BATCH = 5;
-const DEFAULT_MAX_ITEMS_PER_STEP = 4;
+const DEFAULT_MAX_ITEMS_PER_STEP = 2;
 
 const ACTIVE_MANUSCRIPT_AUTO_RUNS = new Set<string>();
 const ACTIVE_JOB_STATUSES = new Set<string>([
@@ -43,6 +43,7 @@ export type AutoContinueStoppedReason =
   | "no_ready_jobs"
   | "max_batches_reached"
   | "max_seconds_reached"
+  | "partial_progress_needs_next_run"
   | "recovered_stale_job_needs_next_run";
 
 export type AutoContinueOptions = {
@@ -272,6 +273,17 @@ function stoppedReasonFromBatch(
   }
 
   if (
+    batch.results.some(
+      (result) =>
+        result.status === "queued" &&
+        typeof result.jobId === "string" &&
+        result.readyJobIds.includes(result.jobId)
+    )
+  ) {
+    return "partial_progress_needs_next_run";
+  }
+
+  if (
     batch.reason === "waiting_for_lock_expiry" ||
     batch.reason === "running_job_in_progress"
   ) {
@@ -443,6 +455,11 @@ function autoContinueMessage(input: {
         ? `Recovered stale ${recovered.type}. Run until pause again to continue.`
         : "Recovered a stale pipeline job. Run until pause again to continue.";
     }
+    case "partial_progress_needs_next_run":
+      return (
+        input.lastBatchMessage ??
+        "Batch made partial progress. Run until pause again to continue."
+      );
     case "max_batches_reached":
       return `${runSummary(input.batchesRun, input.totalJobsRun)} More work remains.`;
     case "max_seconds_reached":

@@ -21,11 +21,25 @@ export const PIPELINE_JOB_TYPES = {
   CORPUS_BENCHMARK_CHECK: "CORPUS_BENCHMARK_CHECK"
 } as const;
 
+export const DEFAULT_STALE_RUNNING_JOB_MS = 10 * 60 * 1000;
+export const MANUAL_FINAL_SYNTHESIS_LOCK_MS = 2 * 60 * 1000;
+
+const FINAL_SYNTHESIS_JOB_TYPES = new Set<string>([
+  "runWholeBookAudit",
+  "compareAgainstCorpus",
+  "compareAgainstTrendSignals",
+  "createRewritePlan"
+]);
+
 export type JobRuleSnapshot = {
+  type?: string;
   status: string;
   dependencyIds?: unknown;
+  lockedBy?: string | null;
   lockedAt?: Date | string | null;
   lockExpiresAt?: Date | string | null;
+  startedAt?: Date | string | null;
+  updatedAt?: Date | string | null;
   readyAt?: Date | string | null;
   attempts?: number;
   maxAttempts?: number;
@@ -77,7 +91,32 @@ export function isJobReadyAtSatisfied(
 }
 
 export function isLockStale(job: JobRuleSnapshot, now: Date = new Date()) {
-  return Boolean(job.lockExpiresAt && new Date(job.lockExpiresAt) <= now);
+  const referenceTime = firstDateMs(job.lockedAt, job.startedAt, job.updatedAt);
+
+  if (
+    isManualFinalSynthesisJob(job) &&
+    referenceTime !== null &&
+    referenceTime <= now.getTime() - MANUAL_FINAL_SYNTHESIS_LOCK_MS
+  ) {
+    return true;
+  }
+
+  if (job.lockExpiresAt && new Date(job.lockExpiresAt) <= now) {
+    return true;
+  }
+
+  if (job.status !== PIPELINE_JOB_STATUS.RUNNING || job.lockExpiresAt) {
+    return false;
+  }
+
+  return (
+    referenceTime !== null &&
+    referenceTime <= now.getTime() - DEFAULT_STALE_RUNNING_JOB_MS
+  );
+}
+
+export function isFinalSynthesisJobType(type: unknown) {
+  return typeof type === "string" && FINAL_SYNTHESIS_JOB_TYPES.has(type);
 }
 
 export function canAttemptJob(job: JobRuleSnapshot, now: Date = new Date()) {
@@ -116,4 +155,28 @@ export function executionModeLabel(input: {
   }
 
   return input.hasCronFallback ? "Vercel cron fallback" : "Manual/request runner";
+}
+
+function firstDateMs(...values: Array<Date | string | null | undefined>) {
+  for (const value of values) {
+    if (!value) {
+      continue;
+    }
+
+    const time = value instanceof Date ? value.getTime() : new Date(value).getTime();
+    if (Number.isFinite(time)) {
+      return time;
+    }
+  }
+
+  return null;
+}
+
+function isManualFinalSynthesisJob(job: JobRuleSnapshot) {
+  return (
+    job.status === PIPELINE_JOB_STATUS.RUNNING &&
+    isFinalSynthesisJobType(job.type) &&
+    typeof job.lockedBy === "string" &&
+    job.lockedBy.startsWith("manual:")
+  );
 }

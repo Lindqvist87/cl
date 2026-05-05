@@ -17,6 +17,7 @@ import {
   withAiUsage,
   type AiUsageLog
 } from "@/lib/ai/usage";
+import { buildChapterContextPack } from "@/lib/compiler/contextPack";
 import { jsonInput } from "@/lib/json";
 import { prisma } from "@/lib/prisma";
 import {
@@ -185,6 +186,10 @@ export async function draftChapterRewrite(
     input.runId,
     input.manuscriptId
   );
+  const compilerContextPack = await safeChapterContextPack({
+    manuscriptId: input.manuscriptId,
+    chapterId: chapter.id
+  });
 
   const rewrittenParts: string[] = [];
   const sectionResults: ChapterRewriteResult[] = [];
@@ -220,6 +225,7 @@ export async function draftChapterRewrite(
           previousSectionSummaries,
           continuityRules: continuityLedger,
           corpusPatternNotes,
+          contextPack: compilerContextPack,
           rewriteScope: {
             type: "chunk",
             sectionIndex: section.sectionIndex,
@@ -248,6 +254,7 @@ export async function draftChapterRewrite(
           wordCount: section.wordCount,
           previousCanonChapterCount: continuityLedger.acceptedCanonChapterCount,
           corpusPatternNoteCount: corpusPatternNotes.length,
+          contextPackAvailable: Boolean(compilerContextPack),
           corpusPayloadPolicy: "summarized_patterns_only_no_full_books"
         }
       });
@@ -300,6 +307,7 @@ export async function draftChapterRewrite(
         originalWordCount: countWords(chapter.text),
         previousCanonChapterCount: continuityLedger.acceptedCanonChapterCount,
         corpusPatternNoteCount: corpusPatternNotes.length,
+        contextPackAvailable: Boolean(compilerContextPack),
         corpusPayloadPolicy: "summarized_patterns_only_no_full_books"
       })
     }
@@ -319,11 +327,27 @@ export async function draftChapterRewrite(
       chapterTitle: chapter.title,
       sectionCount: sections.length,
       originalWordCount: countWords(chapter.text),
-      previousCanonChapterCount: continuityLedger.acceptedCanonChapterCount
+      previousCanonChapterCount: continuityLedger.acceptedCanonChapterCount,
+      contextPackAvailable: Boolean(compilerContextPack)
     }
   });
 
   return { rewrite, created: true };
+}
+
+async function safeChapterContextPack(input: {
+  manuscriptId: string;
+  chapterId: string;
+}) {
+  try {
+    return await buildChapterContextPack({
+      manuscriptId: input.manuscriptId,
+      chapterId: input.chapterId,
+      purpose: "chapter_rewrite"
+    });
+  } catch {
+    return null;
+  }
 }
 
 async function ensureChapterRewriteOutput(rewrite: ChapterRewrite, runId: string) {

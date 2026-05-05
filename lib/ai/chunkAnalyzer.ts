@@ -21,7 +21,7 @@ export async function analyzeManuscriptChunk(input: ChunkInput) {
   }
 
   return requestEditorJson<ChunkAnalysisResult>({
-    ...modelConfigForRole("audit"),
+    ...modelConfigForRole("sceneAnalysis"),
     system: [
       "You are a senior manuscript editor analyzing one chunk in a resumable pipeline.",
       "Return strict JSON only.",

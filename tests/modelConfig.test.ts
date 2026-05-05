@@ -5,9 +5,13 @@ import {
   auditReasoningEffort,
   chiefEditorModel,
   chiefEditorReasoningEffort,
+  modelConfigForRole,
+  parseReasoningEffort,
   resolveModelConfig
 } from "../lib/ai/modelConfig";
 import { analyzeManuscriptChunk } from "../lib/ai/chunkAnalyzer";
+import { analyzeWholeBook } from "../lib/ai/wholeBookAnalyzer";
+import { compareTrends } from "../lib/ai/trendComparator";
 import { planRewrite } from "../lib/ai/rewritePlanner";
 import {
   setOpenAIClientForTest,
@@ -36,7 +40,13 @@ test("model config preserves safe fallbacks when role env vars are missing", () 
   assert.equal(defaultConfig.auditModel, "gpt-5.4-mini");
   assert.equal(defaultConfig.auditReasoningEffort, "medium");
   assert.equal(defaultConfig.chiefEditorModel, "gpt-5.4");
-  assert.equal(defaultConfig.chiefEditorReasoningEffort, "high");
+  assert.equal(defaultConfig.chiefEditorReasoningEffort, "xhigh");
+  assert.equal(defaultConfig.roles.extraction.model, "gpt-5.4-nano");
+  assert.equal(defaultConfig.roles.extraction.reasoningEffort, "low");
+  assert.equal(defaultConfig.roles.sceneAnalysis.model, "gpt-5.4-mini");
+  assert.equal(defaultConfig.roles.sceneAnalysis.reasoningEffort, "medium");
+  assert.equal(defaultConfig.roles.wholeBookCompiler.model, "gpt-5.4");
+  assert.equal(defaultConfig.roles.wholeBookCompiler.reasoningEffort, "xhigh");
 
   const legacyConfig = resolveModelConfig({
     OPENAI_AUDIT_MODEL: "legacy-audit-model",
@@ -50,15 +60,18 @@ test("model config preserves safe fallbacks when role env vars are missing", () 
 test("invalid reasoning efforts fall back to safe defaults", () => {
   const config = resolveModelConfig({
     AUDIT_REASONING_EFFORT: "maximum",
-    CHIEF_EDITOR_REASONING_EFFORT: "expensive"
+    CHIEF_EDITOR_REASONING_EFFORT: "x-high"
   });
 
   assert.equal(config.auditReasoningEffort, "medium");
-  assert.equal(config.chiefEditorReasoningEffort, "high");
+  assert.equal(config.chiefEditorReasoningEffort, "xhigh");
+  assert.equal(parseReasoningEffort("xhigh", "low"), "xhigh");
+  assert.equal(parseReasoningEffort("x-high", "low"), "low");
 });
 
-test("audit calls use audit model configuration", async () => {
+test("chunk analysis calls use scene analysis model configuration", async () => {
   const requests: ChatRequest[] = [];
+  const sceneConfig = modelConfigForRole("sceneAnalysis");
   const restore = setOpenAIClientForTest(
     fakeOpenAIClient(requests, {
       summary: "Chunk summary.",
@@ -88,12 +101,27 @@ test("audit calls use audit model configuration", async () => {
       text: "A door opens into trouble."
     });
 
-    assert.equal(result.model, auditModel);
-    assert.equal(requests[0].model, auditModel);
-    assert.equal(requests[0].reasoning_effort, auditReasoningEffort);
+    assert.equal(result.model, sceneConfig.model);
+    assert.equal(requests[0].model, sceneConfig.model);
+    assert.equal(requests[0].reasoning_effort, sceneConfig.reasoningEffort);
   } finally {
     restore();
   }
+});
+
+test("new compiler roles resolve explicit env values and legacy fallbacks", () => {
+  const config = resolveModelConfig({
+    OPENAI_AUDIT_MODEL: "legacy-audit",
+    OPENAI_EDITOR_MODEL: "legacy-editor",
+    OPENAI_REWRITE_MODEL: "legacy-rewrite",
+    WHOLE_BOOK_COMPILER_REASONING_EFFORT: "xhigh"
+  });
+
+  assert.equal(config.roles.chapterCompiler.model, "legacy-rewrite");
+  assert.equal(config.roles.wholeBookCompiler.model, "legacy-rewrite");
+  assert.equal(config.roles.rewrite.model, "legacy-rewrite");
+  assert.equal(config.roles.wholeBookCompiler.reasoningEffort, "xhigh");
+  assert.notEqual(config.roles.wholeBookCompiler.reasoningEffort, "x-high");
 });
 
 test("chief editor calls use chief editor model configuration", async () => {
@@ -131,9 +159,67 @@ test("chief editor calls use chief editor model configuration", async () => {
   }
 });
 
+test("final synthesis stages use bounded timeouts and system fallback", async () => {
+  const requests: ChatRequest[] = [];
+  const restore = setOpenAIClientForTest(failingOpenAIClient(requests));
+
+  try {
+    const wholeBook = await analyzeWholeBook({
+      manuscriptTitle: "Very Large Manuscript",
+      targetGenre: "Fantasy",
+      targetAudience: "Adult",
+      wordCount: 250000,
+      chapterSummaries: Array.from({ length: 120 }, (_, index) => ({
+        chapterIndex: index + 1,
+        title: `Chapter ${index + 1}`,
+        summary: "A long summary. ".repeat(200),
+        wordCount: 2000
+      })),
+      profile: {
+        pacingCurve: Array.from({ length: 200 }, (_, index) => ({
+          index,
+          note: "large profile item"
+        }))
+      }
+    });
+    const trends = await compareTrends({
+      manuscriptTitle: "Very Large Manuscript",
+      targetGenre: "Fantasy",
+      targetAudience: "Adult",
+      wholeBookSummary: "Summary",
+      trendSignals: [{ source: "manual", description: "trend".repeat(1000) }]
+    });
+    const rewrite = await planRewrite({
+      manuscriptTitle: "Very Large Manuscript",
+      targetGenre: "Fantasy",
+      targetAudience: "Adult",
+      wholeBookAudit: wholeBook.json,
+      trendComparison: trends.json,
+      findings: [],
+      chapters: []
+    });
+
+    assert.equal(wholeBook.model, "system-fallback");
+    assert.equal(trends.model, "system-fallback");
+    assert.equal(rewrite.model, "system-fallback");
+    assert.equal(requests.every((request) => typeof request.timeout === "number"), true);
+    assert.equal(
+      requests.every((request) => {
+        const serialized = JSON.stringify(request.messages ?? []);
+        return serialized.length < 120000;
+      }),
+      true
+    );
+  } finally {
+    restore();
+  }
+});
+
 type ChatRequest = {
   model?: string;
   reasoning_effort?: string;
+  messages?: Array<{ role: string; content: string }>;
+  timeout?: number;
 };
 
 function fakeOpenAIClient(
@@ -143,8 +229,8 @@ function fakeOpenAIClient(
   return {
     chat: {
       completions: {
-        create: async (request: ChatRequest) => {
-          requests.push(request);
+        create: async (request: ChatRequest, options?: { timeout?: number }) => {
+          requests.push({ ...request, timeout: options?.timeout });
           return {
             choices: [
               {
@@ -154,6 +240,24 @@ function fakeOpenAIClient(
               }
             ]
           };
+        }
+      }
+    },
+    embeddings: {
+      create: async () => ({
+        data: [{ embedding: [0.1, 0.2, 0.3] }]
+      })
+    }
+  } as unknown as OpenAIClient;
+}
+
+function failingOpenAIClient(requests: ChatRequest[]): OpenAIClient {
+  return {
+    chat: {
+      completions: {
+        create: async (request: ChatRequest, options?: { timeout?: number }) => {
+          requests.push({ ...request, timeout: options?.timeout });
+          throw new Error("simulated slow final-stage model");
         }
       }
     },

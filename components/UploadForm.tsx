@@ -1,21 +1,36 @@
 "use client";
 
-import { useRef, useState } from "react";
+import React, { useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { CheckCircle2, FileText, Upload } from "lucide-react";
 import copy from "@/content/app-copy.json";
+
+const QUEUED_UPLOAD_MESSAGE =
+  "Manuset är uppladdat och analysjobben är köade. Starta eller återuppta analysen via admin.";
+const PIPELINE_WARNING_MESSAGE =
+  "Manuset är uppladdat, men analysen startade inte automatiskt. Starta eller återuppta analysen via admin.";
+export const ADMIN_JOBS_PATH = "/admin/jobs?filter=ready";
 
 export function UploadForm() {
   const router = useRouter();
   const inputRef = useRef<HTMLInputElement>(null);
   const [isUploading, setIsUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
+  const [uploadedManuscriptId, setUploadedManuscriptId] = useState<string | null>(
+    null
+  );
+  const [showAdminJobsLink, setShowAdminJobsLink] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [selectedFileName, setSelectedFileName] = useState<string | null>(null);
 
   function selectFile(fileName: string | null) {
     setSelectedFileName(fileName);
     setError(null);
+    setWarning(null);
+    setUploadedManuscriptId(null);
+    setShowAdminJobsLink(false);
   }
 
   function onFileChange(event: React.ChangeEvent<HTMLInputElement>) {
@@ -68,25 +83,34 @@ export function UploadForm() {
     formData.set("file", file);
     setIsUploading(true);
     setError(null);
+    setWarning(null);
+    setUploadedManuscriptId(null);
+    setShowAdminJobsLink(false);
 
     const response = await fetch("/api/upload", {
       method: "POST",
       body: formData
     });
 
-    const payload = (await response.json()) as {
-      manuscriptId?: string;
-      error?: string;
-    };
+    const payload = (await response.json().catch(() => ({}))) as UploadResponse;
 
     setIsUploading(false);
 
-    if (!response.ok || !payload.manuscriptId) {
-      setError(payload.error ?? copy.upload.failedError);
+    const feedback = uploadFeedbackFromResponse(response.ok, payload);
+
+    if (feedback.kind === "error") {
+      setError(feedback.message);
       return;
     }
 
-    router.push(`/manuscripts/${payload.manuscriptId}`);
+    if (feedback.kind === "notice") {
+      setWarning(feedback.message);
+      setUploadedManuscriptId(feedback.manuscriptId);
+      setShowAdminJobsLink(feedback.showAdminJobsLink);
+      return;
+    }
+
+    router.push(`/manuscripts/${feedback.manuscriptId}`);
     router.refresh();
   }
 
@@ -179,8 +203,112 @@ export function UploadForm() {
         </button>
       </div>
       {error ? <p className="mt-3 text-sm text-danger">{error}</p> : null}
+      {warning ? (
+        <p
+          role="status"
+          className="mt-3 rounded-lg border border-line bg-paper-alt px-3 py-2 text-sm text-ink"
+        >
+          {warning}
+        </p>
+      ) : null}
+      {uploadedManuscriptId ? (
+        <UploadStatusLinks
+          manuscriptId={uploadedManuscriptId}
+          showAdminJobsLink={showAdminJobsLink}
+        />
+      ) : null}
     </form>
   );
+}
+
+export type UploadResponse = {
+  manuscriptId?: string;
+  error?: string;
+  phase?: string;
+  pipelineStarted?: boolean;
+  pipelineQueued?: boolean;
+  pipelineWarning?: string;
+  message?: string;
+};
+
+type UploadFeedback =
+  | { kind: "redirect"; manuscriptId: string }
+  | { kind: "error"; message: string }
+  | {
+      kind: "notice";
+      message: string;
+      manuscriptId: string;
+      showAdminJobsLink: boolean;
+    };
+
+export function uploadFeedbackFromResponse(
+  responseOk: boolean,
+  payload: UploadResponse
+): UploadFeedback {
+  if (!responseOk || !payload.manuscriptId) {
+    return {
+      kind: "error",
+      message: uploadResponseMessage(payload, copy.upload.failedError)
+    };
+  }
+
+  if (payload.pipelineQueued === true) {
+    return {
+      kind: "notice",
+      manuscriptId: payload.manuscriptId,
+      showAdminJobsLink: true,
+      message: payload.message || QUEUED_UPLOAD_MESSAGE
+    };
+  }
+
+  if (payload.pipelineStarted === false) {
+    return {
+      kind: "notice",
+      manuscriptId: payload.manuscriptId,
+      showAdminJobsLink: false,
+      message: uploadResponseMessage(payload, PIPELINE_WARNING_MESSAGE)
+    };
+  }
+
+  return { kind: "redirect", manuscriptId: payload.manuscriptId };
+}
+
+export function UploadStatusLinks({
+  manuscriptId,
+  showAdminJobsLink
+}: {
+  manuscriptId: string;
+  showAdminJobsLink: boolean;
+}) {
+  return (
+    <div className="mt-3 flex flex-wrap gap-2">
+      <Link
+        href={`/manuscripts/${manuscriptId}`}
+        className="secondary-button w-fit"
+      >
+        Visa uppladdat manus
+      </Link>
+      {showAdminJobsLink ? (
+        <Link href={ADMIN_JOBS_PATH} className="secondary-button w-fit">
+          Öppna adminjobb
+        </Link>
+      ) : null}
+    </div>
+  );
+}
+
+function uploadResponseMessage(payload: UploadResponse, fallback: string) {
+  const parts = [payload.error ?? payload.message ?? fallback];
+
+  if (payload.phase) {
+    parts.push(`phase=${payload.phase}`);
+  }
+
+  if (payload.pipelineWarning) {
+    parts.push(payload.pipelineWarning);
+  }
+
+  return parts.filter(Boolean).join(" ");
 }
 
 function EditorialField({

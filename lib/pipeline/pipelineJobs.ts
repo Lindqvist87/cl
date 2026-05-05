@@ -36,8 +36,10 @@ import {
   canAttemptJob,
   dependencyIdsFromJson,
   isCompletedJob,
+  isFinalSynthesisJobType,
   isJobCancelled,
   isLockStale,
+  MANUAL_FINAL_SYNTHESIS_LOCK_MS,
   nextStatusAfterJobError,
   PIPELINE_JOB_STATUS,
   PIPELINE_JOB_TYPES
@@ -60,12 +62,13 @@ import {
 import type { JsonRecord } from "@/lib/types";
 
 const DEFAULT_LOCK_MS = 10 * 60 * 1000;
-const DEFAULT_MAX_ITEMS_PER_STEP = 4;
+const DEFAULT_MAX_ITEMS_PER_STEP = 2;
 
 export type PipelineStartMode = "FULL_PIPELINE" | "RESUME" | "REWRITE_ONLY";
 
 export type RunPipelineJobOptions = {
   workerId?: string;
+  workerType?: "INNGEST" | "VERCEL_CRON" | "MANUAL";
   maxItemsPerStep?: number;
 };
 
@@ -330,16 +333,6 @@ export async function runReadyPipelineJobs(options: RunReadyJobsOptions = {}) {
   const recoveredStaleJobs = await releaseStaleLocks(scope);
   await unblockReadyJobsForScope(scope);
 
-  if (recoveredStaleJobs.length > 0) {
-    return buildRunReadyPipelineJobsResult({
-      scope,
-      workerType,
-      results,
-      readyJobIds,
-      recoveredStaleJobs
-    });
-  }
-
   while (results.length < maxJobs && Date.now() - startedAt < maxSeconds * 1000) {
     const nextJob = await findNextReadyJob(scope);
     if (!nextJob) {
@@ -350,7 +343,7 @@ export async function runReadyPipelineJobs(options: RunReadyJobsOptions = {}) {
     results.push(result);
     readyJobIds.push(...result.readyJobIds);
 
-    if (result.status === "locked") {
+    if (result.status === "locked" || result.status === "queued") {
       break;
     }
   }
@@ -460,7 +453,11 @@ export async function runPipelineJob(
     );
   }
 
-  const locked = await acquirePipelineJobLock(job.id, options.workerId);
+  const locked = await acquirePipelineJobLock(
+    job.id,
+    options.workerId,
+    lockMsForJob(job.type, options.workerType)
+  );
   if (!locked) {
     return jobResult(job, "locked");
   }
@@ -469,10 +466,13 @@ export async function runPipelineJob(
     const result = MANUSCRIPT_PIPELINE_STEPS.includes(
       locked.type as ManuscriptPipelineStep
     )
-      ? await runManuscriptPipelineStepJob(
-          locked,
-          positiveInt(options.maxItemsPerStep, DEFAULT_MAX_ITEMS_PER_STEP)
-        )
+      ? await runManuscriptPipelineStepJob(locked, {
+          maxItemsPerStep: positiveInt(
+            options.maxItemsPerStep,
+            DEFAULT_MAX_ITEMS_PER_STEP
+          ),
+          forceCompilerFallback: shouldForceCompilerFallback(options)
+        })
       : isCorpusPipelineJobType(locked.type)
         ? await runCorpusPipelineStepJob(locked)
       : locked.type === PIPELINE_JOB_TYPES.CHAPTER_REWRITE
@@ -637,25 +637,34 @@ export async function findNextReadyJob(scopeOrManuscriptId?: string | PipelineJo
 export async function releaseStaleLocks(scopeOrManuscriptId?: string | PipelineJobScope) {
   const scope = normalizePipelineJobScope(scopeOrManuscriptId);
   const now = new Date();
-  const staleJobs = await prisma.pipelineJob.findMany({
+  const runningJobs = await prisma.pipelineJob.findMany({
     where: {
       ...pipelineJobScopeWhere(scope),
-      status: PIPELINE_JOB_STATUS.RUNNING,
-      lockExpiresAt: { lte: now }
+      status: PIPELINE_JOB_STATUS.RUNNING
     }
   });
+  const staleJobs = runningJobs.filter((job) => isLockStale(job, now));
   const recoveredJobs = staleJobs.map((job) => pipelineBlockingJob(job, now));
 
   for (const job of staleJobs) {
-    const status = nextStatusAfterJobError({
-      attempts: job.attempts,
-      maxAttempts: job.maxAttempts
-    });
+    const hasIncompleteProgress = hasIncompleteStepResult(job.result);
+    const shouldRequeue = hasIncompleteProgress || isResumableCompilerJob(job);
+    const status = shouldRequeue
+      ? PIPELINE_JOB_STATUS.QUEUED
+      : nextStatusAfterJobError({
+          attempts: job.attempts,
+          maxAttempts: job.maxAttempts
+        });
     const updated = await prisma.pipelineJob.update({
       where: { id: job.id },
       data: {
         status,
-        error: job.error ?? "Job lock expired before completion.",
+        error: shouldRequeue
+          ? null
+          : job.error ?? "Job lock expired before completion.",
+        ...(shouldRequeue
+          ? { attempts: attemptsAfterPartialProgress(job) }
+          : {}),
         lockedAt: null,
         lockedBy: null,
         lockExpiresAt: null,
@@ -699,7 +708,10 @@ export async function recordWorkerHeartbeat(
 
 async function runManuscriptPipelineStepJob(
   job: PipelineJob,
-  maxItemsPerStep: number
+  options: {
+    maxItemsPerStep: number;
+    forceCompilerFallback: boolean;
+  }
 ): Promise<RunPipelineJobResult> {
   if (!job.manuscriptId) {
     throw new Error("Pipeline step job is missing manuscriptId.");
@@ -727,7 +739,8 @@ async function runManuscriptPipelineStepJob(
     markStepStarted(checkpoint, step)
   );
   const metadata = await runPipelineStep(step, job.manuscriptId, run.id, {
-    maxItems: maxItemsPerStep
+    maxItems: options.maxItemsPerStep,
+    forceCompilerFallback: options.forceCompilerFallback
   });
 
   if (!isPipelineStepRunComplete(metadata)) {
@@ -748,6 +761,7 @@ async function runManuscriptPipelineStepJob(
         lockExpiresAt: null
       }
     });
+    await updateManuscriptPipelineStatus(job.manuscriptId);
     return jobResult(queued, "queued", [queued.id]);
   }
 
@@ -834,9 +848,13 @@ async function failUnknownJobType(job: PipelineJob): Promise<RunPipelineJobResul
   throw new Error(`Unknown pipeline job type: ${job.type}`);
 }
 
-async function acquirePipelineJobLock(jobId: string, workerId = "worker") {
+async function acquirePipelineJobLock(
+  jobId: string,
+  workerId = "worker",
+  lockMs = DEFAULT_LOCK_MS
+) {
   const now = new Date();
-  const lockExpiresAt = new Date(now.getTime() + DEFAULT_LOCK_MS);
+  const lockExpiresAt = new Date(now.getTime() + lockMs);
   const update = await prisma.pipelineJob.updateMany({
     where: {
       id: jobId,
@@ -1150,6 +1168,34 @@ function retryDelayMs(attempts: number) {
 function attemptsAfterPartialProgress(job: PipelineJob) {
   const beforeThisRun = Math.max(job.attempts - 1, 0);
   return Math.min(beforeThisRun, Math.max(job.maxAttempts - 1, 0));
+}
+
+function hasIncompleteStepResult(result: unknown) {
+  const record = toJsonRecord(result);
+  return record.complete === false || numberOrZero(record.remaining) > 0;
+}
+
+function isResumableCompilerJob(job: PipelineJob) {
+  return (
+    job.type === "compileWholeBookMap" ||
+    job.type === "createNextBestEditorialActions"
+  );
+}
+
+function shouldForceCompilerFallback(options: RunPipelineJobOptions) {
+  return options.workerType === "MANUAL";
+}
+
+function lockMsForJob(type: string, workerType?: RunPipelineJobOptions["workerType"]) {
+  if (workerType === "MANUAL" && isFinalSynthesisJobType(type)) {
+    return MANUAL_FINAL_SYNTHESIS_LOCK_MS;
+  }
+
+  return DEFAULT_LOCK_MS;
+}
+
+function numberOrZero(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function maxAttemptsForJobType(type: string) {

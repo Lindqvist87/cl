@@ -8,6 +8,8 @@ import {
   auditReasoningEffort,
   chiefEditorModel,
   chiefEditorReasoningEffort,
+  modelConfigForRole,
+  type ModelRole,
   type ReasoningEffort
 } from "@/lib/ai/modelConfig";
 import { usageLogFromOpenAIUsage, type AiUsageLog } from "@/lib/ai/usage";
@@ -17,10 +19,12 @@ export const EDITOR_PROMPT_VERSION = "editor-v2-1";
 type JsonRequest = {
   system: string;
   user: string;
+  role?: ModelRole;
   model?: string;
   reasoningEffort?: ReasoningEffort;
   temperature?: number;
   retries?: number;
+  timeoutMs?: number;
 };
 
 export type EditorJsonResult<T> = {
@@ -61,39 +65,51 @@ export function hasEditorModelKey() {
 export async function requestEditorJson<T>({
   system,
   user,
-  model = auditModel,
-  reasoningEffort = auditReasoningEffort,
+  role,
+  model,
+  reasoningEffort,
   temperature,
-  retries = 2
+  retries = 2,
+  timeoutMs
 }: JsonRequest): Promise<EditorJsonResult<T>> {
+  const roleConfig = role ? modelConfigForRole(role) : undefined;
+  const resolvedModel = model ?? roleConfig?.model ?? auditModel;
+  const resolvedReasoningEffort =
+    reasoningEffort ?? roleConfig?.reasoningEffort ?? auditReasoningEffort;
   let attempt = 0;
   let lastError: unknown;
 
   while (attempt <= retries) {
     try {
-      const completion = await getOpenAIClient().chat.completions.create({
-        model,
-        reasoning_effort: reasoningEffort,
-        ...(temperature === undefined ? {} : { temperature }),
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user }
-        ]
-      });
+      const completion = await getOpenAIClient().chat.completions.create(
+        {
+          model: resolvedModel,
+          reasoning_effort: resolvedReasoningEffort as never,
+          ...(temperature === undefined ? {} : { temperature }),
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user }
+          ]
+        },
+        typeof timeoutMs === "number" && timeoutMs > 0
+          ? { timeout: timeoutMs }
+          : undefined
+      );
 
       const rawText = completion.choices[0]?.message.content ?? "{}";
 
       return {
         json: JSON.parse(rawText) as T,
         rawText,
-        model,
-        usage: usageLogFromOpenAIUsage(completion.usage, model)
+        model: resolvedModel,
+        usage: usageLogFromOpenAIUsage(completion.usage, resolvedModel)
       };
     } catch (error) {
       lastError = error;
       console.warn("Editor model request failed", {
-        model,
+        model: resolvedModel,
+        reasoningEffort: resolvedReasoningEffort,
         attempt: attempt + 1,
         message: error instanceof Error ? error.message : String(error)
       });
@@ -107,9 +123,12 @@ export async function requestEditorJson<T>({
     }
   }
 
-  throw lastError instanceof Error
-    ? lastError
-    : new Error("Editor model request failed.");
+  const message =
+    lastError instanceof Error ? lastError.message : String(lastError);
+  throw new Error(
+    `Editor model request failed for model ${resolvedModel} with reasoning_effort ${resolvedReasoningEffort}: ${message}`,
+    { cause: lastError }
+  );
 }
 
 export async function createEmbedding(input: string) {

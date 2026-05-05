@@ -11,7 +11,10 @@ export type ImportStructureWarningCode =
   | "many_detected_sections"
   | "no_chunks"
   | "large_chunk_count"
-  | "possible_false_chapter_split";
+  | "possible_false_chapter_split"
+  | "chapter_word_count_under_80"
+  | "many_chapters_under_150"
+  | "numeric_to_prose_fragment_headings";
 
 export type ImportStructureWarning = {
   code: ImportStructureWarningCode;
@@ -43,6 +46,7 @@ export type ImportInspectorManuscriptInput = {
   wordCount?: number | null;
   chapterCount?: number | null;
   chunkCount?: number | null;
+  metadata?: unknown;
 };
 
 export type ImportInspectorChunk = {
@@ -109,7 +113,9 @@ export function buildImportInspectorData({
   const sectionWarnings = inspectedSections.flatMap((section) => section.warnings);
   const globalWarnings = buildGlobalWarnings({
     detectedSections,
-    chunkCount
+    chunkCount,
+    metadata: manuscript?.metadata,
+    sections: orderedSections
   });
   const warnings = [...globalWarnings, ...sectionWarnings];
 
@@ -159,6 +165,12 @@ export function warningMessage(code: ImportStructureWarningCode) {
       return "This has an unusually large number of chunks";
     case "possible_false_chapter_split":
       return "This may be a false split";
+    case "chapter_word_count_under_80":
+      return "Chapter is under 80 words";
+    case "many_chapters_under_150":
+      return "Many detected chapters are under 150 words";
+    case "numeric_to_prose_fragment_headings":
+      return "Numbered chapters switched to prose-fragment headings";
   }
 }
 
@@ -251,10 +263,14 @@ function buildSectionWarnings(
 
 function buildGlobalWarnings({
   detectedSections,
-  chunkCount
+  chunkCount,
+  metadata,
+  sections
 }: {
   detectedSections: number;
   chunkCount: number;
+  metadata?: unknown;
+  sections: readonly ImportInspectorSectionInput[];
 }): ImportStructureWarning[] {
   const warnings: ImportStructureWarning[] = [];
   const add = (code: ImportStructureWarningCode) => {
@@ -276,7 +292,61 @@ function buildGlobalWarnings({
     add("large_chunk_count");
   }
 
+  return [...warnings, ...parserStructureWarnings(metadata, sections)];
+}
+
+function parserStructureWarnings(
+  metadata: unknown,
+  sections: readonly ImportInspectorSectionInput[]
+): ImportStructureWarning[] {
+  const record = recordFromUnknown(metadata);
+  const structureReview = recordFromUnknown(record.structureReview);
+  const rawWarnings = Array.isArray(structureReview.warnings)
+    ? structureReview.warnings
+    : Array.isArray(record.structureWarnings)
+      ? record.structureWarnings
+      : [];
+  const sectionIdByOrder = new Map<number, string>(
+    sections.map((section) => [section.order, section.id] as const)
+  );
+
+  const warnings: ImportStructureWarning[] = [];
+
+  for (const warning of rawWarnings) {
+    const warningRecord = recordFromUnknown(warning);
+    const code = parserWarningCode(warningRecord.code);
+    if (!code) {
+      continue;
+    }
+
+    const sectionId =
+      typeof warningRecord.chapterOrder === "number"
+        ? sectionIdByOrder.get(warningRecord.chapterOrder)
+        : undefined;
+
+    warnings.push({
+      code,
+      message:
+        typeof warningRecord.message === "string" && warningRecord.message.trim()
+          ? warningRecord.message
+          : warningMessage(code),
+      ...(sectionId ? { sectionId } : {})
+    });
+  }
+
   return warnings;
+}
+
+function parserWarningCode(value: unknown): ImportStructureWarningCode | null {
+  if (
+    value === "chapter_word_count_under_80" ||
+    value === "many_chapters_under_150" ||
+    value === "numeric_to_prose_fragment_headings"
+  ) {
+    return value;
+  }
+
+  return null;
 }
 
 function average(total: number, count: number) {
@@ -291,4 +361,10 @@ function positiveNumber(value: number | null | undefined) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0
     ? value
     : null;
+}
+
+function recordFromUnknown(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 }

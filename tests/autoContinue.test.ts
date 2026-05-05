@@ -10,7 +10,7 @@ import type {
 } from "../lib/pipeline/pipelineJobs";
 
 test("auto-continue loops through multiple batches while work remains", async () => {
-  const calls: Array<{ maxJobs?: number }> = [];
+  const calls: Array<{ maxJobs?: number; maxItemsPerStep?: number }> = [];
   const batches = [
     runReadyResult({
       jobsRun: 2,
@@ -37,7 +37,10 @@ test("auto-continue loops through multiple batches while work remains", async ()
     },
     {
       runReadyJobs: async (options) => {
-        calls.push({ maxJobs: options?.maxJobs });
+        calls.push({
+          maxJobs: options?.maxJobs,
+          maxItemsPerStep: options?.maxItemsPerStep
+        });
         const next = batches.shift();
         assert.ok(next);
         return next;
@@ -54,6 +57,7 @@ test("auto-continue loops through multiple batches while work remains", async ()
   assert.equal(result.batchSummaries.length, 2);
   assert.equal(calls.length, 2);
   assert.equal(calls[0].maxJobs, 3);
+  assert.equal(calls[0].maxItemsPerStep, 2);
 });
 
 test("auto-continue stops on active running lock", async () => {
@@ -244,6 +248,45 @@ test("auto-continue pauses after stale job recovery", async () => {
   assert.equal(result.stoppedReason, "recovered_stale_job_needs_next_run");
   assert.equal(result.recoveredStaleJobs[0].type, "runChapterAudits");
   assert.match(result.message, /Recovered stale runChapterAudits/);
+});
+
+test("auto-continue pauses after partial progress requeues the same job", async () => {
+  const partial = {
+    ...jobResult("chapter-capsules-job", "queued"),
+    type: "compileChapterCapsules",
+    readyJobIds: ["chapter-capsules-job"]
+  };
+  let calls = 0;
+
+  const result = await autoContinueManuscriptPipeline(
+    { manuscriptId: "manuscript-partial-pause", maxBatches: 5 },
+    {
+      runReadyJobs: async () => {
+        calls += 1;
+        return runReadyResult({
+          jobsRun: 1,
+          state: "more_work_remains",
+          message: "Batch compiled 2 chapter capsule(s).",
+          results: [partial],
+          readyJobIds: ["chapter-capsules-job"]
+        });
+      },
+      getSnapshot: async () =>
+        snapshot({
+          finalState: "more_work_remains",
+          nextEligibleJob: jobSummary(
+            "chapter-capsules-job",
+            "compileChapterCapsules"
+          )
+        })
+    }
+  );
+
+  assert.equal(calls, 1);
+  assert.equal(result.batchesRun, 1);
+  assert.equal(result.totalJobsRun, 1);
+  assert.equal(result.stoppedReason, "partial_progress_needs_next_run");
+  assert.match(result.message, /Batch compiled 2 chapter capsule/);
 });
 
 test("auto-continue response includes stoppedReason and batch summaries", async () => {

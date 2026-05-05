@@ -15,9 +15,19 @@ import { PipelineActionButton } from "@/components/PipelineActionButton";
 import { StructureReviewPanel } from "@/components/StructureReviewPanel";
 import { executionModeLabel } from "@/lib/pipeline/jobRules";
 import type { AuditReportJson } from "@/lib/types";
-import { buildPipelineStatusDisplay } from "@/lib/pipeline/display";
+import {
+  buildPipelineStatusDisplay,
+  type PipelineJobCounts
+} from "@/lib/pipeline/display";
 import { getInngestRuntimeConfig } from "@/src/inngest/events";
 import { buildStructureReviewRows } from "@/lib/editorial/structureReview";
+import {
+  MANUAL_QUEUED_ANALYSIS_COPY,
+  analysisStatusLabel,
+  isManualQueuedAnalysisMode,
+  manuscriptManualRunEndpoint,
+  operatorToolsVisibilityFromEnv
+} from "@/lib/pipeline/operatorMode";
 
 export const dynamic = "force-dynamic";
 
@@ -27,7 +37,8 @@ export default async function ManuscriptPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const showAdminTools = process.env.NODE_ENV !== "production";
+  const operatorTools = operatorToolsVisibilityFromEnv(process.env);
+  const { showDeveloperAdminTools, showOperatorTools } = operatorTools;
   const manuscript = await prisma.manuscript.findUnique({
     where: { id },
     include: {
@@ -70,7 +81,20 @@ export default async function ManuscriptPage({
     }
   });
   const inngestConfig = getInngestRuntimeConfig();
-  const lastInngestEvent = showAdminTools
+  const manualQueuedMode = isManualQueuedAnalysisMode({
+    analysisStatus: manuscript.analysisStatus,
+    inngestEnabled: inngestConfig.enabled,
+    pipelineStatus
+  });
+  const manualRunEndpoint = manuscriptManualRunEndpoint(manuscript.id);
+  const displayedAnalysisStatus =
+    analysisStatusLabel({
+      analysisStatus: manuscript.analysisStatus,
+      manualQueuedMode
+    }) ?? formatStatus(manuscript.analysisStatus);
+  const showOperatorPanel =
+    showOperatorTools && (!showDeveloperAdminTools || manualQueuedMode);
+  const lastInngestEvent = showDeveloperAdminTools
     ? await prisma.inngestEventLog.findFirst({
         where: { manuscriptId: manuscript.id },
         orderBy: { createdAt: "desc" }
@@ -99,7 +123,10 @@ export default async function ManuscriptPage({
               Mina manus
             </Link>
             <div className="mt-4 flex flex-wrap items-center gap-3">
-              <StatusBadge status={manuscript.analysisStatus} />
+              <StatusBadge
+                status={manuscript.analysisStatus}
+                label={displayedAnalysisStatus}
+              />
               {latestRewritePlan ? (
                 <span className="inline-flex min-h-8 items-center rounded-full border border-line bg-paper-alt px-3 text-sm font-semibold text-slate-600">
                   Redigeringsplanen är klar
@@ -172,15 +199,26 @@ export default async function ManuscriptPage({
         <Stat label="Ord" value={manuscript.wordCount.toLocaleString()} />
         <Stat label="Manusstruktur" value={String(manuscript.chapterCount)} />
         <Stat label="Textdelar" value={String(manuscript.chunkCount)} />
-        <Stat label="Analys" value={formatStatus(manuscript.analysisStatus)} />
+        <Stat label="Analys" value={displayedAnalysisStatus} />
       </section>
 
       <LivePipelineProgress
         manuscriptId={manuscript.id}
         initialStatus={pipelineStatus}
         analysisStatus={manuscript.analysisStatus}
-        showTechnicalDetails={showAdminTools}
+        manualQueuedMode={manualQueuedMode}
+        showTechnicalDetails={showDeveloperAdminTools}
       />
+
+      {showOperatorPanel ? (
+        <OperatorAnalysisPanel
+          manuscriptId={manuscript.id}
+          endpoint={manualRunEndpoint}
+          manualQueuedMode={manualQueuedMode}
+          inngestEnabled={inngestConfig.enabled}
+          jobCounts={jobCounts}
+        />
+      ) : null}
 
       <section className="grid gap-6 lg:grid-cols-[minmax(520px,0.9fr)_1fr]">
         <StructureReviewPanel
@@ -224,7 +262,7 @@ export default async function ManuscriptPage({
         </div>
       </section>
 
-      {showAdminTools ? (
+      {showDeveloperAdminTools ? (
         <details className="detail-toggle">
           <summary className="flex cursor-pointer items-center gap-2 px-5 py-4 text-sm font-semibold text-ink hover:text-accent">
             <Settings2 size={16} aria-hidden="true" />
@@ -239,7 +277,7 @@ export default async function ManuscriptPage({
                 variant="secondary"
               />
               <PipelineActionButton
-                endpoint={`/api/admin/manuscripts/${manuscript.id}/run-jobs`}
+                endpoint={manualRunEndpoint}
                 label="Run until pause"
                 runningLabel="Running..."
                 variant="secondary"
@@ -349,6 +387,69 @@ function Stat({ label, value }: { label: string; value: string }) {
       <div className="text-xs uppercase tracking-wide text-slate-500">{label}</div>
       <div className="mt-2 text-xl font-semibold">{value}</div>
     </div>
+  );
+}
+
+function OperatorAnalysisPanel({
+  manuscriptId,
+  endpoint,
+  manualQueuedMode,
+  inngestEnabled,
+  jobCounts
+}: {
+  manuscriptId: string;
+  endpoint: string;
+  manualQueuedMode: boolean;
+  inngestEnabled: boolean;
+  jobCounts: PipelineJobCounts;
+}) {
+  return (
+    <section
+      className={`rounded-xl border bg-white p-5 shadow-panel sm:p-6 ${
+        manualQueuedMode ? "border-warn/30" : "border-line"
+      }`}
+    >
+      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="inline-flex min-h-8 items-center gap-2 rounded-full border border-line bg-paper-alt px-3 text-xs font-semibold uppercase tracking-wide text-slate-600">
+            <Settings2 size={14} aria-hidden="true" />
+            Operatorläge
+          </div>
+          <h2 className="mt-3 text-xl font-semibold tracking-normal text-ink">
+            Analyskörning
+          </h2>
+          <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-700">
+            {manualQueuedMode
+              ? MANUAL_QUEUED_ANALYSIS_COPY
+              : "Manuell analyskörning är tillgänglig för preview och felsökning. Knappen kör nästa serverhanterade batch utan att exponera några nycklar i webbläsaren."}
+          </p>
+        </div>
+        <div className="shrink-0">
+          <PipelineActionButton
+            endpoint={endpoint}
+            label="Kör analysbatch"
+            runningLabel="Kör analysbatch..."
+            variant={manualQueuedMode ? "primary" : "secondary"}
+            diagnosticsRefreshManuscriptId={manuscriptId}
+            refreshPageOnComplete
+          />
+        </div>
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+        <span className="inline-flex min-h-7 items-center rounded-full border border-line bg-paper-alt px-3">
+          Automatik {inngestEnabled ? "på" : "av"}
+        </span>
+        <span className="inline-flex min-h-7 items-center rounded-full border border-line bg-paper-alt px-3">
+          Köade {jobCounts.queued}
+        </span>
+        <span className="inline-flex min-h-7 items-center rounded-full border border-line bg-paper-alt px-3">
+          Körs {jobCounts.running}
+        </span>
+        <span className="inline-flex min-h-7 items-center rounded-full border border-line bg-paper-alt px-3">
+          Blockerade {jobCounts.blocked}
+        </span>
+      </div>
+    </section>
   );
 }
 
@@ -462,7 +563,7 @@ function SeverityBadge({ severity }: { severity: string }) {
   );
 }
 
-function StatusBadge({ status }: { status: string }) {
+function StatusBadge({ status, label }: { status: string; label?: string }) {
   const tone =
     status === "COMPLETED"
       ? "border-success/20 bg-green-50 text-success"
@@ -476,7 +577,7 @@ function StatusBadge({ status }: { status: string }) {
     <span
       className={`inline-flex min-h-8 items-center rounded-full border px-3 text-sm font-semibold ${tone}`}
     >
-      {formatStatus(status)}
+      {label ?? formatStatus(status)}
     </span>
   );
 }

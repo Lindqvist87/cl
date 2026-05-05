@@ -2,8 +2,10 @@ import {
   AnalysisPassType,
   AnalysisRunStatus,
   AnalysisRunType,
-  AnalysisStatus
+  AnalysisStatus,
+  type Prisma
 } from "@prisma/client";
+import { createHash, randomUUID } from "node:crypto";
 import { analyzeChapter } from "@/lib/ai/chapterAnalyzer";
 import { analyzeManuscriptChunk } from "@/lib/ai/chunkAnalyzer";
 import {
@@ -29,6 +31,14 @@ import type {
 import { withAiUsage, type AiUsageLog } from "@/lib/ai/usage";
 import { buildBoundedChapterContext } from "@/lib/analysis/chapterContext";
 import { profileDataFromMetrics } from "@/lib/corpus/bookDna";
+import {
+  compileChapterCapsules,
+  compileSceneDigests,
+  compileWholeBookMap,
+  createNextBestEditorialActions,
+  extractNarrativeMemory
+} from "@/lib/compiler/compiler";
+import { buildManuscriptNodes } from "@/lib/compiler/nodes";
 import { planRewrite } from "@/lib/ai/rewritePlanner";
 import { compareTrends } from "@/lib/ai/trendComparator";
 import { analyzeWholeBook } from "@/lib/ai/wholeBookAnalyzer";
@@ -41,6 +51,22 @@ import {
 } from "@/lib/corpus/rights";
 import { jsonInput } from "@/lib/json";
 import {
+  importManifestFromMetadata,
+  importManifestToNormalizedText,
+  importSignatureFromManifest,
+  importSignatureFromMetadata,
+  metadataWithImportManifest
+} from "@/lib/import/v2/manifest";
+import {
+  buildImportInvalidationPlan,
+  invalidateImportDerivedArtifacts,
+  type ImportInvalidationPlan
+} from "@/lib/import/v2/invalidation";
+import { importManifestToParsedManuscript } from "@/lib/import/v2/adapter";
+import { buildTextImportManifest } from "@/lib/import/v2/text";
+import type { ImportManifest } from "@/lib/import/v2/types";
+import { chunkParsedManuscript } from "@/lib/parsing/chunker";
+import {
   FULL_MANUSCRIPT_PIPELINE_STEPS,
   isStepComplete,
   markStepComplete,
@@ -52,10 +78,17 @@ import {
 import { prisma } from "@/lib/prisma";
 import { draftChapterRewrite } from "@/lib/rewrite/chapterRewrite";
 import { countWords, estimateTokensFromWords } from "@/lib/text/wordCount";
-import type { AuditReportJson, IssueSeverity, JsonRecord } from "@/lib/types";
+import type {
+  AuditReportJson,
+  IssueSeverity,
+  JsonRecord,
+  ParsedChunk,
+  ParsedManuscript
+} from "@/lib/types";
 
 export type PipelineStepRunOptions = {
   maxItems?: number;
+  forceCompilerFallback?: boolean;
 };
 
 export type PipelineStepRunResult = Record<string, unknown> & {
@@ -229,11 +262,16 @@ export async function runPipelineStep(
   runId: string,
   options: PipelineStepRunOptions = {}
 ) {
+  const importGate = await importVerificationGate(step, manuscriptId);
+  if (importGate) {
+    return importGate;
+  }
+
   switch (step) {
     case "parseAndNormalizeManuscript":
       return parseAndNormalizeManuscript(manuscriptId);
     case "splitIntoChapters":
-      return splitIntoChapters(manuscriptId);
+      return splitIntoChapters(manuscriptId, runId);
     case "splitIntoChunks":
       return splitIntoChunks(manuscriptId);
     case "createEmbeddingsForChunks":
@@ -244,6 +282,18 @@ export async function runPipelineStep(
       return summarizeChapters(manuscriptId);
     case "createManuscriptProfile":
       return createManuscriptProfile(manuscriptId);
+    case "buildManuscriptNodes":
+      return buildManuscriptNodes(manuscriptId);
+    case "compileSceneDigests":
+      return compileSceneDigests(manuscriptId, options);
+    case "extractNarrativeMemory":
+      return extractNarrativeMemory(manuscriptId, options);
+    case "compileChapterCapsules":
+      return compileChapterCapsules(manuscriptId, options);
+    case "compileWholeBookMap":
+      return compileWholeBookMap(manuscriptId, options);
+    case "createNextBestEditorialActions":
+      return createNextBestEditorialActions(manuscriptId, options);
     case "runChapterAudits":
       return runChapterAudits(manuscriptId, runId, options);
     case "runWholeBookAudit":
@@ -257,6 +307,60 @@ export async function runPipelineStep(
     case "generateChapterRewriteDrafts":
       return generateChapterRewriteDrafts(manuscriptId, runId, options);
   }
+}
+
+const IMPORT_STRUCTURE_PREREVIEW_STEPS = new Set<ManuscriptPipelineStep>([
+  "parseAndNormalizeManuscript",
+  "splitIntoChapters",
+  "splitIntoChunks"
+]);
+
+async function importVerificationGate(
+  step: ManuscriptPipelineStep,
+  manuscriptId: string
+): Promise<PipelineStepRunResult | null> {
+  if (IMPORT_STRUCTURE_PREREVIEW_STEPS.has(step)) {
+    return null;
+  }
+
+  if (!process.env.DATABASE_URL) {
+    return null;
+  }
+
+  let manuscript: { metadata: unknown } | null;
+
+  try {
+    manuscript = await prisma.manuscript.findUnique({
+      where: { id: manuscriptId },
+      select: { metadata: true }
+    });
+  } catch {
+    return null;
+  }
+  const metadata = toJsonRecord(manuscript?.metadata);
+  const manifest = importManifestFromMetadata(metadata);
+  const structureReview = toJsonRecord(metadata.structureReview);
+  const importV2 = toJsonRecord(metadata.importV2);
+  const approved =
+    importV2.reviewStatus === "approved" || manifest?.review.status === "approved";
+  const needsReview =
+    toJsonRecord(metadata.importReview).pendingInvalidation === true ||
+    manifest?.review.verifiedEnough === false ||
+    structureReview.recommended === true;
+
+  if (!manifest || approved || !needsReview) {
+    return null;
+  }
+
+  return {
+    complete: false,
+    remaining: 1,
+    blockedReason: "import_structure_review_required",
+    reviewStatus: manifest.review.status,
+    warningCount:
+      numberOrZero(structureReview.warningCount) || manifest.review.warningCount,
+    nextStep: "Open import inspector and approve the structure before deep analysis."
+  };
 }
 
 export function isPipelineStepRunComplete(result: PipelineStepRunResult) {
@@ -286,22 +390,66 @@ async function parseAndNormalizeManuscript(manuscriptId: string) {
   if (!originalText) {
     throw new Error("Manuscript has no stored source text.");
   }
+  const manifest = importManifestFromMetadata(manuscript.metadata) ??
+    buildTextImportManifest({
+      rawText: originalText,
+      sourceFileName: manuscript.sourceFileName,
+      sourceMimeType: manuscript.sourceMimeType ?? undefined
+    });
+  const normalized = importManifestToNormalizedText(manifest);
+  const wordCount = countWords(normalized);
+  const importSignature = importSignatureFromManifest(manifest);
 
   await prisma.manuscript.update({
     where: { id: manuscriptId },
     data: {
-      originalText,
-      status: "PARSED"
+      originalText: normalized,
+      wordCount,
+      status: "PARSED",
+      metadata: jsonInput(
+        metadataWithImportManifest(
+          {
+            ...toJsonRecord(manuscript.metadata),
+            import: {
+              ...toJsonRecord(toJsonRecord(manuscript.metadata).import),
+              parserVersion: manifest.parserVersion,
+              normalizedAt: new Date().toISOString(),
+              sourceHash: manifest.fileHash,
+              normalizedTextHash: createHash("sha256")
+                .update(normalized)
+                .digest("hex"),
+              importSignature
+            }
+          },
+          manifest
+        )
+      )
     }
   });
 
   return {
-    wordCount: manuscript.wordCount,
-    hasOriginalText: true
+    wordCount,
+    hasOriginalText: true,
+    importSignature,
+    parserVersion: manifest.parserVersion
   };
 }
 
-async function splitIntoChapters(manuscriptId: string) {
+async function splitIntoChapters(manuscriptId: string, runId?: string) {
+  const manuscript = await prisma.manuscript.findUnique({
+    where: { id: manuscriptId },
+    include: {
+      versions: {
+        orderBy: { versionNumber: "desc" },
+        take: 1
+      }
+    }
+  });
+
+  if (!manuscript) {
+    throw new Error("Manuscript not found.");
+  }
+
   const chapters = await prisma.manuscriptChapter.findMany({
     where: { manuscriptId },
     orderBy: { order: "asc" },
@@ -311,46 +459,107 @@ async function splitIntoChapters(manuscriptId: string) {
       }
     }
   });
+  const existingParagraphCount = await prisma.paragraph.count({
+    where: { manuscriptId }
+  });
 
-  if (chapters.length === 0) {
-    throw new Error("No chapters found. Re-upload the manuscript to parse chapters.");
+  if (
+    chapters.length === 0 ||
+    (manuscript.chapterCount === 0 && existingParagraphCount === 0)
+  ) {
+    const originalText =
+      manuscript.originalText ?? manuscript.versions[0]?.sourceText;
+    if (!originalText) {
+      throw new Error("Manuscript has no stored source text.");
+    }
+
+    const manifest = importManifestFromMetadata(manuscript.metadata) ??
+      buildTextImportManifest({
+        rawText: originalText,
+        sourceFileName: manuscript.sourceFileName,
+        sourceMimeType: manuscript.sourceMimeType ?? undefined
+      });
+    const parsed = importManifestToParsedManuscript(manifest);
+    const previousSignature = importSignatureFromMetadata(manuscript.metadata);
+    const invalidationPlan = buildImportInvalidationPlan({
+      previousSignature,
+      manifest
+    });
+    const replaceExisting = chapters.length > 0 || existingParagraphCount > 0;
+
+    await persistParsedManuscriptStructure(manuscriptId, parsed, {
+      replaceExisting,
+      invalidationPlan: replaceExisting ? invalidationPlan : undefined,
+      keepAnalysisRunId: runId,
+      previousMetadata: manuscript.metadata
+    });
+
+    return {
+      chapterCount: parsed.chapters.length,
+      paragraphCount: parsed.paragraphCount,
+      wordCount: parsed.wordCount,
+      importSignature: importSignatureFromManifest(manifest),
+      invalidated: replaceExisting && invalidationPlan.changed
+    };
   }
+
+  let paragraphCount = 0;
+  let wordCount = 0;
 
   for (const chapter of chapters) {
     const text =
       chapter.text ||
       chapter.paragraphs.map((paragraph) => paragraph.text).join("\n\n");
+    const chapterWordCount = chapter.wordCount || countWords(text);
 
     await prisma.manuscriptChapter.update({
       where: { id: chapter.id },
       data: {
         chapterIndex: chapter.chapterIndex || chapter.order,
         text,
-        wordCount: chapter.wordCount || countWords(text),
+        wordCount: chapterWordCount,
         status: "CHAPTER_READY"
       }
     });
+    paragraphCount += chapter.paragraphs.length;
+    wordCount += chapterWordCount;
   }
 
   await prisma.manuscript.update({
     where: { id: manuscriptId },
     data: {
       chapterCount: chapters.length,
+      paragraphCount,
+      wordCount,
       status: "CHAPTERS_READY"
     }
   });
 
-  return { chapterCount: chapters.length };
+  return { chapterCount: chapters.length, paragraphCount, wordCount };
 }
 
 async function splitIntoChunks(manuscriptId: string) {
+  const manuscript = await prisma.manuscript.findUnique({
+    where: { id: manuscriptId },
+    select: { chunkCount: true, metadata: true }
+  });
   const chunks = await prisma.manuscriptChunk.findMany({
     where: { manuscriptId },
     orderBy: { chunkIndex: "asc" }
   });
 
-  if (chunks.length === 0) {
-    throw new Error("No manuscript chunks found. Re-upload the manuscript to create chunks.");
+  if (chunks.length === 0 || (manuscript?.chunkCount === 0 && chunks.length > 0)) {
+    const parsed = await storedManuscriptAsParsed(manuscriptId);
+    const parsedChunks = chunkParsedManuscript(parsed);
+    await persistParsedChunks(manuscriptId, parsedChunks, {
+      replaceExisting: chunks.length > 0,
+      previousMetadata: manuscript?.metadata
+    });
+
+    return {
+      chunkCount: parsedChunks.length,
+      complete: true
+    };
   }
 
   for (const chunk of chunks) {
@@ -378,6 +587,317 @@ async function splitIntoChunks(manuscriptId: string) {
   });
 
   return { chunkCount: chunks.length };
+}
+
+async function persistParsedManuscriptStructure(
+  manuscriptId: string,
+  parsed: ParsedManuscript,
+  options: {
+    replaceExisting?: boolean;
+    invalidationPlan?: ImportInvalidationPlan;
+    keepAnalysisRunId?: string;
+    previousMetadata?: unknown;
+  } = {}
+) {
+  const manifest = importManifestFromMetadata(parsed.metadata);
+  const chapterRows: Prisma.ManuscriptChapterCreateManyInput[] = [];
+  const sceneRows: Prisma.SceneCreateManyInput[] = [];
+  const paragraphRows: Prisma.ParagraphCreateManyInput[] = [];
+  const chapterIdByOrder = new Map<number, string>();
+
+  for (const chapter of parsed.chapters) {
+    const chapterId = randomUUID();
+    const chapterText = chapter.scenes
+      .flatMap((scene) => scene.paragraphs.map((paragraph) => paragraph.text))
+      .join("\n\n");
+
+    chapterRows.push({
+      id: chapterId,
+      manuscriptId,
+      order: chapter.order,
+      chapterIndex: chapter.order,
+      title: chapter.title,
+      heading: chapter.heading,
+      text: chapterText,
+      wordCount: chapter.wordCount,
+      startOffset: chapter.startOffset,
+      endOffset: chapter.endOffset,
+      status: "CHAPTER_READY"
+    });
+    chapterIdByOrder.set(chapter.order, chapterId);
+
+    for (const scene of chapter.scenes) {
+      const sceneId = randomUUID();
+
+      sceneRows.push({
+        id: sceneId,
+        manuscriptId,
+        chapterId,
+        order: scene.order,
+        title: scene.title,
+        wordCount: scene.wordCount,
+        marker: scene.marker
+      });
+
+      for (const paragraph of scene.paragraphs) {
+        paragraphRows.push({
+          manuscriptId,
+          chapterId,
+          sceneId,
+          globalOrder: paragraph.globalOrder,
+          chapterOrder: paragraph.chapterOrder,
+          sceneOrder: paragraph.sceneOrder,
+          text: paragraph.text,
+          wordCount: paragraph.wordCount,
+          approximateOffset: paragraph.approximateOffset
+        });
+      }
+    }
+  }
+
+  await prisma.$transaction(async (tx) => {
+    if (options.invalidationPlan?.changed) {
+      await invalidateImportDerivedArtifacts(tx, {
+        manuscriptId,
+        plan: options.invalidationPlan,
+        keepAnalysisRunId: options.keepAnalysisRunId
+      });
+    }
+
+    if (options.replaceExisting) {
+      await tx.manuscriptChunk.deleteMany({ where: { manuscriptId } });
+      await tx.paragraph.deleteMany({ where: { manuscriptId } });
+      await tx.scene.deleteMany({ where: { manuscriptId } });
+      await tx.manuscriptChapter.deleteMany({ where: { manuscriptId } });
+    }
+
+    await createManyInBatches(chapterRows, (data) =>
+      tx.manuscriptChapter.createMany({ data, skipDuplicates: true })
+    );
+    await createManyInBatches(sceneRows, (data) =>
+      tx.scene.createMany({ data, skipDuplicates: true })
+    );
+    await createManyInBatches(paragraphRows, (data) =>
+      tx.paragraph.createMany({ data, skipDuplicates: true })
+    );
+
+    await tx.manuscript.update({
+      where: { id: manuscriptId },
+      data: {
+        title: parsed.title,
+        originalText: parsed.normalizedText,
+        wordCount: parsed.wordCount,
+        chapterCount: parsed.chapters.length,
+        paragraphCount: parsed.paragraphCount,
+        status: "CHAPTERS_READY",
+        metadata: jsonInput({
+          ...toJsonRecord(options.previousMetadata),
+          ...(manifest
+            ? metadataWithImportManifest(parsed.metadata, manifest)
+            : parsed.metadata),
+          importReview: {
+            ...toJsonRecord(toJsonRecord(options.previousMetadata).importReview),
+            pendingInvalidation: false,
+            rebuiltAt: new Date().toISOString()
+          },
+          compilerVersion: "compiler-v1",
+          importFlow: "pipeline",
+          structuralHash: createHash("sha256")
+            .update(parsed.normalizedText)
+            .digest("hex"),
+          importSignature: manifest ? importSignatureFromManifest(manifest) : undefined
+        })
+      }
+    });
+  });
+}
+
+async function storedManuscriptAsParsed(
+  manuscriptId: string
+): Promise<ParsedManuscript> {
+  const manuscript = await prisma.manuscript.findUniqueOrThrow({
+    where: { id: manuscriptId },
+    include: {
+      chapters: {
+        orderBy: { order: "asc" },
+        include: {
+          scenes: {
+            orderBy: { order: "asc" },
+            include: {
+              paragraphs: {
+                orderBy: { globalOrder: "asc" }
+              }
+            }
+          }
+        }
+      }
+    }
+  });
+
+  if (manuscript.chapters.length === 0) {
+    throw new Error("No chapters found. Run splitIntoChapters first.");
+  }
+
+  const manifest = importManifestFromMetadata(manuscript.metadata);
+  const paragraphBlocks = manifest
+    ? manifest.blocks.filter(
+        (block) =>
+          block.type === "paragraph" ||
+          block.type === "list_item" ||
+          block.type === "front_matter"
+      )
+    : [];
+  const chapters: ParsedManuscript["chapters"] = manuscript.chapters.map(
+    (chapter) => ({
+      order: chapter.order,
+      title: chapter.title,
+      heading: chapter.heading ?? undefined,
+      wordCount: chapter.wordCount || countWords(chapter.text),
+      startOffset: chapter.startOffset ?? undefined,
+      endOffset: chapter.endOffset ?? undefined,
+      scenes: chapter.scenes.map((scene) => ({
+        order: scene.order,
+        title: scene.title,
+        marker: scene.marker ?? undefined,
+        wordCount: scene.wordCount,
+        paragraphs: scene.paragraphs.map((paragraph) => ({
+          text: paragraph.text,
+          wordCount: paragraph.wordCount,
+          globalOrder: paragraph.globalOrder,
+          chapterOrder: paragraph.chapterOrder,
+          sceneOrder: paragraph.sceneOrder,
+          approximateOffset: paragraph.approximateOffset ?? undefined,
+          sourceAnchor: paragraphBlocks[paragraph.globalOrder]?.sourceAnchor,
+          importBlockId: paragraphBlocks[paragraph.globalOrder]?.id,
+          confidence: paragraphBlocks[paragraph.globalOrder]?.confidence,
+          warnings: paragraphBlocks[paragraph.globalOrder]?.warnings
+        }))
+      }))
+    })
+  );
+
+  return {
+    title: manuscript.title,
+    normalizedText:
+      manuscript.originalText ??
+      chapters
+        .flatMap((chapter) =>
+          chapter.scenes.flatMap((scene) =>
+            scene.paragraphs.map((paragraph) => paragraph.text)
+          )
+        )
+        .join("\n\n"),
+    wordCount: manuscript.wordCount,
+    paragraphCount: manuscript.paragraphCount,
+    chapters,
+    metadata: {
+      ...toJsonRecord(manuscript.metadata),
+      sourceFileName: manuscript.sourceFileName,
+      parserVersion: "stored-compiler-v1"
+    }
+  };
+}
+
+async function persistParsedChunks(
+  manuscriptId: string,
+  parsedChunks: ParsedChunk[],
+  options: { replaceExisting?: boolean; previousMetadata?: unknown } = {}
+) {
+  const previousMetadata = toJsonRecord(options.previousMetadata);
+  const importV2 = toJsonRecord(previousMetadata.importV2);
+  const chunkHash = createHash("sha256")
+    .update(
+      JSON.stringify(
+        parsedChunks.map((chunk) => ({
+          chapterOrder: chunk.chapterOrder,
+          sceneOrder: chunk.sceneOrder,
+          text: chunk.text,
+          startParagraph: chunk.startParagraph,
+          endParagraph: chunk.endParagraph
+        }))
+      )
+    )
+    .digest("hex");
+  const chapters = await prisma.manuscriptChapter.findMany({
+    where: { manuscriptId },
+    orderBy: { order: "asc" },
+    include: { scenes: { orderBy: { order: "asc" } } }
+  });
+  const chapterIdByOrder = new Map(
+    chapters.map((chapter) => [chapter.order, chapter.id])
+  );
+  const sceneIdByKey = new Map<string, string>();
+
+  for (const chapter of chapters) {
+    for (const scene of chapter.scenes) {
+      sceneIdByKey.set(sceneKey(chapter.order, scene.order), scene.id);
+    }
+  }
+
+  const rows: Prisma.ManuscriptChunkCreateManyInput[] = parsedChunks.map(
+    (chunk) => {
+      const chapterId = chapterIdByOrder.get(chunk.chapterOrder);
+      if (!chapterId) {
+        throw new Error(`Missing chapter for chunk ${chunk.chunkIndex}.`);
+      }
+
+      const sceneId =
+        chunk.sceneOrder === undefined
+          ? null
+          : sceneIdByKey.get(sceneKey(chunk.chapterOrder, chunk.sceneOrder));
+
+      if (chunk.sceneOrder !== undefined && !sceneId) {
+        throw new Error(`Missing scene for chunk ${chunk.chunkIndex}.`);
+      }
+
+      return {
+        manuscriptId,
+        chapterId,
+        sceneId,
+        chunkIndex: chunk.chunkIndex,
+        text: chunk.text,
+        wordCount: chunk.wordCount,
+        startParagraph: chunk.startParagraph,
+        endParagraph: chunk.endParagraph,
+        paragraphStart: chunk.startParagraph,
+        paragraphEnd: chunk.endParagraph,
+        tokenEstimate: chunk.tokenEstimate,
+        tokenCount: chunk.tokenEstimate,
+        metadata: jsonInput({
+          ...chunk.metadata,
+          source: "compiler-v1",
+          importSignature: importV2.signature,
+          importStructureHash: importV2.structureHash,
+          chunkHash
+        })
+      };
+    }
+  );
+
+  await prisma.$transaction(async (tx) => {
+    if (options.replaceExisting) {
+      await tx.manuscriptChunk.deleteMany({ where: { manuscriptId } });
+    }
+
+    await createManyInBatches(rows, (data) =>
+      tx.manuscriptChunk.createMany({ data, skipDuplicates: true })
+    );
+
+    await tx.manuscript.update({
+      where: { id: manuscriptId },
+      data: {
+        chunkCount: rows.length,
+        status: "CHUNKS_READY",
+        metadata: jsonInput({
+          ...previousMetadata,
+          importV2: {
+            ...importV2,
+            chunkHash
+          }
+        })
+      }
+    });
+  });
 }
 
 async function createEmbeddingsForChunks(
@@ -886,18 +1406,18 @@ async function compareAgainstCorpus(manuscriptId: string, runId: string) {
   try {
     result = await corpusComparisonRunner(corpusContext.input, { retries: 0 });
   } catch (error) {
-    if (!isCorpusRequestTooLargeError(error)) {
-      throw error;
-    }
-
+    const requestTooLarge = isCorpusRequestTooLargeError(error);
     const errorMessage = error instanceof Error ? error.message : String(error);
     return saveSkippedComparisonOutput({
       runId,
       manuscriptId,
       passType: AnalysisPassType.CORPUS_COMPARISON,
-      reason: "corpus_request_too_large",
-      summary:
-        "Corpus comparison was skipped after the model rejected the bounded request as too large.",
+      reason: requestTooLarge
+        ? "corpus_request_too_large"
+        : "corpus_model_unavailable",
+      summary: requestTooLarge
+        ? "Corpus comparison was skipped after the model rejected the bounded request as too large."
+        : "Corpus comparison was skipped because the model did not complete inside the safe import window.",
       metadata: {
         ...corpusContextMetadata,
         errorMessage
@@ -1632,4 +2152,23 @@ function normalizeMaxItems(value: number | undefined, fallback: number) {
   }
 
   return Math.max(1, Math.floor(value));
+}
+
+function numberOrZero(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function sceneKey(chapterOrder: number, sceneOrder: number) {
+  return `${chapterOrder}:${sceneOrder}`;
+}
+
+async function createManyInBatches<T>(
+  rows: T[],
+  createMany: (data: T[]) => Prisma.PrismaPromise<unknown>
+) {
+  const batchSize = 500;
+
+  for (let index = 0; index < rows.length; index += batchSize) {
+    await createMany(rows.slice(index, index + batchSize));
+  }
 }

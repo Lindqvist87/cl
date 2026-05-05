@@ -94,6 +94,71 @@ test("import inspector derives deterministic structure warnings", () => {
   );
 });
 
+test("import inspector exposes parser structure warning metadata", () => {
+  const inspection = buildImportInspectorData({
+    manuscript: {
+      wordCount: 45,
+      chunkCount: 3,
+      metadata: {
+        structureReview: {
+          recommended: true,
+          warnings: [
+            {
+              code: "chapter_word_count_under_80",
+              message: "Detected chapter is under 80 words; review for a false split.",
+              chapterOrder: 2
+            },
+            {
+              code: "numeric_to_prose_fragment_headings",
+              message:
+                "Chapter headings jump from numeric labels to short prose fragments; review for accidental splits.",
+              chapterOrder: 3
+            }
+          ]
+        }
+      }
+    },
+    sections: [
+      {
+        id: "c1",
+        order: 1,
+        title: "Kapitel 1",
+        wordCount: 20,
+        chunks: [{ id: "k1", chunkIndex: 1, wordCount: 20 }]
+      },
+      {
+        id: "c2",
+        order: 2,
+        title: "Kapitel 2",
+        wordCount: 15,
+        chunks: [{ id: "k2", chunkIndex: 2, wordCount: 15 }]
+      },
+      {
+        id: "c3",
+        order: 3,
+        title: "JAG VILL TRO",
+        wordCount: 10,
+        chunks: [{ id: "k3", chunkIndex: 3, wordCount: 10 }]
+      }
+    ]
+  });
+
+  assert.ok(
+    inspection.warnings.some(
+      (warning) =>
+        warning.code === "chapter_word_count_under_80" &&
+        warning.sectionId === "c2"
+    )
+  );
+  assert.ok(
+    inspection.warnings.some(
+      (warning) =>
+        warning.code === "numeric_to_prose_fragment_headings" &&
+        warning.sectionId === "c3"
+    )
+  );
+});
+
 test("import inspector flags unusually broad imports", () => {
   const sections = Array.from({ length: 81 }, (_, index) => ({
     id: `c${index}`,

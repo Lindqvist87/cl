@@ -21,7 +21,7 @@ export async function analyzeChapter(input: ChapterInput) {
   }
 
   return requestEditorJson<ChapterAnalysisResult>({
-    ...modelConfigForRole("audit"),
+    ...modelConfigForRole("chapterCompiler"),
     system: [
       "You are a senior developmental editor auditing one chapter.",
       "Return strict JSON only.",

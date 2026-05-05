@@ -4,7 +4,12 @@ import {
   ArrowLeft,
   ArrowRight,
   BookOpen,
+  Check,
   FileText,
+  GitMerge,
+  Pencil,
+  Scissors,
+  Tags,
   TriangleAlert
 } from "lucide-react";
 import { prisma } from "@/lib/prisma";
@@ -13,6 +18,18 @@ import {
   type ImportInspectorSection,
   type ImportStructureWarning
 } from "@/lib/editorial/importInspector";
+import { importManifestFromMetadata } from "@/lib/import/v2/manifest";
+import type {
+  ImportManifest,
+  ManuscriptIRBlock
+} from "@/lib/import/v2/types";
+import {
+  approveImportStructure,
+  mergeImportSection,
+  reclassifyImportSection,
+  renameImportSection,
+  splitImportSection
+} from "./actions";
 
 export const dynamic = "force-dynamic";
 
@@ -61,6 +78,14 @@ export default async function ManuscriptStructurePage({
     inspection.sections.find((section) => section.id === selectedSectionId) ??
     inspection.sections[0] ??
     null;
+  const importManifest = importManifestFromMetadata(manuscript.metadata);
+  const reviewInfoBySectionId = buildSectionReviewInfo(
+    importManifest,
+    inspection.sections
+  );
+  const selectedReviewInfo = selectedSection
+    ? reviewInfoBySectionId.get(selectedSection.id)
+    : undefined;
 
   return (
     <div className="space-y-6">
@@ -149,6 +174,15 @@ export default async function ManuscriptStructurePage({
         </section>
       ) : null}
 
+      {importManifest ? (
+        <ImportReviewHeader
+          manuscriptId={manuscript.id}
+          status={importManifest.review.status}
+          verifiedEnough={importManifest.review.verifiedEnough}
+          warningCount={inspection.stats.warningCount}
+        />
+      ) : null}
+
       <section className="grid gap-6 xl:grid-cols-[minmax(0,1.1fr)_minmax(420px,0.9fr)]">
         <section className="border border-line bg-white shadow-panel">
           <div className="border-b border-line px-4 py-3">
@@ -171,26 +205,42 @@ export default async function ManuscriptStructurePage({
                   manuscriptId={manuscript.id}
                   section={section}
                   selected={selectedSection?.id === section.id}
+                  review={reviewInfoBySectionId.get(section.id)}
                 />
               ))
             )}
           </div>
         </section>
 
-        <SectionDetail manuscriptId={manuscript.id} section={selectedSection} />
+        <SectionDetail
+          manuscriptId={manuscript.id}
+          section={selectedSection}
+          review={selectedReviewInfo}
+        />
       </section>
     </div>
   );
 }
 
+type SectionReviewInfo = {
+  blockId?: string;
+  splitTargetBlockId?: string;
+  mergeTargetBlockId?: string;
+  headingType?: string;
+  reviewStatus: string;
+  verifiedEnough: boolean;
+};
+
 function SectionRow({
   manuscriptId,
   section,
-  selected
+  selected,
+  review
 }: {
   manuscriptId: string;
   section: ImportInspectorSection;
   selected: boolean;
+  review?: SectionReviewInfo;
 }) {
   return (
     <article className={selected ? "bg-accent/5 px-4 py-4" : "px-4 py-4"}>
@@ -204,6 +254,11 @@ function SectionRow({
             <span className="border border-line bg-white px-2 py-1 text-xs capitalize text-slate-600">
               {section.detectedType}
             </span>
+            {review?.verifiedEnough ? (
+              <span className="border border-success/30 bg-green-50 px-2 py-1 text-xs font-semibold text-success">
+                verified
+              </span>
+            ) : null}
             {section.warnings.map((warning) => (
               <WarningBadge key={warning.code} label={warning.message} />
             ))}
@@ -228,10 +283,12 @@ function SectionRow({
 
 function SectionDetail({
   manuscriptId,
-  section
+  section,
+  review
 }: {
   manuscriptId: string;
   section: ImportInspectorSection | null;
+  review?: SectionReviewInfo;
 }) {
   if (!section) {
     return (
@@ -254,6 +311,14 @@ function SectionDetail({
       </div>
 
       <div className="space-y-5 px-4 py-4">
+        {review?.blockId ? (
+          <SectionReviewControls
+            manuscriptId={manuscriptId}
+            section={section}
+            review={review}
+          />
+        ) : null}
+
         {section.warnings.length > 0 ? (
           <div>
             <h4 className="text-sm font-semibold">Strukturvarningar</h4>
@@ -310,6 +375,143 @@ function SectionDetail({
   );
 }
 
+function ImportReviewHeader({
+  manuscriptId,
+  status,
+  verifiedEnough,
+  warningCount
+}: {
+  manuscriptId: string;
+  status: string;
+  verifiedEnough: boolean;
+  warningCount: number;
+}) {
+  return (
+    <section className="border border-line bg-white p-4 shadow-panel">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+        <div>
+          <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+            Importgranskning
+          </h2>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
+            <span className="inline-flex min-h-7 items-center border border-line bg-paper-alt px-2">
+              {status}
+            </span>
+            <span className="inline-flex min-h-7 items-center border border-line bg-paper-alt px-2">
+              {verifiedEnough ? "verified enough" : "needs review"}
+            </span>
+            <span className="inline-flex min-h-7 items-center border border-line bg-paper-alt px-2">
+              {formatNumber(warningCount)} varningar
+            </span>
+          </div>
+        </div>
+        <form action={approveImportStructure}>
+          <input type="hidden" name="manuscriptId" value={manuscriptId} />
+          <button type="submit" className="primary-button min-h-9 px-3">
+            <Check size={16} aria-hidden="true" />
+            Approve
+          </button>
+        </form>
+      </div>
+    </section>
+  );
+}
+
+function SectionReviewControls({
+  manuscriptId,
+  section,
+  review
+}: {
+  manuscriptId: string;
+  section: ImportInspectorSection;
+  review: SectionReviewInfo;
+}) {
+  return (
+    <div className="space-y-3 border border-line bg-paper-alt p-3">
+      <div className="flex items-center gap-2 text-sm font-semibold">
+        <Tags size={16} aria-hidden="true" />
+        Importgranskning
+      </div>
+
+      <form action={renameImportSection} className="grid gap-2 sm:grid-cols-[1fr_auto]">
+        <input type="hidden" name="manuscriptId" value={manuscriptId} />
+        <input type="hidden" name="chapterId" value={section.id} />
+        <input type="hidden" name="blockId" value={review.blockId} />
+        <input
+          name="title"
+          defaultValue={section.title}
+          className="min-h-10 border border-line bg-white px-3 text-sm"
+        />
+        <button type="submit" className="secondary-button min-h-10 px-3">
+          <Pencil size={16} aria-hidden="true" />
+          Rename
+        </button>
+      </form>
+
+      <form
+        action={reclassifyImportSection}
+        className="grid gap-2 sm:grid-cols-[1fr_auto]"
+      >
+        <input type="hidden" name="manuscriptId" value={manuscriptId} />
+        <input type="hidden" name="blockId" value={review.blockId} />
+        <select
+          name="headingType"
+          defaultValue={review.headingType ?? section.detectedType}
+          className="min-h-10 border border-line bg-white px-3 text-sm"
+        >
+          <option value="chapter">chapter</option>
+          <option value="section">section</option>
+          <option value="scene">scene</option>
+          <option value="front_matter">front matter</option>
+          <option value="part">part</option>
+          <option value="unknown">unknown</option>
+        </select>
+        <button type="submit" className="secondary-button min-h-10 px-3">
+          <Tags size={16} aria-hidden="true" />
+          Reclassify
+        </button>
+      </form>
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        <form action={splitImportSection}>
+          <input type="hidden" name="manuscriptId" value={manuscriptId} />
+          <input type="hidden" name="blockId" value={review.blockId} />
+          <input
+            type="hidden"
+            name="targetBlockId"
+            value={review.splitTargetBlockId ?? ""}
+          />
+          <button
+            type="submit"
+            disabled={!review.splitTargetBlockId}
+            className="secondary-button min-h-10 w-full px-3 disabled:opacity-50"
+          >
+            <Scissors size={16} aria-hidden="true" />
+            Split
+          </button>
+        </form>
+        <form action={mergeImportSection}>
+          <input type="hidden" name="manuscriptId" value={manuscriptId} />
+          <input type="hidden" name="blockId" value={review.blockId} />
+          <input
+            type="hidden"
+            name="targetBlockId"
+            value={review.mergeTargetBlockId ?? ""}
+          />
+          <button
+            type="submit"
+            disabled={!review.mergeTargetBlockId}
+            className="secondary-button min-h-10 w-full px-3 disabled:opacity-50"
+          >
+            <GitMerge size={16} aria-hidden="true" />
+            Merge
+          </button>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 function HeaderFact({ label, value }: { label: string; value: string }) {
   return (
       <div className="rounded-lg border border-line bg-paper-alt px-3 py-2">
@@ -342,6 +544,56 @@ function WarningBadge({ label }: { label: string }) {
     <span className="inline-flex min-h-7 items-center border border-warn bg-white px-2 text-xs font-semibold text-warn">
       {label}
     </span>
+  );
+}
+
+function buildSectionReviewInfo(
+  manifest: ImportManifest | null,
+  sections: ImportInspectorSection[]
+) {
+  const bySectionId = new Map<string, SectionReviewInfo>();
+
+  if (!manifest) {
+    return bySectionId;
+  }
+
+  const headingBlocks = manifest.blocks.filter(isReviewHeadingBlock);
+  const paragraphBlocks = manifest.blocks.filter(
+    (block) => block.type === "paragraph" || block.type === "list_item"
+  );
+
+  sections.forEach((section, index) => {
+    const headingBlock = headingBlocks[index];
+    if (!headingBlock) {
+      return;
+    }
+
+    const nextHeading = headingBlocks[index + 1];
+    const splitTarget = paragraphBlocks.find(
+      (block) =>
+        block.order > headingBlock.order &&
+        (!nextHeading || block.order < nextHeading.order)
+    );
+    const previousHeading = headingBlocks[index - 1];
+
+    bySectionId.set(section.id, {
+      blockId: headingBlock.id,
+      splitTargetBlockId: splitTarget?.id,
+      mergeTargetBlockId: previousHeading?.id,
+      headingType: headingBlock.headingType,
+      reviewStatus: manifest.review.status,
+      verifiedEnough: manifest.review.verifiedEnough
+    });
+  });
+
+  return bySectionId;
+}
+
+function isReviewHeadingBlock(block: ManuscriptIRBlock) {
+  return (
+    block.type === "heading" &&
+    block.headingType !== "title" &&
+    block.headingType !== undefined
   );
 }
 

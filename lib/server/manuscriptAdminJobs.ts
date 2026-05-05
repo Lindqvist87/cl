@@ -9,7 +9,7 @@ import { prisma } from "@/lib/prisma";
 
 const DEFAULT_MAX_JOBS = 5;
 const DEFAULT_MAX_SECONDS = 240;
-const DEFAULT_MAX_ITEMS_PER_STEP = 4;
+const DEFAULT_MAX_ITEMS_PER_STEP = 2;
 const DEFAULT_MAX_BATCHES = 5;
 
 export type ManuscriptAdminRunJobsBody = {

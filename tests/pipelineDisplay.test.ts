@@ -41,7 +41,7 @@ test("pipeline display derives cumulative summarizeChunks progress", () => {
 
   assert.equal(display.currentStep, "summarizeChunks");
   assert.equal(display.completedSteps, 4);
-  assert.equal(display.totalSteps, 12);
+  assert.equal(display.totalSteps, 18);
   assert.equal(display.currentJobStatus, PIPELINE_JOB_STATUS.QUEUED);
   assert.equal(display.analyzedCount, 53);
   assert.equal(display.remainingCount, 30);
@@ -69,6 +69,12 @@ test("pipeline display separates core completion from optional rewrite drafts", 
     "summarizeChunks",
     "summarizeChapters",
     "createManuscriptProfile",
+    "buildManuscriptNodes",
+    "compileSceneDigests",
+    "extractNarrativeMemory",
+    "compileChapterCapsules",
+    "compileWholeBookMap",
+    "createNextBestEditorialActions",
     "runChapterAudits",
     "runWholeBookAudit",
     "compareAgainstCorpus",
@@ -98,8 +104,8 @@ test("pipeline display separates core completion from optional rewrite drafts", 
   assert.equal(display.optionalRewriteDraftsPending, true);
   assert.equal(display.currentStep, null);
   assert.equal(display.nextStep, null);
-  assert.equal(display.completedSteps, 12);
-  assert.equal(display.totalSteps, 12);
+  assert.equal(display.completedSteps, 18);
+  assert.equal(display.totalSteps, 18);
 });
 
 test("pipeline display derives runChapterAudits completion from total minus remaining", () => {

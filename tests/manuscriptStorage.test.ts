@@ -1,7 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ManuscriptFormat } from "@prisma/client";
-import { createStoredManuscript } from "../lib/storage/manuscripts";
+import {
+  createStoredManuscript,
+  createUploadedManuscriptShell
+} from "../lib/storage/manuscripts";
 import { prisma } from "../lib/prisma";
 import type { ParsedChunk, ParsedManuscript } from "../lib/types";
 
@@ -9,6 +12,69 @@ type CreateManyCall = {
   model: string;
   data: Array<Record<string, unknown>>;
 };
+
+test("createUploadedManuscriptShell stores only manuscript and version", async () => {
+  const childWrites: string[] = [];
+  const createdRows: Array<Record<string, unknown>> = [];
+  const tx = {
+    manuscript: {
+      create: async (args: { data: Record<string, unknown> }) => {
+        const row = {
+          id: "shell-1",
+          ...args.data
+        };
+        createdRows.push(row);
+        return row;
+      }
+    },
+    manuscriptVersion: {
+      create: async (args: { data: Record<string, unknown> }) => {
+        createdRows.push({ id: "version-1", ...args.data });
+        return { id: "version-1", ...args.data };
+      }
+    },
+    manuscriptChapter: createManyOnlyDelegate(
+      "manuscriptChapter",
+      [],
+      childWrites
+    ),
+    scene: createManyOnlyDelegate("scene", [], childWrites),
+    paragraph: createManyOnlyDelegate("paragraph", [], childWrites),
+    manuscriptChunk: createManyOnlyDelegate("manuscriptChunk", [], childWrites)
+  };
+
+  await withPatchedPrisma(
+    [
+      [
+        prisma,
+        {
+          $transaction: async (
+            callback: (transactionClient: typeof tx) => Promise<unknown>
+          ) => callback(tx)
+        }
+      ]
+    ],
+    async () => {
+      const manuscript = await createUploadedManuscriptShell({
+        originalText: "Test Title\n\nChapter One\n\nA small opening.",
+        sourceFileName: "test.docx",
+        sourceMimeType:
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        sourceFormat: ManuscriptFormat.DOCX
+      });
+
+      assert.equal(manuscript.id, "shell-1");
+    }
+  );
+
+  assert.deepEqual(childWrites, []);
+  assert.equal(createdRows.length, 2);
+  assert.equal(createdRows[0].status, "IMPORT_QUEUED");
+  assert.equal(createdRows[0].analysisStatus, "NOT_STARTED");
+  assert.equal(createdRows[0].chapterCount, 0);
+  assert.equal(createdRows[0].chunkCount, 0);
+  assert.equal(createdRows[1].parserVersion, "compiler-shell-v1");
+});
 
 test("createStoredManuscript persists large parsed manuscripts with batched createMany calls", async () => {
   const { parsed, chunks, expected } = buildLargeParsedManuscript();
