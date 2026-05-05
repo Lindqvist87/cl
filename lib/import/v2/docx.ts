@@ -25,6 +25,13 @@ const parser = new XMLParser({
   trimValues: false
 });
 
+type DocxParagraphRef = {
+  value: Record<string, unknown>;
+  path: string;
+  paragraphIndex: number;
+  inTable: boolean;
+};
+
 export async function parseDocxToImportManifest(input: {
   buffer: Buffer;
   sourceFileName: string;
@@ -41,7 +48,7 @@ export async function parseDocxToImportManifest(input: {
   const comments = parseComments(readZipText(zip, "word/comments.xml"));
   const parsed = parser.parse(documentXml);
   const body = record(parsed.document).body;
-  const paragraphs = asArray(record(body).p);
+  const paragraphs = collectParagraphs(body, "word/document.xml/body");
   const blocks: Array<
     Omit<ManuscriptIRBlock, "textHash" | "warnings"> & {
       warnings?: ImportWarning[];
@@ -49,15 +56,19 @@ export async function parseDocxToImportManifest(input: {
   > = [];
   const manifestWarnings: ImportWarning[] = [];
   let characterOffset = 0;
+  let tableParagraphCount = 0;
 
   for (const [index, paragraph] of paragraphs.entries()) {
-    const p = record(paragraph);
+    const p = paragraph.value;
     const styleId = stringValue(record(record(p.pPr).pStyle).val);
     const styleName = styleId ? styles.get(styleId) : undefined;
     const text = extractParagraphText(p).trim();
     const pageBreak = hasPageBreak(p);
     const commentIds = collectIds(p, "commentReference");
     const hasTrackedChange = containsKey(p, "ins") || containsKey(p, "del");
+    if (paragraph.inTable) {
+      tableParagraphCount += 1;
+    }
     const blockWarnings = [
       ...commentIds.map((commentId) =>
         warning({
@@ -101,19 +112,20 @@ export async function parseDocxToImportManifest(input: {
         sourceAnchor: {
           sourceFileName: input.sourceFileName,
           sourceFormat: ManuscriptFormat.DOCX,
-          path: `word/document.xml/body/p[${index + 1}]`,
-          paragraphIndex: index,
+          path: paragraph.path,
+          paragraphIndex: paragraph.paragraphIndex,
           styleId,
           styleName
         },
         offset: {
           blockIndex: blocks.length,
-          paragraphIndex: index,
+          paragraphIndex: paragraph.paragraphIndex,
           characterStart: characterOffset,
           characterEnd: characterOffset
         },
         confidence: 0.9,
-        warnings: blockWarnings
+        warnings: blockWarnings,
+        metadata: paragraph.inTable ? { docxContainer: "table" } : undefined
       });
       continue;
     }
@@ -150,21 +162,22 @@ export async function parseDocxToImportManifest(input: {
       sourceAnchor: {
         sourceFileName: input.sourceFileName,
         sourceFormat: ManuscriptFormat.DOCX,
-        path: `word/document.xml/body/p[${index + 1}]`,
-        paragraphIndex: index,
+        path: paragraph.path,
+        paragraphIndex: paragraph.paragraphIndex,
         styleId,
         styleName
       },
       offset: {
         blockIndex: blocks.length,
-        paragraphIndex: index,
+        paragraphIndex: paragraph.paragraphIndex,
         characterStart: start,
         characterEnd: end
       },
       confidence: confidenceForDocxBlock(type, headingType),
       list,
       pageBreakBefore: pageBreak,
-      warnings: blockWarnings
+      warnings: blockWarnings,
+      metadata: paragraph.inTable ? { docxContainer: "table" } : undefined
     });
 
     characterOffset = end + 2;
@@ -190,10 +203,56 @@ export async function parseDocxToImportManifest(input: {
     warnings: manifestWarnings,
     metadata: {
       structuredDocx: true,
+      paragraphCount: paragraphs.length,
+      tableParagraphCount,
       styleCount: styles.size,
       commentCount: comments.size
     }
   });
+}
+
+function collectParagraphs(
+  value: unknown,
+  path: string,
+  inTable = false,
+  output: DocxParagraphRef[] = []
+): DocxParagraphRef[] {
+  if (!value || typeof value !== "object") {
+    return output;
+  }
+
+  if (Array.isArray(value)) {
+    value.forEach((item, index) =>
+      collectParagraphs(item, `${path}[${index + 1}]`, inTable, output)
+    );
+    return output;
+  }
+
+  const item = record(value);
+  for (const [key, child] of Object.entries(item)) {
+    if (key === "p") {
+      for (const [index, paragraph] of asArray(child).entries()) {
+        output.push({
+          value: record(paragraph),
+          path: `${path}/p[${index + 1}]`,
+          paragraphIndex: output.length,
+          inTable
+        });
+      }
+      continue;
+    }
+
+    if (key === "tbl" || key === "tr" || key === "tc") {
+      collectParagraphs(child, `${path}/${key}`, true, output);
+      continue;
+    }
+
+    if (key !== "pPr" && key !== "rPr") {
+      collectParagraphs(child, `${path}/${key}`, inTable, output);
+    }
+  }
+
+  return output;
 }
 
 function parseStyles(xml: string | null) {

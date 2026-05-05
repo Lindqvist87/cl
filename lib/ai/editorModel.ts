@@ -24,6 +24,7 @@ type JsonRequest = {
   reasoningEffort?: ReasoningEffort;
   temperature?: number;
   retries?: number;
+  timeoutMs?: number;
 };
 
 export type EditorJsonResult<T> = {
@@ -68,7 +69,8 @@ export async function requestEditorJson<T>({
   model,
   reasoningEffort,
   temperature,
-  retries = 2
+  retries = 2,
+  timeoutMs
 }: JsonRequest): Promise<EditorJsonResult<T>> {
   const roleConfig = role ? modelConfigForRole(role) : undefined;
   const resolvedModel = model ?? roleConfig?.model ?? auditModel;
@@ -79,16 +81,21 @@ export async function requestEditorJson<T>({
 
   while (attempt <= retries) {
     try {
-      const completion = await getOpenAIClient().chat.completions.create({
-        model: resolvedModel,
-        reasoning_effort: resolvedReasoningEffort as never,
-        ...(temperature === undefined ? {} : { temperature }),
-        response_format: { type: "json_object" },
-        messages: [
-          { role: "system", content: system },
-          { role: "user", content: user }
-        ]
-      });
+      const completion = await getOpenAIClient().chat.completions.create(
+        {
+          model: resolvedModel,
+          reasoning_effort: resolvedReasoningEffort as never,
+          ...(temperature === undefined ? {} : { temperature }),
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: system },
+            { role: "user", content: user }
+          ]
+        },
+        typeof timeoutMs === "number" && timeoutMs > 0
+          ? { timeout: timeoutMs }
+          : undefined
+      );
 
       const rawText = completion.choices[0]?.message.content ?? "{}";
 

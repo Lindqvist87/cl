@@ -1406,18 +1406,18 @@ async function compareAgainstCorpus(manuscriptId: string, runId: string) {
   try {
     result = await corpusComparisonRunner(corpusContext.input, { retries: 0 });
   } catch (error) {
-    if (!isCorpusRequestTooLargeError(error)) {
-      throw error;
-    }
-
+    const requestTooLarge = isCorpusRequestTooLargeError(error);
     const errorMessage = error instanceof Error ? error.message : String(error);
     return saveSkippedComparisonOutput({
       runId,
       manuscriptId,
       passType: AnalysisPassType.CORPUS_COMPARISON,
-      reason: "corpus_request_too_large",
-      summary:
-        "Corpus comparison was skipped after the model rejected the bounded request as too large.",
+      reason: requestTooLarge
+        ? "corpus_request_too_large"
+        : "corpus_model_unavailable",
+      summary: requestTooLarge
+        ? "Corpus comparison was skipped after the model rejected the bounded request as too large."
+        : "Corpus comparison was skipped because the model did not complete inside the safe import window.",
       metadata: {
         ...corpusContextMetadata,
         errorMessage

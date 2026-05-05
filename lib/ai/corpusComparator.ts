@@ -75,6 +75,8 @@ export const DEFAULT_CORPUS_COMPARISON_LIMITS: CorpusComparisonLimits = {
   maxSerializedInputCharacters: 90000
 };
 
+const CORPUS_MODEL_TIMEOUT_MS = 30_000;
+
 const CORPUS_COMPARISON_SYSTEM_PROMPT = [
   "You compare a manuscript profile against legal/open literary corpus data.",
   "Return strict JSON only.",
@@ -292,7 +294,8 @@ export async function compareCorpus(
     ...modelConfigForRole("wholeBookCompiler"),
     system: CORPUS_COMPARISON_SYSTEM_PROMPT,
     user: serializeCorpusComparisonInput(input),
-    retries: options.retries
+    retries: options.retries,
+    timeoutMs: CORPUS_MODEL_TIMEOUT_MS
   });
 }
 

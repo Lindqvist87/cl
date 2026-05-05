@@ -3,7 +3,7 @@ import type { JsonRecord } from "@/lib/types";
 
 export const MANUSCRIPT_IR_VERSION = "manuscript-ir-v2";
 export const TEXT_IMPORT_PARSER_VERSION = "manuscript-ir-v2-text-1";
-export const DOCX_IMPORT_PARSER_VERSION = "manuscript-ir-v2-docx-1";
+export const DOCX_IMPORT_PARSER_VERSION = "manuscript-ir-v2-docx-2";
 
 export type ImportBlockType =
   | "title"

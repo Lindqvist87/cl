@@ -145,9 +145,14 @@ test("structured docx import reads styles, lists, page breaks, comments and trac
   );
 
   assert.equal(manifest.metadata?.structuredDocx, true);
+  assert.equal(manifest.metadata?.tableParagraphCount, 2);
   assert.equal(manifest.blocks.some((block) => block.type === "title"), true);
   assert.equal(manifest.blocks.some((block) => block.type === "list_item"), true);
   assert.equal(manifest.blocks.some((block) => block.type === "page_break"), true);
+  assert.equal(
+    manifest.blocks.some((block) => block.text === "Tabellrad som inte far tappas."),
+    true
+  );
   assert.equal(codes.includes("docx_comment"), true);
   assert.equal(codes.includes("docx_track_changes"), true);
   assert.deepEqual(
@@ -278,6 +283,7 @@ async function docxFixtureBuffer() {
   <w:body>
     <w:p><w:pPr><w:pStyle w:val="Title"/></w:pPr><w:r><w:t>Docx Titel</w:t></w:r></w:p>
     <w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Kapitel 1</w:t></w:r></w:p>
+    <w:tbl><w:tr><w:tc><w:p><w:r><w:t>Tabellrad som inte far tappas.</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Andra tabellcellen.</w:t></w:r></w:p></w:tc></w:tr></w:tbl>
     <w:p><w:r><w:t>Forsta stycket.</w:t><w:commentReference w:id="0"/></w:r></w:p>
     <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Listpunkt ett.</w:t></w:r></w:p>
     <w:p><w:r><w:br w:type="page"/></w:r></w:p>

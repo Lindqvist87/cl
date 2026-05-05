@@ -10,7 +10,7 @@ import {
   TEXT_IMPORT_PARSER_VERSION,
   type ImportManifest
 } from "@/lib/import/v2/types";
-import { normalizeWhitespace } from "@/lib/text/wordCount";
+import { countWords, normalizeWhitespace } from "@/lib/text/wordCount";
 
 export type ExtractedManuscriptText = {
   text: string;
@@ -52,9 +52,25 @@ export async function extractTextFromUpload(file: File): Promise<ExtractedManusc
         sourceFileName: file.name,
         sourceMimeType: mimeType
       });
+      const structuredText = importManifestToNormalizedText(importManifest);
+      const guarded = await docxCoverageGuard({
+        buffer,
+        structuredText,
+        sourceFileName: file.name,
+        sourceMimeType: mimeType
+      });
+
+      if (guarded) {
+        return {
+          text: importManifestToNormalizedText(guarded),
+          format: ManuscriptFormat.DOCX,
+          mimeType,
+          importManifest: guarded
+        };
+      }
 
       return {
-        text: importManifestToNormalizedText(importManifest),
+        text: structuredText,
         format: ManuscriptFormat.DOCX,
         mimeType,
         importManifest
@@ -89,4 +105,49 @@ export async function extractTextFromUpload(file: File): Promise<ExtractedManusc
   }
 
   throw new Error("Unsupported file type. Upload a .txt or .docx manuscript.");
+}
+
+async function docxCoverageGuard(input: {
+  buffer: Buffer;
+  structuredText: string;
+  sourceFileName: string;
+  sourceMimeType?: string;
+}): Promise<ImportManifest | null> {
+  const structuredWords = countWords(input.structuredText);
+  let rawText = "";
+  try {
+    rawText = (await mammoth.extractRawText({ buffer: input.buffer })).value;
+  } catch {
+    return null;
+  }
+
+  const rawWords = countWords(rawText);
+  const missingEnoughText = rawWords >= structuredWords + 1000;
+  const lowCoverage =
+    rawWords >= 2000 && structuredWords / Math.max(rawWords, 1) < 0.65;
+
+  if (!missingEnoughText || !lowCoverage) {
+    return null;
+  }
+
+  return buildTextImportManifest({
+    rawText,
+    sourceFileName: input.sourceFileName,
+    sourceMimeType: input.sourceMimeType,
+    parserVersion: `${TEXT_IMPORT_PARSER_VERSION}-docx-coverage-fallback`,
+    fileHash: hashText(input.buffer.toString("base64")),
+    warnings: [
+      {
+        code: "docx_structured_coverage_low",
+        message:
+          "Structured DOCX import extracted much less text than raw DOCX extraction; raw text fallback was used to avoid truncating the manuscript.",
+        severity: "critical",
+        metadata: {
+          structuredWords,
+          rawWords,
+          coverageRatio: structuredWords / Math.max(rawWords, 1)
+        }
+      }
+    ]
+  });
 }

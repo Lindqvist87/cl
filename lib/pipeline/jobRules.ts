@@ -22,10 +22,20 @@ export const PIPELINE_JOB_TYPES = {
 } as const;
 
 export const DEFAULT_STALE_RUNNING_JOB_MS = 10 * 60 * 1000;
+export const MANUAL_FINAL_SYNTHESIS_LOCK_MS = 2 * 60 * 1000;
+
+const FINAL_SYNTHESIS_JOB_TYPES = new Set<string>([
+  "runWholeBookAudit",
+  "compareAgainstCorpus",
+  "compareAgainstTrendSignals",
+  "createRewritePlan"
+]);
 
 export type JobRuleSnapshot = {
+  type?: string;
   status: string;
   dependencyIds?: unknown;
+  lockedBy?: string | null;
   lockedAt?: Date | string | null;
   lockExpiresAt?: Date | string | null;
   startedAt?: Date | string | null;
@@ -81,6 +91,16 @@ export function isJobReadyAtSatisfied(
 }
 
 export function isLockStale(job: JobRuleSnapshot, now: Date = new Date()) {
+  const referenceTime = firstDateMs(job.lockedAt, job.startedAt, job.updatedAt);
+
+  if (
+    isManualFinalSynthesisJob(job) &&
+    referenceTime !== null &&
+    referenceTime <= now.getTime() - MANUAL_FINAL_SYNTHESIS_LOCK_MS
+  ) {
+    return true;
+  }
+
   if (job.lockExpiresAt && new Date(job.lockExpiresAt) <= now) {
     return true;
   }
@@ -89,12 +109,14 @@ export function isLockStale(job: JobRuleSnapshot, now: Date = new Date()) {
     return false;
   }
 
-  const referenceTime = firstDateMs(job.lockedAt, job.startedAt, job.updatedAt);
-
   return (
     referenceTime !== null &&
     referenceTime <= now.getTime() - DEFAULT_STALE_RUNNING_JOB_MS
   );
+}
+
+export function isFinalSynthesisJobType(type: unknown) {
+  return typeof type === "string" && FINAL_SYNTHESIS_JOB_TYPES.has(type);
 }
 
 export function canAttemptJob(job: JobRuleSnapshot, now: Date = new Date()) {
@@ -148,4 +170,13 @@ function firstDateMs(...values: Array<Date | string | null | undefined>) {
   }
 
   return null;
+}
+
+function isManualFinalSynthesisJob(job: JobRuleSnapshot) {
+  return (
+    job.status === PIPELINE_JOB_STATUS.RUNNING &&
+    isFinalSynthesisJobType(job.type) &&
+    typeof job.lockedBy === "string" &&
+    job.lockedBy.startsWith("manual:")
+  );
 }

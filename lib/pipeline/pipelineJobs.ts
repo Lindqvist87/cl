@@ -36,8 +36,10 @@ import {
   canAttemptJob,
   dependencyIdsFromJson,
   isCompletedJob,
+  isFinalSynthesisJobType,
   isJobCancelled,
   isLockStale,
+  MANUAL_FINAL_SYNTHESIS_LOCK_MS,
   nextStatusAfterJobError,
   PIPELINE_JOB_STATUS,
   PIPELINE_JOB_TYPES
@@ -451,7 +453,11 @@ export async function runPipelineJob(
     );
   }
 
-  const locked = await acquirePipelineJobLock(job.id, options.workerId);
+  const locked = await acquirePipelineJobLock(
+    job.id,
+    options.workerId,
+    lockMsForJob(job.type, options.workerType)
+  );
   if (!locked) {
     return jobResult(job, "locked");
   }
@@ -842,9 +848,13 @@ async function failUnknownJobType(job: PipelineJob): Promise<RunPipelineJobResul
   throw new Error(`Unknown pipeline job type: ${job.type}`);
 }
 
-async function acquirePipelineJobLock(jobId: string, workerId = "worker") {
+async function acquirePipelineJobLock(
+  jobId: string,
+  workerId = "worker",
+  lockMs = DEFAULT_LOCK_MS
+) {
   const now = new Date();
-  const lockExpiresAt = new Date(now.getTime() + DEFAULT_LOCK_MS);
+  const lockExpiresAt = new Date(now.getTime() + lockMs);
   const update = await prisma.pipelineJob.updateMany({
     where: {
       id: jobId,
@@ -1174,6 +1184,14 @@ function isResumableCompilerJob(job: PipelineJob) {
 
 function shouldForceCompilerFallback(options: RunPipelineJobOptions) {
   return options.workerType === "MANUAL";
+}
+
+function lockMsForJob(type: string, workerType?: RunPipelineJobOptions["workerType"]) {
+  if (workerType === "MANUAL" && isFinalSynthesisJobType(type)) {
+    return MANUAL_FINAL_SYNTHESIS_LOCK_MS;
+  }
+
+  return DEFAULT_LOCK_MS;
 }
 
 function numberOrZero(value: unknown) {

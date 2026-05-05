@@ -15,6 +15,7 @@ import {
   isCompletedJob,
   isJobCancelled,
   isLockStale,
+  MANUAL_FINAL_SYNTHESIS_LOCK_MS,
   nextStatusAfterJobError,
   PIPELINE_JOB_STATUS
 } from "../lib/pipeline/jobRules";
@@ -1224,6 +1225,37 @@ test("active locks prevent duplicate execution until stale", () => {
         status: PIPELINE_JOB_STATUS.QUEUED,
         lockedAt: new Date("2026-04-29T04:00:00Z"),
         lockExpiresAt: new Date("2026-04-29T05:00:00Z")
+      },
+      now
+    ),
+    true
+  );
+});
+
+test("manual final synthesis locks use the short import-safe stale window", () => {
+  const now = new Date("2026-04-29T05:00:00Z");
+
+  assert.equal(
+    isLockStale(
+      {
+        type: "runWholeBookAudit",
+        status: PIPELINE_JOB_STATUS.RUNNING,
+        lockedBy: "manual:manuscript:test",
+        lockedAt: new Date(now.getTime() - MANUAL_FINAL_SYNTHESIS_LOCK_MS + 1000),
+        lockExpiresAt: new Date(now.getTime() + 8 * 60 * 1000)
+      },
+      now
+    ),
+    false
+  );
+  assert.equal(
+    isLockStale(
+      {
+        type: "runWholeBookAudit",
+        status: PIPELINE_JOB_STATUS.RUNNING,
+        lockedBy: "manual:manuscript:test",
+        lockedAt: new Date(now.getTime() - MANUAL_FINAL_SYNTHESIS_LOCK_MS - 1000),
+        lockExpiresAt: new Date(now.getTime() + 8 * 60 * 1000)
       },
       now
     ),

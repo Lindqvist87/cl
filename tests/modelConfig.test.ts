@@ -10,6 +10,8 @@ import {
   resolveModelConfig
 } from "../lib/ai/modelConfig";
 import { analyzeManuscriptChunk } from "../lib/ai/chunkAnalyzer";
+import { analyzeWholeBook } from "../lib/ai/wholeBookAnalyzer";
+import { compareTrends } from "../lib/ai/trendComparator";
 import { planRewrite } from "../lib/ai/rewritePlanner";
 import {
   setOpenAIClientForTest,
@@ -157,9 +159,67 @@ test("chief editor calls use chief editor model configuration", async () => {
   }
 });
 
+test("final synthesis stages use bounded timeouts and system fallback", async () => {
+  const requests: ChatRequest[] = [];
+  const restore = setOpenAIClientForTest(failingOpenAIClient(requests));
+
+  try {
+    const wholeBook = await analyzeWholeBook({
+      manuscriptTitle: "Very Large Manuscript",
+      targetGenre: "Fantasy",
+      targetAudience: "Adult",
+      wordCount: 250000,
+      chapterSummaries: Array.from({ length: 120 }, (_, index) => ({
+        chapterIndex: index + 1,
+        title: `Chapter ${index + 1}`,
+        summary: "A long summary. ".repeat(200),
+        wordCount: 2000
+      })),
+      profile: {
+        pacingCurve: Array.from({ length: 200 }, (_, index) => ({
+          index,
+          note: "large profile item"
+        }))
+      }
+    });
+    const trends = await compareTrends({
+      manuscriptTitle: "Very Large Manuscript",
+      targetGenre: "Fantasy",
+      targetAudience: "Adult",
+      wholeBookSummary: "Summary",
+      trendSignals: [{ source: "manual", description: "trend".repeat(1000) }]
+    });
+    const rewrite = await planRewrite({
+      manuscriptTitle: "Very Large Manuscript",
+      targetGenre: "Fantasy",
+      targetAudience: "Adult",
+      wholeBookAudit: wholeBook.json,
+      trendComparison: trends.json,
+      findings: [],
+      chapters: []
+    });
+
+    assert.equal(wholeBook.model, "system-fallback");
+    assert.equal(trends.model, "system-fallback");
+    assert.equal(rewrite.model, "system-fallback");
+    assert.equal(requests.every((request) => typeof request.timeout === "number"), true);
+    assert.equal(
+      requests.every((request) => {
+        const serialized = JSON.stringify(request.messages ?? []);
+        return serialized.length < 120000;
+      }),
+      true
+    );
+  } finally {
+    restore();
+  }
+});
+
 type ChatRequest = {
   model?: string;
   reasoning_effort?: string;
+  messages?: Array<{ role: string; content: string }>;
+  timeout?: number;
 };
 
 function fakeOpenAIClient(
@@ -169,8 +229,8 @@ function fakeOpenAIClient(
   return {
     chat: {
       completions: {
-        create: async (request: ChatRequest) => {
-          requests.push(request);
+        create: async (request: ChatRequest, options?: { timeout?: number }) => {
+          requests.push({ ...request, timeout: options?.timeout });
           return {
             choices: [
               {
@@ -180,6 +240,24 @@ function fakeOpenAIClient(
               }
             ]
           };
+        }
+      }
+    },
+    embeddings: {
+      create: async () => ({
+        data: [{ embedding: [0.1, 0.2, 0.3] }]
+      })
+    }
+  } as unknown as OpenAIClient;
+}
+
+function failingOpenAIClient(requests: ChatRequest[]): OpenAIClient {
+  return {
+    chat: {
+      completions: {
+        create: async (request: ChatRequest, options?: { timeout?: number }) => {
+          requests.push({ ...request, timeout: options?.timeout });
+          throw new Error("simulated slow final-stage model");
         }
       }
     },
