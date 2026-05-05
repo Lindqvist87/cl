@@ -6,6 +6,8 @@ import { useRouter } from "next/navigation";
 import { CheckCircle2, FileText, Upload } from "lucide-react";
 import copy from "@/content/app-copy.json";
 
+const QUEUED_UPLOAD_WARNING_MESSAGE =
+  "Manuset är uppladdat och analysjobben är köade. Starta eller återuppta analysen via admin.";
 const PIPELINE_WARNING_MESSAGE =
   "Manuset är uppladdat, men analysen startade inte automatiskt. Starta eller återuppta analysen via admin.";
 export const ADMIN_JOBS_PATH = "/admin/jobs?filter=ready";
@@ -222,6 +224,7 @@ export function UploadForm() {
 export type UploadResponse = {
   manuscriptId?: string;
   error?: string;
+  executionMode?: string;
   phase?: string;
   pipelineStarted?: boolean;
   pipelineQueued?: boolean;
@@ -251,6 +254,15 @@ export function uploadFeedbackFromResponse(
   }
 
   if (payload.pipelineQueued === true) {
+    if (shouldPreserveQueuedUploadNotice(payload)) {
+      return {
+        kind: "notice",
+        manuscriptId: payload.manuscriptId,
+        showAdminJobsLink: true,
+        message: uploadResponseMessage(payload, QUEUED_UPLOAD_WARNING_MESSAGE)
+      };
+    }
+
     return {
       kind: "redirect",
       manuscriptId: payload.manuscriptId,
@@ -280,6 +292,13 @@ export function uploadRedirectHref(
   const suffix = feedback.autoRunAnalysis ? "?autorun=1" : "";
 
   return `/manuscripts/${feedback.manuscriptId}${suffix}`;
+}
+
+function shouldPreserveQueuedUploadNotice(payload: UploadResponse) {
+  return (
+    payload.pipelineStarted === false &&
+    (payload.executionMode === "INNGEST" || Boolean(payload.pipelineWarning))
+  );
 }
 
 export function UploadStatusLinks({

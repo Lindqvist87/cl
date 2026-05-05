@@ -1,11 +1,15 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { ManuscriptFormat } from "@prisma/client";
 import {
   createUploadPostHandler,
   type UploadRouteDependencies
 } from "../lib/server/uploadImport";
 import {
+  ADMIN_JOBS_PATH,
+  UploadStatusLinks,
   uploadFeedbackFromResponse,
   uploadRedirectHref
 } from "../components/UploadForm";
@@ -274,24 +278,32 @@ test("frontend redirects queued uploads into automatic analysis run", () => {
   );
 });
 
-test("frontend redirects queued pipeline warning uploads into automatic analysis run", () => {
+test("frontend preserves queued pipeline warnings with recovery links", () => {
   const feedback = uploadFeedbackFromResponse(true, {
     manuscriptId: "manuscript-1",
+    executionMode: "INNGEST",
     pipelineStarted: false,
     pipelineQueued: true,
     pipelineWarning: "Inngest branch environment returned 404."
   });
 
-  if (feedback.kind !== "redirect") {
-    assert.fail(`Expected redirect feedback, received ${feedback.kind}`);
+  if (feedback.kind !== "notice") {
+    assert.fail(`Expected notice feedback, received ${feedback.kind}`);
   }
 
   assert.equal(feedback.manuscriptId, "manuscript-1");
-  assert.equal(feedback.autoRunAnalysis, true);
-  assert.equal(
-    uploadRedirectHref(feedback),
-    "/manuscripts/manuscript-1?autorun=1"
+  assert.equal(feedback.showAdminJobsLink, true);
+  assert.match(feedback.message, /Inngest branch environment returned 404/);
+
+  const markup = renderToStaticMarkup(
+    createElement(UploadStatusLinks, {
+      manuscriptId: feedback.manuscriptId,
+      showAdminJobsLink: feedback.showAdminJobsLink
+    })
   );
+
+  assert.match(markup, /href="\/manuscripts\/manuscript-1"/);
+  assert.match(markup, new RegExp(`href="${escapeRegExp(ADMIN_JOBS_PATH)}"`));
 });
 
 test("frontend only classifies actual upload failures as red errors", () => {
@@ -357,4 +369,8 @@ function uploadRequest() {
     method: "POST",
     body: formData
   });
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
