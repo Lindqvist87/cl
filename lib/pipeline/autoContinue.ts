@@ -277,7 +277,8 @@ function stoppedReasonFromBatch(
       (result) =>
         result.status === "queued" &&
         typeof result.jobId === "string" &&
-        result.readyJobIds.includes(result.jobId)
+        result.readyJobIds.includes(result.jobId) &&
+        !isSameRunContinuablePartialResult(result)
     )
   ) {
     return "partial_progress_needs_next_run";
@@ -307,6 +308,10 @@ function stoppedReasonFromBatch(
   }
 
   return null;
+}
+
+function isSameRunContinuablePartialResult(result: RunPipelineJobResult) {
+  return result.type === "runChapterAudits";
 }
 
 function stoppedReasonAfterBudget(input: {

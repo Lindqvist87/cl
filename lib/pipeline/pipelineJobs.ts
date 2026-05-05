@@ -63,6 +63,9 @@ import type { JsonRecord } from "@/lib/types";
 
 const DEFAULT_LOCK_MS = 10 * 60 * 1000;
 const DEFAULT_MAX_ITEMS_PER_STEP = 2;
+const SAME_RUN_CONTINUABLE_PARTIAL_JOB_TYPES = new Set<string>([
+  "runChapterAudits"
+]);
 
 export type PipelineStartMode = "FULL_PIPELINE" | "RESUME" | "REWRITE_ONLY";
 
@@ -340,10 +343,21 @@ export async function runReadyPipelineJobs(options: RunReadyJobsOptions = {}) {
     }
 
     const result = await runPipelineJob(nextJob.id, options);
-    results.push(result);
-    readyJobIds.push(...result.readyJobIds);
+    const canContinueQueuedJob =
+      isSameRunContinuablePartialResult(result) &&
+      results.length + 1 < maxJobs &&
+      Date.now() - startedAt < maxSeconds * 1000;
 
-    if (result.status === "locked" || result.status === "queued") {
+    results.push(result);
+
+    if (!canContinueQueuedJob) {
+      readyJobIds.push(...result.readyJobIds);
+    }
+
+    if (
+      result.status === "locked" ||
+      (result.status === "queued" && !canContinueQueuedJob)
+    ) {
       break;
     }
   }
@@ -648,7 +662,7 @@ export async function releaseStaleLocks(scopeOrManuscriptId?: string | PipelineJ
 
   for (const job of staleJobs) {
     const hasIncompleteProgress = hasIncompleteStepResult(job.result);
-    const shouldRequeue = hasIncompleteProgress || isResumableCompilerJob(job);
+    const shouldRequeue = hasIncompleteProgress || isResumableIdempotentJob(job);
     const status = shouldRequeue
       ? PIPELINE_JOB_STATUS.QUEUED
       : nextStatusAfterJobError({
@@ -1165,6 +1179,16 @@ function retryDelayMs(attempts: number) {
   return Math.min(5 * 60 * 1000, Math.max(10_000, attempts * 30_000));
 }
 
+function isSameRunContinuablePartialResult(result: RunPipelineJobResult) {
+  return (
+    result.status === "queued" &&
+    typeof result.jobId === "string" &&
+    result.readyJobIds.includes(result.jobId) &&
+    typeof result.type === "string" &&
+    SAME_RUN_CONTINUABLE_PARTIAL_JOB_TYPES.has(result.type)
+  );
+}
+
 function attemptsAfterPartialProgress(job: PipelineJob) {
   const beforeThisRun = Math.max(job.attempts - 1, 0);
   return Math.min(beforeThisRun, Math.max(job.maxAttempts - 1, 0));
@@ -1175,8 +1199,9 @@ function hasIncompleteStepResult(result: unknown) {
   return record.complete === false || numberOrZero(record.remaining) > 0;
 }
 
-function isResumableCompilerJob(job: PipelineJob) {
+function isResumableIdempotentJob(job: PipelineJob) {
   return (
+    job.type === "runChapterAudits" ||
     job.type === "compileWholeBookMap" ||
     job.type === "createNextBestEditorialActions"
   );

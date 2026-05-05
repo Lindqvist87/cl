@@ -419,11 +419,11 @@ test("stale running manuscript jobs without lock expiry are recovered", async ()
 
       assert.equal(recovered[0]?.id, "old-running-audits-job");
       assert.equal(recovered[0]?.stale, true);
-      assert.equal(jobs[0].status, PIPELINE_JOB_STATUS.RETRYING);
+      assert.equal(jobs[0].status, PIPELINE_JOB_STATUS.QUEUED);
       assert.equal(jobs[0].lockedAt, null);
       assert.equal(jobs[0].lockedBy, null);
       assert.equal(jobs[0].lockExpiresAt, null);
-      assert.equal(jobs[0].error, "Job lock expired before completion.");
+      assert.equal(jobs[0].error, null);
     }
   );
 });
@@ -989,6 +989,81 @@ test("manual ready runner pauses after one partial compileChapterCapsules batch"
     );
   } finally {
     restoreOpenAI();
+  }
+});
+
+test("manual ready runner continues runChapterAudits batches into whole book audit", async () => {
+  const manuscriptId = "manuscript-late-audit-continuation";
+  const oldApiKey = process.env.OPENAI_API_KEY;
+  const run = mutableRun(manuscriptId, checkpointBeforeRunChapterAudits());
+  const jobs: MutableJob[] = [];
+  const auditJob = mutableJob("chapter-audits-job", {
+    manuscriptId,
+    type: "runChapterAudits",
+    status: PIPELINE_JOB_STATUS.QUEUED,
+    idempotencyKey: pipelineStepJobKey(manuscriptId, "runChapterAudits"),
+    maxAttempts: 3
+  });
+  const wholeBookJob = mutableJob("whole-book-job", {
+    manuscriptId,
+    type: "runWholeBookAudit",
+    status: PIPELINE_JOB_STATUS.BLOCKED,
+    idempotencyKey: pipelineStepJobKey(manuscriptId, "runWholeBookAudit"),
+    dependencyIds: [auditJob.id],
+    maxAttempts: 3
+  });
+  jobs.push(auditJob, wholeBookJob);
+  const chapters = chapterAuditFixtures(manuscriptId, 5);
+  const outputs: Array<Record<string, unknown>> = [];
+  const reports: Array<Record<string, unknown>> = [];
+
+  delete process.env.OPENAI_API_KEY;
+
+  try {
+    await withPatchedPrisma(
+      chapterAuditPatches({ manuscriptId, run, jobs, chapters, outputs, reports }),
+      async () => {
+        const result = await runReadyPipelineJobs({
+          manuscriptId,
+          maxJobs: 4,
+          maxSeconds: 30,
+          maxItemsPerStep: 2,
+          workerType: "MANUAL",
+          workerId: "test:manual-late-audits"
+        });
+
+        assert.equal(result.jobsRun, 4);
+        assert.deepEqual(
+          result.results.map((item) => `${item.type}:${item.status}`),
+          [
+            "runChapterAudits:queued",
+            "runChapterAudits:queued",
+            "runChapterAudits:completed",
+            "runWholeBookAudit:completed"
+          ]
+        );
+        assert.equal(auditJob.status, PIPELINE_JOB_STATUS.COMPLETED);
+        assert.equal(wholeBookJob.status, PIPELINE_JOB_STATUS.COMPLETED);
+        assert.deepEqual(auditJob.result, {
+          audited: 5,
+          processed: 1,
+          total: 5,
+          remaining: 0,
+          complete: true
+        });
+        assert.equal(
+          outputs.filter((output) => output.passType === "CHAPTER_AUDIT").length,
+          5
+        );
+        assert.equal(
+          outputs.some((output) => output.passType === "WHOLE_BOOK_AUDIT"),
+          true
+        );
+        assert.equal(reports.length, 1);
+      }
+    );
+  } finally {
+    restoreEnv("OPENAI_API_KEY", oldApiKey);
   }
 });
 
@@ -2033,6 +2108,194 @@ function summarizeChunksPatches(input: {
       }
     ]
   ];
+}
+
+function chapterAuditPatches(input: {
+  manuscriptId: string;
+  run: MutableRun;
+  jobs: MutableJob[];
+  chapters: Array<Record<string, unknown>>;
+  outputs: Array<Record<string, unknown>>;
+  reports: Array<Record<string, unknown>>;
+}): Array<[object, Record<string, unknown>]> {
+  const chunks = input.chapters.map((chapter) => ({
+    id: `chunk-${chapter.order}`,
+    manuscriptId: input.manuscriptId,
+    chapterId: chapter.id,
+    sceneId: null,
+    chunkIndex: chapter.order,
+    text: `Chunk text for ${chapter.title}.`,
+    wordCount: 5,
+    summary: `Stored chunk summary for ${chapter.title}.`,
+    localMetrics: null,
+    embedding: null,
+    chapter
+  }));
+  const manuscript = {
+    id: input.manuscriptId,
+    title: "Late Audit Manuscript",
+    targetGenre: "Fantasy",
+    targetAudience: "Adult",
+    wordCount: input.chapters.length * 1200,
+    chapterCount: input.chapters.length,
+    metadata: null,
+    profile: {
+      id: "profile-1",
+      manuscriptId: input.manuscriptId,
+      wordCount: input.chapters.length * 1200,
+      chapterCount: input.chapters.length,
+      pacingCurve: []
+    }
+  };
+
+  return [
+    [
+      prisma.manuscript,
+      {
+        findUnique: async () => manuscript,
+        findUniqueOrThrow: async () => ({
+          ...manuscript,
+          chapters: input.chapters,
+          chunks,
+          profile: manuscript.profile
+        }),
+        update: async (args: { data: Record<string, unknown> }) => {
+          Object.assign(manuscript, args.data);
+          return manuscript;
+        }
+      }
+    ],
+    [prisma.analysisRun, analysisRunPatch(input.run)],
+    [prisma.pipelineJob, pipelineJobPatch(input.jobs)],
+    [
+      prisma.workerHeartbeat,
+      {
+        upsert: async (args: { update: Record<string, unknown> }) => args.update
+      }
+    ],
+    [
+      prisma.analysisOutput,
+      {
+        findUnique: async (args: {
+          where: {
+            runId_passType_scopeType_scopeId: {
+              runId: string;
+              passType: string;
+              scopeType: string;
+              scopeId: string;
+            };
+          };
+        }) => {
+          const key = args.where.runId_passType_scopeType_scopeId;
+          return (
+            input.outputs.find(
+              (output) =>
+                output.runId === key.runId &&
+                output.passType === key.passType &&
+                output.scopeType === key.scopeType &&
+                output.scopeId === key.scopeId
+            ) ?? null
+          );
+        },
+        upsert: async (args: {
+          where: {
+            runId_passType_scopeType_scopeId: {
+              runId: string;
+              passType: string;
+              scopeType: string;
+              scopeId: string;
+            };
+          };
+          create: Record<string, unknown>;
+          update: Record<string, unknown>;
+        }) => {
+          const key = args.where.runId_passType_scopeType_scopeId;
+          const existing = input.outputs.find(
+            (output) =>
+              output.runId === key.runId &&
+              output.passType === key.passType &&
+              output.scopeType === key.scopeType &&
+              output.scopeId === key.scopeId
+          );
+
+          if (existing) {
+            Object.assign(existing, args.update);
+            return existing;
+          }
+
+          const output = {
+            id: `output-${input.outputs.length + 1}`,
+            ...args.create
+          };
+          input.outputs.push(output);
+          return output;
+        }
+      }
+    ],
+    [
+      prisma.manuscriptChapter,
+      {
+        update: async (args: {
+          where: { id: string };
+          data: Record<string, unknown>;
+        }) => {
+          const chapter = input.chapters.find(
+            (candidate) => candidate.id === args.where.id
+          );
+          assert.ok(chapter);
+          Object.assign(chapter, args.data);
+          return chapter;
+        }
+      }
+    ],
+    [
+      prisma.finding,
+      {
+        deleteMany: async () => ({ count: 0 }),
+        createMany: async (args: { data: unknown[] }) => ({
+          count: args.data.length
+        }),
+        findMany: async () => []
+      }
+    ],
+    [
+      prisma.auditReport,
+      {
+        findUnique: async (args: { where: { runId: string } }) =>
+          input.reports.find((report) => report.runId === args.where.runId) ??
+          null,
+        create: async (args: { data: Record<string, unknown> }) => {
+          const report = {
+            id: `audit-report-${input.reports.length + 1}`,
+            ...args.data
+          };
+          input.reports.push(report);
+          return report;
+        }
+      }
+    ]
+  ];
+}
+
+function chapterAuditFixtures(manuscriptId: string, count: number) {
+  return Array.from({ length: count }, (_, index) => {
+    const item = index + 1;
+
+    return {
+      id: `chapter-${item}`,
+      manuscriptId,
+      title: `Chapter ${item}`,
+      heading: `Chapter ${item}`,
+      order: item,
+      chapterIndex: item,
+      text: `Chapter ${item} source text with enough words for deterministic analysis.`,
+      wordCount: 12,
+      summary: null,
+      status: "SUMMARIZED",
+      createdAt: new Date("2026-04-29T05:00:00Z"),
+      updatedAt: new Date("2026-04-29T05:00:00Z")
+    };
+  });
 }
 
 function summarizeChunkFixtures(manuscriptId: string, count: number) {

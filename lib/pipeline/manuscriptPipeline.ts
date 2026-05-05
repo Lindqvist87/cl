@@ -1107,6 +1107,7 @@ async function runChapterAudits(
   const manuscript = await getPipelineManuscript(manuscriptId);
   let audited = 0;
   const pendingChapters: typeof manuscript.chapters = [];
+  const total = manuscript.chapters.length;
 
   for (const chapter of manuscript.chapters) {
     const existing = await findOutput(runId, AnalysisPassType.CHAPTER_AUDIT, "chapter", chapter.id);
@@ -1171,7 +1172,15 @@ async function runChapterAudits(
   }
 
   const remaining = Math.max(pendingChapters.length - audited, 0);
-  return { audited, remaining, complete: remaining === 0 };
+  const alreadyAudited = total - pendingChapters.length;
+
+  return {
+    audited: alreadyAudited + audited,
+    processed: audited,
+    total,
+    remaining,
+    complete: remaining === 0
+  };
 }
 
 async function runWholeBookAudit(manuscriptId: string, runId: string) {

@@ -289,6 +289,50 @@ test("auto-continue pauses after partial progress requeues the same job", async 
   assert.match(result.message, /Batch compiled 2 chapter capsule/);
 });
 
+test("auto-continue keeps going after a partial runChapterAudits batch", async () => {
+  const partialAudits = {
+    ...jobResult("chapter-audits-job", "queued"),
+    type: "runChapterAudits",
+    readyJobIds: ["chapter-audits-job"]
+  };
+  const batches = [
+    runReadyResult({
+      jobsRun: 1,
+      state: "more_work_remains",
+      message: "Batch audited 2 chapter(s).",
+      results: [partialAudits],
+      readyJobIds: ["chapter-audits-job"]
+    }),
+    runReadyResult({
+      jobsRun: 1,
+      state: "done",
+      unfinishedJobs: 0,
+      hasRemainingWork: false,
+      moreWorkRemains: false,
+      results: [jobResult("whole-book-job")]
+    })
+  ];
+  let calls = 0;
+
+  const result = await autoContinueManuscriptPipeline(
+    { manuscriptId: "manuscript-audit-continue", maxBatches: 5 },
+    {
+      runReadyJobs: async () => {
+        calls += 1;
+        const next = batches.shift();
+        assert.ok(next);
+        return next;
+      },
+      getSnapshot: async () => snapshot({ finalState: "done" })
+    }
+  );
+
+  assert.equal(calls, 2);
+  assert.equal(result.batchesRun, 2);
+  assert.equal(result.totalJobsRun, 2);
+  assert.equal(result.stoppedReason, "done");
+});
+
 test("auto-continue response includes stoppedReason and batch summaries", async () => {
   const result = await autoContinueManuscriptPipeline(
     { manuscriptId: "manuscript-response-shape", maxBatches: 1 },
