@@ -181,7 +181,7 @@ function detectUploadFormat(
 }
 
 function validateFormatSignature(format: UploadFormat, buffer: Buffer) {
-  const looksLikeZip = buffer.length >= 2 && buffer[0] === 0x50 && buffer[1] === 0x4b;
+  const looksLikeZip = hasZipSignature(buffer);
 
   if (format === "docx" && !looksLikeZip) {
     throw new Error("The DOCX file does not look like a valid .docx archive.");
@@ -192,6 +192,18 @@ function validateFormatSignature(format: UploadFormat, buffer: Buffer) {
       "The uploaded file looks like a DOCX/ZIP archive, not a plain text manuscript."
     );
   }
+}
+
+function hasZipSignature(buffer: Buffer) {
+  if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4b) {
+    return false;
+  }
+
+  return (
+    (buffer[2] === 0x03 && buffer[3] === 0x04) ||
+    (buffer[2] === 0x05 && buffer[3] === 0x06) ||
+    (buffer[2] === 0x07 && buffer[3] === 0x08)
+  );
 }
 
 async function docxCoverageGuard(input: {
