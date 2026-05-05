@@ -11,12 +11,12 @@ export const CORE_MANUSCRIPT_PIPELINE_STEPS = [
   "extractNarrativeMemory",
   "compileChapterCapsules",
   "compileWholeBookMap",
-  "createNextBestEditorialActions",
   "runChapterAudits",
   "runWholeBookAudit",
   "compareAgainstCorpus",
   "compareAgainstTrendSignals",
-  "createRewritePlan"
+  "createRewritePlan",
+  "createNextBestEditorialActions"
 ] as const;
 
 export const OPTIONAL_MANUSCRIPT_PIPELINE_STEPS = [

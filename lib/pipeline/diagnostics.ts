@@ -203,6 +203,11 @@ function isEligibleDiagnostic(
 }
 
 function blockedReason(job: PipelineJob, allJobs: PipelineJob[], now: Date) {
+  const resultBlock = blockedResultReason(job.result);
+  if (resultBlock) {
+    return resultBlock;
+  }
+
   if (job.readyAt && job.readyAt > now) {
     return `Waiting until ${job.readyAt.toISOString()}.`;
   }
@@ -259,6 +264,20 @@ function blockedReason(job: PipelineJob, allJobs: PipelineJob[], now: Date) {
     .join(", ")}.`;
 }
 
+function blockedResultReason(result: unknown) {
+  const record = toRecord(result);
+  const artifactReason = stringOrNull(record.artifactReason);
+  const blockedReason = stringOrNull(record.blockedReason);
+  const nextStep = stringOrNull(record.nextStep);
+  const reason = artifactReason ?? blockedReason;
+
+  if (!reason) {
+    return null;
+  }
+
+  return nextStep ? `${reason} ${nextStep}` : reason;
+}
+
 function dependenciesComplete(job: PipelineJob, allJobs: PipelineJob[]) {
   const dependencyIds = dependencyIdsFromJson(job.dependencyIds);
   const completed = new Set(
@@ -277,4 +296,14 @@ function stepOrNull(value: unknown): ManuscriptPipelineStep | null {
     )
     ? (value as ManuscriptPipelineStep)
     : null;
+}
+
+function toRecord(value: unknown) {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function stringOrNull(value: unknown) {
+  return typeof value === "string" && value.trim() ? value : null;
 }

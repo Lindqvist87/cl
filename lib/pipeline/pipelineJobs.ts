@@ -4,7 +4,7 @@ import {
   AnalysisRunType,
   AnalysisStatus,
   type PipelineJob,
-  type Prisma
+  Prisma
 } from "@prisma/client";
 import {
   corpusBookIdFromPipelineJob,
@@ -19,7 +19,8 @@ import {
   findOrCreatePipelineRun,
   isPipelineStepRunComplete,
   persistPipelineCheckpoint,
-  runPipelineStep
+  runPipelineStep,
+  type PipelineStepRunResult
 } from "@/lib/pipeline/manuscriptPipeline";
 import {
   pipelineStepJobKey,
@@ -155,6 +156,9 @@ export async function ensureManuscriptPipelineJobs(
       (mode === "RESUME" || mode === "FULL_PIPELINE") &&
       existing?.status === PIPELINE_JOB_STATUS.FAILED &&
       existing.attempts < existing.maxAttempts;
+    const shouldRequeueStaleCompletion =
+      jobPlan.requeueStaleCompletion &&
+      existing?.status === PIPELINE_JOB_STATUS.COMPLETED;
     const baseData = {
       manuscriptId,
       type: jobPlan.type,
@@ -185,6 +189,20 @@ export async function ensureManuscriptPipelineJobs(
                     lockedBy: null,
                     lockExpiresAt: null
                   }
+                : shouldRequeueStaleCompletion
+                  ? {
+                      status: dependencyIds.length > 0
+                        ? PIPELINE_JOB_STATUS.BLOCKED
+                        : PIPELINE_JOB_STATUS.QUEUED,
+                      completedAt: null,
+                      result: Prisma.DbNull,
+                      error: null,
+                      attempts: 0,
+                      readyAt: null,
+                      lockedAt: null,
+                      lockedBy: null,
+                      lockExpiresAt: null
+                    }
                 : {})
           }
         })
@@ -635,6 +653,13 @@ export async function findNextReadyJob(scopeOrManuscriptId?: string | PipelineJo
       continue;
     }
 
+    if (
+      candidate.status === PIPELINE_JOB_STATUS.BLOCKED &&
+      (await hasUnresolvedStepBlocker(candidate))
+    ) {
+      continue;
+    }
+
     if (candidate.status === PIPELINE_JOB_STATUS.BLOCKED) {
       return prisma.pipelineJob.update({
         where: { id: candidate.id },
@@ -762,6 +787,25 @@ async function runManuscriptPipelineStepJob(
       run.id,
       markStepProgress(checkpoint, step, metadata)
     );
+    const stepMetadata = metadata as PipelineStepRunResult;
+    if (stringOrUndefined(stepMetadata.blockedReason)) {
+      const blocked = await prisma.pipelineJob.update({
+        where: { id: job.id },
+        data: {
+          status: PIPELINE_JOB_STATUS.BLOCKED,
+          result: jsonInput(metadata),
+          attempts: attemptsAfterPartialProgress(job),
+          error: null,
+          readyAt: null,
+          lockedAt: null,
+          lockedBy: null,
+          lockExpiresAt: null
+        }
+      });
+      await updateManuscriptPipelineStatus(job.manuscriptId);
+      return jobResult(blocked, "blocked");
+    }
+
     const queued = await prisma.pipelineJob.update({
       where: { id: job.id },
       data: {
@@ -923,7 +967,10 @@ async function unblockReadyJobs(manuscriptId: string) {
   const readyJobIds: string[] = [];
 
   for (const candidate of candidates) {
-    if (await dependenciesComplete(candidate)) {
+    if (
+      (await dependenciesComplete(candidate)) &&
+      !(await hasUnresolvedStepBlocker(candidate))
+    ) {
       const updated = await prisma.pipelineJob.update({
         where: { id: candidate.id },
         data: { status: PIPELINE_JOB_STATUS.QUEUED }
@@ -1197,6 +1244,35 @@ function attemptsAfterPartialProgress(job: PipelineJob) {
 function hasIncompleteStepResult(result: unknown) {
   const record = toJsonRecord(result);
   return record.complete === false || numberOrZero(record.remaining) > 0;
+}
+
+async function hasUnresolvedStepBlocker(job: PipelineJob) {
+  const reason = stringOrUndefined(toJsonRecord(job.result).blockedReason);
+  if (!reason || !job.manuscriptId) {
+    return false;
+  }
+
+  if (reason === "manuscript_has_no_chapters") {
+    try {
+      return (await prisma.manuscriptChapter.count({
+        where: { manuscriptId: job.manuscriptId }
+      })) === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  if (reason === "manuscript_has_no_chunks") {
+    try {
+      return (await prisma.manuscriptChunk.count({
+        where: { manuscriptId: job.manuscriptId }
+      })) === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 function isResumableIdempotentJob(job: PipelineJob) {

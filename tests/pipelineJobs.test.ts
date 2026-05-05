@@ -81,6 +81,132 @@ test("pipeline.started plans ordered jobs with dependencies", () => {
   assert.deepEqual(jobs[1].dependencyKeys, [jobs[0].idempotencyKey]);
 });
 
+test("next best actions are only complete after rewrite planning", () => {
+  const stale = plannedPipelineJobs("m1", {
+    completedSteps: [
+      "createRewritePlan",
+      "createNextBestEditorialActions"
+    ],
+    stepMetadata: {
+      createNextBestEditorialActions: {
+        completedAt: "2026-05-01T10:00:00.000Z"
+      },
+      createRewritePlan: {
+        completedAt: "2026-05-01T10:05:00.000Z"
+      }
+    }
+  }).find((job) => job.type === "createNextBestEditorialActions");
+  const current = plannedPipelineJobs("m1", {
+    completedSteps: [
+      "createRewritePlan",
+      "createNextBestEditorialActions"
+    ],
+    stepMetadata: {
+      createRewritePlan: {
+        completedAt: "2026-05-01T10:00:00.000Z"
+      },
+      createNextBestEditorialActions: {
+        completedAt: "2026-05-01T10:05:00.000Z"
+      }
+    }
+  }).find((job) => job.type === "createNextBestEditorialActions");
+
+  assert.equal(stale?.completedFromCheckpoint, false);
+  assert.equal(stale?.requeueStaleCompletion, true);
+  assert.equal(current?.completedFromCheckpoint, true);
+  assert.equal(current?.requeueStaleCompletion, false);
+});
+
+test("job runner blocks deep analysis when manuscript has no chapters", async () => {
+  const manuscriptId = "manuscript-no-chapters";
+  const oldDatabaseUrl = process.env.DATABASE_URL;
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks"
+    ],
+    currentStep: "createEmbeddingsForChunks"
+  });
+  const job = mutableJob("missing-chapters-job", {
+    manuscriptId,
+    type: "createEmbeddingsForChunks",
+    status: PIPELINE_JOB_STATUS.QUEUED,
+    idempotencyKey: pipelineStepJobKey(manuscriptId, "createEmbeddingsForChunks")
+  });
+
+  process.env.DATABASE_URL = "postgresql://test:test@localhost:5432/test";
+
+  try {
+    await withPatchedPrisma(
+      [
+        ...manuscriptRunnerPatches({ manuscriptId, run, jobs: [job] }),
+        [prisma.manuscriptChapter, { count: async () => 0 }],
+        [prisma.manuscriptChunk, { count: async () => 0 }]
+      ],
+      async () => {
+        const result = await runPipelineJob(job.id, {
+          workerId: "test:missing-chapters"
+        });
+
+        assert.equal(result.status, "blocked");
+        assert.equal(job.status, PIPELINE_JOB_STATUS.BLOCKED);
+        const storedResult = recordValue(job.result);
+        assert.ok(storedResult);
+        assert.equal(storedResult.blockedReason, "manuscript_has_no_chapters");
+        assert.match(String(storedResult.artifactReason), /No chapters/i);
+      }
+    );
+  } finally {
+    restoreEnv("DATABASE_URL", oldDatabaseUrl);
+  }
+});
+
+test("job runner blocks deep analysis when manuscript has no chunks", async () => {
+  const manuscriptId = "manuscript-no-chunks";
+  const oldDatabaseUrl = process.env.DATABASE_URL;
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks"
+    ],
+    currentStep: "createEmbeddingsForChunks"
+  });
+  const job = mutableJob("missing-chunks-job", {
+    manuscriptId,
+    type: "createEmbeddingsForChunks",
+    status: PIPELINE_JOB_STATUS.QUEUED,
+    idempotencyKey: pipelineStepJobKey(manuscriptId, "createEmbeddingsForChunks")
+  });
+
+  process.env.DATABASE_URL = "postgresql://test:test@localhost:5432/test";
+
+  try {
+    await withPatchedPrisma(
+      [
+        ...manuscriptRunnerPatches({ manuscriptId, run, jobs: [job] }),
+        [prisma.manuscriptChapter, { count: async () => 1 }],
+        [prisma.manuscriptChunk, { count: async () => 0 }]
+      ],
+      async () => {
+        const result = await runPipelineJob(job.id, {
+          workerId: "test:missing-chunks"
+        });
+
+        assert.equal(result.status, "blocked");
+        assert.equal(job.status, PIPELINE_JOB_STATUS.BLOCKED);
+        const storedResult = recordValue(job.result);
+        assert.ok(storedResult);
+        assert.equal(storedResult.blockedReason, "manuscript_has_no_chunks");
+        assert.match(String(storedResult.artifactReason), /No chunks/i);
+      }
+    );
+  } finally {
+    restoreEnv("DATABASE_URL", oldDatabaseUrl);
+  }
+});
+
 test("stuck manuscript with no jobs gets resumable jobs from checkpoint", async () => {
   const manuscriptId = "manuscript-stuck-summarize";
   const run = mutableRun(manuscriptId, {
@@ -137,12 +263,12 @@ test("stuck manuscript with no jobs gets resumable jobs from checkpoint", async 
           "extractNarrativeMemory",
           "compileChapterCapsules",
           "compileWholeBookMap",
-          "createNextBestEditorialActions",
           "runChapterAudits",
           "runWholeBookAudit",
           "compareAgainstCorpus",
           "compareAgainstTrendSignals",
-          "createRewritePlan"
+          "createRewritePlan",
+          "createNextBestEditorialActions"
         ]
       );
       assert.equal(
@@ -1067,7 +1193,7 @@ test("manual ready runner continues runChapterAudits batches into whole book aud
   }
 });
 
-test("stale running compileWholeBookMap recovers and unblocks next editorial actions", async () => {
+test("stale running compileWholeBookMap recovers and unblocks chapter audits", async () => {
   const manuscriptId = "manuscript-stale-whole-book-map";
   const oldVercelEnv = process.env.VERCEL_ENV;
   const oldOpenAIKey = process.env.OPENAI_API_KEY;
@@ -1099,18 +1225,15 @@ test("stale running compileWholeBookMap recovers and unblocks next editorial act
     lockedBy: "manual:stale-whole-book",
     lockExpiresAt: new Date("2026-04-29T04:59:00Z")
   });
-  const nextActionsJob = mutableJob("next-actions-job", {
+  const auditJob = mutableJob("chapter-audits-job", {
     manuscriptId,
-    type: "createNextBestEditorialActions",
+    type: "runChapterAudits",
     status: PIPELINE_JOB_STATUS.BLOCKED,
-    idempotencyKey: pipelineStepJobKey(
-      manuscriptId,
-      "createNextBestEditorialActions"
-    ),
+    idempotencyKey: pipelineStepJobKey(manuscriptId, "runChapterAudits"),
     dependencyIds: [wholeBookJob.id],
     maxAttempts: 3
   });
-  const jobs = [wholeBookJob, nextActionsJob];
+  const jobs = [wholeBookJob, auditJob];
   const db = chapterCapsulePipelineDb(manuscriptId, 3);
   const requests: Array<Record<string, unknown>> = [];
   const restoreOpenAI = setOpenAIClientForTest(
@@ -1126,7 +1249,7 @@ test("stale running compileWholeBookMap recovers and unblocks next editorial act
       async () => {
         const result = await runReadyPipelineJobs({
           manuscriptId,
-          maxJobs: 2,
+          maxJobs: 1,
           maxSeconds: 20,
           maxItemsPerStep: 2,
           workerType: "MANUAL",
@@ -1137,11 +1260,9 @@ test("stale running compileWholeBookMap recovers and unblocks next editorial act
         );
 
         assert.equal(result.recoveredStaleJobs[0]?.id, wholeBookJob.id);
-        assert.equal(result.jobsRun, 2);
+        assert.equal(result.jobsRun, 1);
         assert.equal(result.results[0]?.jobId, wholeBookJob.id);
         assert.equal(result.results[0]?.status, "completed");
-        assert.equal(result.results[1]?.jobId, nextActionsJob.id);
-        assert.equal(result.results[1]?.status, "completed");
         assert.equal(wholeBookJob.status, PIPELINE_JOB_STATUS.COMPLETED);
         assert.equal(wholeBookJob.error, null);
         assert.equal(wholeBookJob.lockedAt, null);
@@ -1152,8 +1273,8 @@ test("stale running compileWholeBookMap recovers and unblocks next editorial act
           fallback: true,
           complete: true
         });
-        assert.equal(nextActionsJob.status, PIPELINE_JOB_STATUS.COMPLETED);
-        assert.equal(result.readyJobIds.includes(nextActionsJob.id), true);
+        assert.equal(auditJob.status, PIPELINE_JOB_STATUS.QUEUED);
+        assert.equal(result.readyJobIds.includes(auditJob.id), true);
         assert.equal(requests.length, 0);
         assert.equal(wholeBookMaps.length, 1);
         assert.equal(wholeBookMaps[0].model, "stub");
@@ -1161,7 +1282,7 @@ test("stale running compileWholeBookMap recovers and unblocks next editorial act
           db.artifacts.filter(
             (artifact) => artifact.artifactType === "NEXT_BEST_ACTIONS"
           ).length,
-          1
+          0
         );
       }
     );
@@ -1568,8 +1689,7 @@ function checkpointBeforeRunChapterAudits() {
       "compileSceneDigests",
       "extractNarrativeMemory",
       "compileChapterCapsules",
-      "compileWholeBookMap",
-      "createNextBestEditorialActions"
+      "compileWholeBookMap"
     ],
     currentStep: "runChapterAudits"
   };

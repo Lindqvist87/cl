@@ -344,7 +344,7 @@ async function importVerificationGate(
     structureReview.recommended === true;
 
   if (!manifest || approved || !needsReview) {
-    return null;
+    return importArtifactReadinessGate(step, manuscriptId);
   }
 
   return {
@@ -355,6 +355,63 @@ async function importVerificationGate(
     warningCount:
       numberOrZero(structureReview.warningCount) || manifest.review.warningCount,
     nextStep: "Open import inspector and approve the structure before deep analysis."
+  };
+}
+
+async function importArtifactReadinessGate(
+  step: ManuscriptPipelineStep,
+  manuscriptId: string
+): Promise<PipelineStepRunResult | null> {
+  if (isImportCriticalManuscriptPipelineStep(step)) {
+    return null;
+  }
+
+  let chapterCount = 0;
+  let chunkCount = 0;
+
+  try {
+    [chapterCount, chunkCount] = await Promise.all([
+      prisma.manuscriptChapter.count({ where: { manuscriptId } }),
+      prisma.manuscriptChunk.count({ where: { manuscriptId } })
+    ]);
+  } catch {
+    return null;
+  }
+
+  if (chapterCount <= 0) {
+    return missingImportArtifactGate({
+      artifact: "chapters",
+      artifactReason: "No chapters were created during import.",
+      blockedReason: "manuscript_has_no_chapters",
+      nextStep: "Run splitIntoChapters before deep analysis."
+    });
+  }
+
+  if (chunkCount <= 0) {
+    return missingImportArtifactGate({
+      artifact: "chunks",
+      artifactReason: "No chunks were created during import.",
+      blockedReason: "manuscript_has_no_chunks",
+      nextStep: "Run splitIntoChunks before deep analysis."
+    });
+  }
+
+  return null;
+}
+
+function missingImportArtifactGate(input: {
+  artifact: "chapters" | "chunks";
+  artifactReason: string;
+  blockedReason: string;
+  nextStep: string;
+}): PipelineStepRunResult {
+  return {
+    complete: false,
+    remaining: 1,
+    blockedReason: input.blockedReason,
+    artifactReason: input.artifactReason,
+    missingArtifact: input.artifact,
+    nextStep: input.nextStep
   };
 }
 

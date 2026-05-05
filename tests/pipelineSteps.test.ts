@@ -9,7 +9,10 @@ import {
   normalizeCheckpoint,
   pipelineProgress
 } from "../lib/pipeline/steps";
-import { runPipelineStep } from "../lib/pipeline/manuscriptPipeline";
+import {
+  runPipelineStep,
+  type PipelineStepRunResult
+} from "../lib/pipeline/manuscriptPipeline";
 import { prisma } from "../lib/prisma";
 
 test("pipeline checkpoint helpers make steps idempotent", () => {
@@ -86,6 +89,65 @@ test("pipeline import steps create structure from a shell idempotently", async (
       counts
     );
   });
+});
+
+test("deep analysis is blocked when import created no chapters", async () => {
+  const db = createImportDb();
+  const oldDatabaseUrl = process.env.DATABASE_URL;
+
+  process.env.DATABASE_URL = "postgresql://test:test@localhost:5432/test";
+
+  try {
+    await withPatchedPrisma(createImportPatches(db), async () => {
+      const result = (await runPipelineStep(
+        "createEmbeddingsForChunks",
+        db.manuscript.id,
+        "run-1"
+      )) as PipelineStepRunResult;
+
+      assert.equal(result.complete, false);
+      assert.equal(result.blockedReason, "manuscript_has_no_chapters");
+      assert.equal(result.missingArtifact, "chapters");
+      assert.match(String(result.artifactReason), /No chapters/i);
+    });
+  } finally {
+    restoreEnv("DATABASE_URL", oldDatabaseUrl);
+  }
+});
+
+test("deep analysis is blocked when import created no chunks", async () => {
+  const db = createImportDb();
+  const oldDatabaseUrl = process.env.DATABASE_URL;
+
+  db.chapters.push({
+    id: "chapter-1",
+    manuscriptId: db.manuscript.id,
+    order: 1,
+    chapterIndex: 1,
+    title: "Chapter One",
+    heading: "Chapter One",
+    text: "A chapter without chunks.",
+    wordCount: 4
+  });
+
+  process.env.DATABASE_URL = "postgresql://test:test@localhost:5432/test";
+
+  try {
+    await withPatchedPrisma(createImportPatches(db), async () => {
+      const result = (await runPipelineStep(
+        "createEmbeddingsForChunks",
+        db.manuscript.id,
+        "run-1"
+      )) as PipelineStepRunResult;
+
+      assert.equal(result.complete, false);
+      assert.equal(result.blockedReason, "manuscript_has_no_chunks");
+      assert.equal(result.missingArtifact, "chunks");
+      assert.match(String(result.artifactReason), /No chunks/i);
+    });
+  } finally {
+    restoreEnv("DATABASE_URL", oldDatabaseUrl);
+  }
 });
 
 function createImportDb() {
@@ -250,6 +312,7 @@ function createImportPatches(db: ReturnType<typeof createImportDb>) {
     [
       prisma.manuscriptChapter,
       {
+        count: async () => db.chapters.length,
         findMany: async (args: { include?: Record<string, unknown> } = {}) =>
           db.chapters.map((chapter) => ({
             ...chapter,
@@ -284,6 +347,7 @@ function createImportPatches(db: ReturnType<typeof createImportDb>) {
     [
       prisma.manuscriptChunk,
       {
+        count: async () => db.chunks.length,
         findMany: async () => db.chunks,
         update: async (args: {
           where: { id: string };
@@ -336,5 +400,13 @@ async function withPatchedPrisma<T>(
         delete (original.target as Record<string, unknown>)[original.key];
       }
     }
+  }
+}
+
+function restoreEnv(name: string, value: string | undefined) {
+  if (value === undefined) {
+    delete process.env[name];
+  } else {
+    process.env[name] = value;
   }
 }

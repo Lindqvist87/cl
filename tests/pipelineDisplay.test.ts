@@ -74,12 +74,12 @@ test("pipeline display separates core completion from optional rewrite drafts", 
     "extractNarrativeMemory",
     "compileChapterCapsules",
     "compileWholeBookMap",
-    "createNextBestEditorialActions",
     "runChapterAudits",
     "runWholeBookAudit",
     "compareAgainstCorpus",
     "compareAgainstTrendSignals",
-    "createRewritePlan"
+    "createRewritePlan",
+    "createNextBestEditorialActions"
   ];
   const display = buildPipelineStatusDisplay({
     checkpoint: {

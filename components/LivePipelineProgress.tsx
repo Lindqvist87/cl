@@ -23,6 +23,12 @@ type PipelineDiagnosticsResponse = Omit<
   "pipelineStatus"
 > & {
   pipelineStatus?: PipelineStatusDisplay;
+  blockedJobs?: Array<{
+    id?: string;
+    type?: string;
+    status?: string;
+    blockedReason?: string | null;
+  }>;
   error?: string;
 };
 
@@ -95,6 +101,7 @@ export function LivePipelineProgress({
       (diagnostics?.state === "more_work_remains" &&
         !diagnostics.nextEligibleJob &&
         (diagnostics.remainingJobCount ?? 0) > 0));
+  const waitingDetail = waitingDetailText({ diagnostics, status });
   const rewriteDraftsDeferred =
     status.coreAnalysisComplete && status.optionalRewriteDraftsPending;
   const phaseLabel = humanPhaseLabel({
@@ -110,6 +117,7 @@ export function LivePipelineProgress({
     status,
     isBlockedByError,
     isWaitingForNextPhase,
+    waitingDetail,
     waitingForManualRun,
     optimisticPhase,
     rewriteDraftsDeferred,
@@ -344,7 +352,7 @@ export function LivePipelineProgress({
           </span>
           {stepProgressLabel ? <span>{stepProgressLabel}</span> : null}
           {isWaitingForNextPhase ? (
-            <span>Nästa fas startar strax</span>
+            <span>{waitingDetail ?? "Nästa fas startar strax"}</span>
           ) : null}
           {waitingForManualRun ? <span>Väntar på manuell körning</span> : null}
         </div>
@@ -499,6 +507,7 @@ function progressGuidance(input: {
   status: PipelineStatusDisplay;
   isBlockedByError: boolean;
   isWaitingForNextPhase: boolean;
+  waitingDetail: string | null;
   waitingForManualRun: boolean;
   optimisticPhase: OptimisticPhase;
   rewriteDraftsDeferred: boolean;
@@ -525,6 +534,10 @@ function progressGuidance(input: {
   }
 
   if (input.isWaitingForNextPhase) {
+    if (input.waitingDetail) {
+      return input.waitingDetail;
+    }
+
     return "Vi väntar in nästa trygga fas och fortsätter uppdatera sidan automatiskt.";
   }
 
@@ -563,6 +576,42 @@ function humanStepProgressLabel(
   }
 
   return "Fasen pågår.";
+}
+
+function waitingDetailText(input: {
+  diagnostics: PipelineDiagnosticsResponse | null;
+  status: PipelineStatusDisplay;
+}) {
+  if (input.status.lockStatus?.message) {
+    return input.status.lockStatus.message;
+  }
+
+  const manualMessage = input.diagnostics?.manualRunner?.message;
+  if (typeof manualMessage === "string" && manualMessage.trim()) {
+    return manualMessage;
+  }
+
+  const blockedJob = input.diagnostics?.blockedJobs?.find(
+    (job) => job.blockedReason
+  );
+  if (blockedJob?.blockedReason) {
+    return `${blockedJob.type ?? "Nästa fas"}: ${blockedJob.blockedReason}`;
+  }
+
+  const blockingJob = recordFromUnknown(
+    input.diagnostics?.manualRunner?.blockingJob
+  );
+  if (typeof blockingJob.type === "string") {
+    const status =
+      typeof blockingJob.status === "string" ? ` (${blockingJob.status})` : "";
+    return `${blockingJob.type}${status}`;
+  }
+
+  if (input.status.nextBlockedStep) {
+    return `${humanStepName(input.status.nextBlockedStep)} väntar på föregående fas.`;
+  }
+
+  return null;
 }
 
 function manualNoticeFromResult(result: unknown) {
