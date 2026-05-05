@@ -153,6 +153,24 @@ export function markStepProgress(
   };
 }
 
+export function removeStepCompletion(
+  checkpoint: PipelineCheckpoint,
+  step: ManuscriptPipelineStep
+): PipelineCheckpoint {
+  const normalized = normalizeCheckpoint(checkpoint);
+  const stepMetadata = { ...(normalized.stepMetadata ?? {}) };
+
+  delete stepMetadata[step];
+
+  return {
+    ...normalized,
+    completedSteps: (normalized.completedSteps ?? []).filter(
+      (completedStep) => completedStep !== step
+    ),
+    stepMetadata
+  };
+}
+
 export function markStepComplete(
   checkpoint: PipelineCheckpoint,
   step: ManuscriptPipelineStep,

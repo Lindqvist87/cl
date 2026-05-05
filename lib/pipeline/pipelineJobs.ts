@@ -17,6 +17,7 @@ import {
 import { jsonInput } from "@/lib/json";
 import {
   findOrCreatePipelineRun,
+  isImportStructureReviewRequired,
   isPipelineStepRunComplete,
   persistPipelineCheckpoint,
   runPipelineStep,
@@ -53,6 +54,7 @@ import {
   markStepProgress,
   markStepStarted,
   normalizeCheckpoint,
+  removeStepCompletion,
   type ManuscriptPipelineStep
 } from "@/lib/pipeline/steps";
 import { prisma } from "@/lib/prisma";
@@ -140,6 +142,8 @@ export async function ensureManuscriptPipelineJobs(
 
   const run = await findOrCreatePipelineRun(manuscriptId);
   const checkpoint = normalizeCheckpoint(run.checkpoint);
+  let nextCheckpoint = checkpoint;
+  let checkpointChanged = false;
   const planned = plannedPipelineJobs(manuscriptId, checkpoint);
   const jobsByKey = new Map<string, PipelineJob>();
   const jobs: PipelineJob[] = [];
@@ -159,6 +163,10 @@ export async function ensureManuscriptPipelineJobs(
     const shouldRequeueStaleCompletion =
       jobPlan.requeueStaleCompletion &&
       existing?.status === PIPELINE_JOB_STATUS.COMPLETED;
+    if (jobPlan.requeueStaleCompletion) {
+      nextCheckpoint = removeStepCompletion(nextCheckpoint, jobPlan.type);
+      checkpointChanged = true;
+    }
     const baseData = {
       manuscriptId,
       type: jobPlan.type,
@@ -221,6 +229,10 @@ export async function ensureManuscriptPipelineJobs(
 
     jobsByKey.set(jobPlan.idempotencyKey, job);
     jobs.push(job);
+  }
+
+  if (checkpointChanged) {
+    await persistPipelineCheckpoint(run.id, nextCheckpoint);
   }
 
   await unblockReadyJobs(manuscriptId);
@@ -1267,6 +1279,19 @@ async function hasUnresolvedStepBlocker(job: PipelineJob) {
       return (await prisma.manuscriptChunk.count({
         where: { manuscriptId: job.manuscriptId }
       })) === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  if (reason === "import_structure_review_required") {
+    try {
+      const manuscript = await prisma.manuscript.findUnique({
+        where: { id: job.manuscriptId },
+        select: { metadata: true }
+      });
+
+      return isImportStructureReviewRequired(manuscript?.metadata);
     } catch {
       return false;
     }

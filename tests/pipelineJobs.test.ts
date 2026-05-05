@@ -5,6 +5,11 @@ import type { PipelineJob } from "@prisma/client";
 import { pipelineStartHttpStatus } from "../lib/pipeline/startPipeline";
 import { plannedPipelineJobs } from "../lib/pipeline/jobPlanner";
 import {
+  createImportManifest,
+  metadataWithImportManifest
+} from "../lib/import/v2/manifest";
+import { applyImportReviewAction } from "../lib/import/v2/review";
+import {
   CORPUS_ANALYSIS_PIPELINE_NAME
 } from "../lib/corpus/corpusAnalysisJobs";
 import {
@@ -29,6 +34,7 @@ import {
 } from "../lib/pipeline/pipelineJobs";
 import { pipelineStepJobKey } from "../lib/pipeline/jobPlanner";
 import {
+  FULL_MANUSCRIPT_PIPELINE_STEPS,
   isStepComplete,
   normalizeCheckpoint
 } from "../lib/pipeline/steps";
@@ -115,6 +121,140 @@ test("next best actions are only complete after rewrite planning", () => {
   assert.equal(stale?.requeueStaleCompletion, true);
   assert.equal(current?.completedFromCheckpoint, true);
   assert.equal(current?.requeueStaleCompletion, false);
+});
+
+test("stale next best actions completion is removed from the checkpoint", async () => {
+  const manuscriptId = "manuscript-stale-next-actions";
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [...FULL_MANUSCRIPT_PIPELINE_STEPS],
+    stepMetadata: {
+      createNextBestEditorialActions: {
+        completedAt: "2026-05-01T10:00:00.000Z"
+      },
+      createRewritePlan: {
+        completedAt: "2026-05-01T10:05:00.000Z"
+      }
+    }
+  });
+  const nextActionsJob = mutableJob("next-actions-stale-job", {
+    manuscriptId,
+    type: "createNextBestEditorialActions",
+    status: PIPELINE_JOB_STATUS.COMPLETED,
+    idempotencyKey: pipelineStepJobKey(
+      manuscriptId,
+      "createNextBestEditorialActions"
+    ),
+    completedAt: new Date("2026-05-01T10:00:00.000Z"),
+    result: { complete: true }
+  });
+
+  await withPatchedPrisma(
+    manuscriptRunnerPatches({
+      manuscriptId,
+      run,
+      jobs: [nextActionsJob]
+    }),
+    async () => {
+      await ensureManuscriptPipelineJobs(manuscriptId, "RESUME");
+
+      const checkpoint = normalizeCheckpoint(run.checkpoint);
+      assert.equal(
+        isStepComplete(checkpoint, "createNextBestEditorialActions"),
+        false
+      );
+      assert.equal(isStepComplete(checkpoint, "createRewritePlan"), true);
+      assert.equal(
+        recordValue(checkpoint.stepMetadata?.createNextBestEditorialActions),
+        null
+      );
+      assert.notEqual(nextActionsJob.status, PIPELINE_JOB_STATUS.COMPLETED);
+      assert.equal(nextActionsJob.completedAt, null);
+    }
+  );
+});
+
+test("approved import review releases a previously blocked pipeline job", async () => {
+  const manuscriptId = "manuscript-import-review-approved";
+  const oldDatabaseUrl = process.env.DATABASE_URL;
+  const manifest = createReviewRequiredImportManifest();
+  let metadata = metadataWithImportManifest(
+    {
+      structureReview: { recommended: true },
+      importReview: { pendingInvalidation: false }
+    },
+    manifest
+  );
+  const run = mutableRun(manuscriptId, {
+    completedSteps: [
+      "parseAndNormalizeManuscript",
+      "splitIntoChapters",
+      "splitIntoChunks"
+    ],
+    currentStep: "createEmbeddingsForChunks"
+  });
+  const job = mutableJob("import-review-blocked-job", {
+    manuscriptId,
+    type: "createEmbeddingsForChunks",
+    status: PIPELINE_JOB_STATUS.BLOCKED,
+    idempotencyKey: pipelineStepJobKey(manuscriptId, "createEmbeddingsForChunks"),
+    result: {
+      complete: false,
+      remaining: 1,
+      blockedReason: "import_structure_review_required"
+    }
+  });
+
+  process.env.DATABASE_URL = "postgresql://test:test@localhost:5432/test";
+
+  try {
+    await withPatchedPrisma(
+      [
+        ...manuscriptRunnerPatches({ manuscriptId, run, jobs: [job] }),
+        [
+          prisma.manuscript,
+          {
+            findUnique: async (args: { select?: { metadata?: boolean } }) =>
+              args.select?.metadata ? { metadata } : { id: manuscriptId }
+          }
+        ],
+        [prisma.manuscriptChapter, { count: async () => 1 }],
+        [
+          prisma.manuscriptChunk,
+          {
+            count: async () => 1,
+            findMany: async () => []
+          }
+        ]
+      ],
+      async () => {
+        const beforeApproval = await runReadyPipelineJobs({
+          manuscriptId,
+          maxJobs: 1,
+          workerId: "test:before-import-approval"
+        });
+
+        assert.equal(beforeApproval.jobsRun, 0);
+        assert.equal(job.status, PIPELINE_JOB_STATUS.BLOCKED);
+
+        metadata = metadataWithImportManifest(
+          metadata,
+          applyImportReviewAction(manifest, { type: "approve" })
+        );
+
+        const afterApproval = await runReadyPipelineJobs({
+          manuscriptId,
+          maxJobs: 1,
+          workerId: "test:after-import-approval"
+        });
+
+        assert.equal(afterApproval.jobsRun, 1);
+        assert.equal(afterApproval.results[0]?.status, "completed");
+        assert.equal(job.status, PIPELINE_JOB_STATUS.COMPLETED);
+      }
+    );
+  } finally {
+    restoreEnv("DATABASE_URL", oldDatabaseUrl);
+  }
 });
 
 test("job runner blocks deep analysis when manuscript has no chapters", async () => {
@@ -1693,6 +1833,39 @@ function checkpointBeforeRunChapterAudits() {
     ],
     currentStep: "runChapterAudits"
   };
+}
+
+function createReviewRequiredImportManifest() {
+  return createImportManifest({
+    parserVersion: "test-parser",
+    sourceFileName: "review-required.txt",
+    sourceFormat: "TXT",
+    fileHash: "review-required-hash",
+    blocks: [
+      {
+        id: "block-1",
+        order: 1,
+        type: "heading",
+        headingType: "chapter",
+        text: "Chapter One",
+        confidence: 0.4,
+        sourceAnchor: {
+          sourceFileName: "review-required.txt",
+          sourceFormat: "TXT",
+          path: "body",
+          paragraphIndex: 0
+        },
+        offset: { blockIndex: 0, paragraphIndex: 0 },
+        warnings: [
+          {
+            code: "chapter_split_uncertain",
+            message: "Chapter split needs review.",
+            severity: "critical"
+          }
+        ]
+      }
+    ]
+  });
 }
 
 function manuscriptRunnerPatches(input: {

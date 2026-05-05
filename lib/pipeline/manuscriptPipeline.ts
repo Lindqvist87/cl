@@ -333,18 +333,35 @@ async function importVerificationGate(
     return null;
   }
   const metadata = toJsonRecord(manuscript?.metadata);
-  const manifest = importManifestFromMetadata(metadata);
-  const structureReview = toJsonRecord(metadata.structureReview);
-  const importV2 = toJsonRecord(metadata.importV2);
+  const reviewGate = importStructureReviewGate(metadata);
+
+  if (!reviewGate) {
+    return importArtifactReadinessGate(step, manuscriptId);
+  }
+
+  return reviewGate;
+}
+
+export function isImportStructureReviewRequired(metadata: unknown) {
+  return Boolean(importStructureReviewGate(metadata));
+}
+
+function importStructureReviewGate(
+  metadata: unknown
+): PipelineStepRunResult | null {
+  const record = toJsonRecord(metadata);
+  const manifest = importManifestFromMetadata(record);
+  const structureReview = toJsonRecord(record.structureReview);
+  const importV2 = toJsonRecord(record.importV2);
   const approved =
     importV2.reviewStatus === "approved" || manifest?.review.status === "approved";
   const needsReview =
-    toJsonRecord(metadata.importReview).pendingInvalidation === true ||
+    toJsonRecord(record.importReview).pendingInvalidation === true ||
     manifest?.review.verifiedEnough === false ||
     structureReview.recommended === true;
 
   if (!manifest || approved || !needsReview) {
-    return importArtifactReadinessGate(step, manuscriptId);
+    return null;
   }
 
   return {
