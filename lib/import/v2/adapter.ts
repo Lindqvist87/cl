@@ -89,11 +89,14 @@ function buildChapters(
   const chapterStartIndexes = blocks
     .map((block, index) => (isChapterStart(block) ? index : -1))
     .filter((index) => index >= 0);
+  const fallbackStarts = fallbackChapterStarts(blocks, manifest);
   const starts =
     chapterStartIndexes.length === 0
-      ? blocks.length > 0
-        ? [0]
-        : []
+      ? fallbackStarts.length > 0
+        ? fallbackStarts
+        : blocks.length > 0
+          ? [0]
+          : []
       : chapterStartIndexes[0] > 0
         ? [0, ...chapterStartIndexes]
         : chapterStartIndexes;
@@ -157,6 +160,7 @@ function buildScenes(
   let chapterParagraphOrder = 0;
   let sceneParagraphOrder = 0;
   let globalOrder = globalStartOrder;
+  let nextSceneTitle: string | undefined;
 
   const flushScene = (marker?: string) => {
     if (currentParagraphs.length === 0) {
@@ -170,7 +174,7 @@ function buildScenes(
 
     scenes.push({
       order: sceneOrder,
-      title: `Scene ${sceneOrder}`,
+      title: nextSceneTitle ?? `Scene ${sceneOrder}`,
       marker,
       wordCount,
       paragraphs: currentParagraphs
@@ -178,12 +182,19 @@ function buildScenes(
 
     sceneOrder += 1;
     sceneParagraphOrder = 0;
+    nextSceneTitle = undefined;
     currentParagraphs = [];
   };
 
   for (const block of blocks) {
     if (block.type === "scene_break") {
       flushScene(block.text.trim());
+      continue;
+    }
+
+    if (block.type === "heading" && block.headingType === "scene") {
+      flushScene();
+      nextSceneTitle = chapterTitleFromHeading(block.text) || `Scene ${sceneOrder}`;
       continue;
     }
 
@@ -242,6 +253,32 @@ function isChapterStart(block: ManuscriptIRBlock | undefined) {
     block.headingType === "part" ||
     block.headingType === "unknown"
   );
+}
+
+function fallbackChapterStarts(
+  blocks: ManuscriptIRBlock[],
+  manifest: ImportManifest
+) {
+  const rawStarts = Array.isArray(manifest.metadata?.fallbackChapterStarts)
+    ? manifest.metadata.fallbackChapterStarts
+    : [];
+  const orderToContentIndex = new Map(
+    blocks.map((block, index) => [block.order - 1, index] as const)
+  );
+  const starts = rawStarts
+    .map((start) =>
+      typeof start === "number" && Number.isInteger(start)
+        ? orderToContentIndex.get(start)
+        : undefined
+    )
+    .filter((start): start is number => typeof start === "number")
+    .sort((a, b) => a - b);
+
+  if (starts.length === 0) {
+    return [];
+  }
+
+  return starts[0] > 0 ? [0, ...starts] : starts;
 }
 
 function chapterTitleFromHeading(text: string) {

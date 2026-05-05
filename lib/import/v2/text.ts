@@ -33,6 +33,7 @@ type ParagraphBlock = {
 type HeadingDetection = {
   indexes: Map<number, HeadingDetectionValue>;
   starts: number[];
+  usedLengthFallback: boolean;
 };
 
 type HeadingDetectionValue = {
@@ -128,7 +129,11 @@ export function buildTextImportManifest(input: {
     metadata: {
       normalizedWith: "normalizeWhitespace",
       chapterDetection:
-        "chapter/kapitel/numeric-sequence/roman-sequence/prologue/epilogue/epub-section/contextual-all-caps/fallback-length"
+        "chapter/kapitel/numeric-sequence/roman-sequence/prologue/epilogue/epub-section/contextual-all-caps/fallback-length",
+      fallbackChapterStarts: detection.usedLengthFallback
+        ? detection.starts
+        : undefined,
+      usedLengthFallback: detection.usedLengthFallback
     }
   });
 }
@@ -224,7 +229,7 @@ function findHeadingStarts(blocks: ParagraphBlock[]): HeadingDetection {
       });
     }
 
-    return { starts: startsWithOpening(epubStarts), indexes };
+    return { starts: startsWithOpening(epubStarts), indexes, usedLengthFallback: false };
   }
 
   const numericSequenceStarts = new Set(findSequentialStandaloneNumberStarts(blocks));
@@ -270,13 +275,16 @@ function findHeadingStarts(blocks: ParagraphBlock[]): HeadingDetection {
 
   const starts = [...indexes.keys()].sort((a, b) => a - b);
   if (starts.length === 0) {
+    const fallbackStarts = fallbackChapterStarts(blocks);
+
     return {
-      starts: fallbackChapterStarts(blocks),
-      indexes
+      starts: fallbackStarts,
+      indexes,
+      usedLengthFallback: fallbackStarts.length > 1
     };
   }
 
-  return { starts: startsWithOpening(starts), indexes };
+  return { starts: startsWithOpening(starts), indexes, usedLengthFallback: false };
 }
 
 function explicitHeading(text: string) {
@@ -447,16 +455,18 @@ function fallbackWarnings(
   detection: HeadingDetection,
   blocks: ParagraphBlock[]
 ): ImportWarning[] {
-  if (detection.indexes.size > 0) {
+  if (detection.indexes.size > 0 && !detection.usedLengthFallback) {
     return [];
   }
 
   return [
     warning({
-      code: "fallback_length_chaptering",
+      code: blocks.length > 0 ? "fallback_length_chaptering" : "empty_text",
       message:
-        blocks.length > 0
+        detection.usedLengthFallback
           ? "No explicit headings were detected; import used length-based fallback structure."
+          : blocks.length > 0
+            ? "No explicit headings were detected; import used a single-section fallback structure."
           : "No text blocks were detected in the source.",
       severity: blocks.length > 0 ? "warning" : "critical",
       confidence: blocks.length > 0 ? 0.35 : 0

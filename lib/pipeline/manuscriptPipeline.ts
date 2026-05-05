@@ -68,6 +68,7 @@ import type { ImportManifest } from "@/lib/import/v2/types";
 import { chunkParsedManuscript } from "@/lib/parsing/chunker";
 import {
   FULL_MANUSCRIPT_PIPELINE_STEPS,
+  isImportCriticalManuscriptPipelineStep,
   isStepComplete,
   markStepComplete,
   markStepStarted,
@@ -309,17 +310,11 @@ export async function runPipelineStep(
   }
 }
 
-const IMPORT_STRUCTURE_PREREVIEW_STEPS = new Set<ManuscriptPipelineStep>([
-  "parseAndNormalizeManuscript",
-  "splitIntoChapters",
-  "splitIntoChunks"
-]);
-
 async function importVerificationGate(
   step: ManuscriptPipelineStep,
   manuscriptId: string
 ): Promise<PipelineStepRunResult | null> {
-  if (IMPORT_STRUCTURE_PREREVIEW_STEPS.has(step)) {
+  if (isImportCriticalManuscriptPipelineStep(step)) {
     return null;
   }
 

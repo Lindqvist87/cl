@@ -90,7 +90,7 @@ Optional variables read by the app or build scripts:
 
 `runFullManuscriptPipeline(manuscriptId)` lives in `lib/pipeline/manuscriptPipeline.ts`.
 
-Steps are checkpointed on `AnalysisRun.checkpoint` and skip completed work on resume:
+Steps are checkpointed on `AnalysisRun.checkpoint` and skip completed work on resume. The full pipeline currently has 18 core jobs. Chapter rewrite drafts are a separate optional job, not part of the automatic full pipeline.
 
 1. `parseAndNormalizeManuscript`
 2. `splitIntoChapters`
@@ -99,12 +99,26 @@ Steps are checkpointed on `AnalysisRun.checkpoint` and skip completed work on re
 5. `summarizeChunks`
 6. `summarizeChapters`
 7. `createManuscriptProfile`
-8. `runChapterAudits`
-9. `runWholeBookAudit`
-10. `compareAgainstCorpus`
-11. `compareAgainstTrendSignals`
-12. `createRewritePlan`
-13. `generateChapterRewriteDrafts`
+8. `buildManuscriptNodes`
+9. `compileSceneDigests`
+10. `extractNarrativeMemory`
+11. `compileChapterCapsules`
+12. `compileWholeBookMap`
+13. `createNextBestEditorialActions`
+14. `runChapterAudits`
+15. `runWholeBookAudit`
+16. `compareAgainstCorpus`
+17. `compareAgainstTrendSignals`
+18. `createRewritePlan`
+
+Import-critical steps are 1-3. Deep analysis is gated after chunking when the import manifest recommends structure review, so risky chapter splits can be approved or corrected before model-heavy work runs.
+
+Steps that must keep earning their place as the import flow matures:
+
+- `createEmbeddingsForChunks` can become conditional when corpus/similarity features are disabled.
+- `compareAgainstCorpus` and `compareAgainstTrendSignals` should stay skippable when no benchmark material exists.
+- `createRewritePlan` is mandatory only for rewrite workflows.
+- `generateChapterRewriteDrafts` remains optional and is created explicitly when drafts are requested.
 
 The full manuscript is never sent in one model call. Chunk, chapter, whole-book, corpus, trend, rewrite-plan, and chapter-rewrite outputs are persisted in the database.
 

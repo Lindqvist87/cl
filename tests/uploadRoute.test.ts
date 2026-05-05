@@ -31,6 +31,36 @@ test("upload route returns validation phase when file is missing", async (t) => 
   });
 });
 
+test("upload route rejects oversized multipart requests before extraction", async (t) => {
+  t.mock.method(console, "error", () => undefined);
+
+  let extracted = false;
+  const handler = createUploadPostHandler({
+    ...baseDependencies(),
+    extractTextFromUpload: async () => {
+      extracted = true;
+      return {
+        text: "Should not be extracted.",
+        format: ManuscriptFormat.TXT,
+        mimeType: "text/plain"
+      };
+    }
+  });
+  const response = await handler(
+    new Request("http://localhost/api/upload", {
+      method: "POST",
+      headers: { "content-length": String(27 * 1024 * 1024) },
+      body: new FormData()
+    })
+  );
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.phase, "validation");
+  assert.match(body.error, /too large/);
+  assert.equal(extracted, false);
+});
+
 test("upload route returns extraction phase on extraction failure", async (t) => {
   t.mock.method(console, "error", () => undefined);
 
@@ -48,6 +78,26 @@ test("upload route returns extraction phase on extraction failure", async (t) =>
     error: "Unsupported test fixture.",
     phase: "extraction"
   });
+});
+
+test("upload route rejects empty extracted manuscript text", async (t) => {
+  t.mock.method(console, "error", () => undefined);
+
+  const handler = createUploadPostHandler({
+    ...baseDependencies(),
+    extractTextFromUpload: async () => ({
+      text: "",
+      format: ManuscriptFormat.TXT,
+      mimeType: "text/plain"
+    })
+  });
+
+  const response = await handler(uploadRequest());
+  const body = await response.json();
+
+  assert.equal(response.status, 400);
+  assert.equal(body.phase, "extraction");
+  assert.match(body.error, /No readable manuscript text/);
 });
 
 test("upload route returns storage phase on shell creation failure", async (t) => {

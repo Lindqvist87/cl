@@ -13,9 +13,18 @@ import {
   type ImportWarning,
   type ManuscriptIRBlock
 } from "@/lib/import/v2/types";
+import { countWords } from "@/lib/text/wordCount";
 
 const DOCX_MIME_TYPE =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const CHAPTER_HEADING =
+  /^(chapter|kapitel)\s+([0-9]+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|ett|en|tv\u00e5|tva|tre|fyra|fem|sex|sju|\u00e5tta|atta|nio|tio)(?=$|[\s:.\-])[:.\-\s]*(.*)$/iu;
+const SWEDISH_ORDINAL_CHAPTER =
+  /^(f\u00f6rsta|forsta|andra|tredje|fj\u00e4rde|fjarde|femte|sj\u00e4tte|sjatte|sjunde|\u00e5ttonde|attonde|nionde|tionde)\s+kapitlet(?:\s*[:.\-]\s*(.*))?$/iu;
+const STANDALONE_NUMBER_OR_ROMAN =
+  /^([0-9]{1,3}|[ivxlcdm]{1,8})[.)]?$/iu;
+const NAMED_FRONT_BACK = /^(prologue|prolog|epilogue|epilog)$/iu;
+const SCENE_BREAK = /^(\*{3,}|#{1,3}|-{3,}|~{3,}|\u00a7)$/u;
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -134,23 +143,45 @@ export async function parseDocxToImportManifest(input: {
       continue;
     }
 
-    const headingLevel = headingLevelFromStyle(styleId, styleName);
     const list = listInfo(p);
-    const type = headingLevel
-      ? "heading"
-      : list
-        ? "list_item"
-        : isTitleStyle(styleId, styleName)
-          ? "title"
-          : "paragraph";
+    const styledHeadingLevel = headingLevelFromStyle(styleId, styleName);
+    const inferredHeading = !list
+      ? inferUnstyledHeading(text, paragraph.inTable)
+      : null;
+    const headingLevel = styledHeadingLevel ?? inferredHeading?.headingLevel;
+    const sceneBreak = SCENE_BREAK.test(text.trim());
+    const type = sceneBreak
+      ? "scene_break"
+      : headingLevel
+        ? "heading"
+        : list
+          ? "list_item"
+          : isTitleStyle(styleId, styleName)
+            ? "title"
+            : "paragraph";
     const headingType =
-      type === "title"
+      type === "scene_break"
+        ? "scene"
+        : type === "title"
         ? "title"
         : headingLevel
-          ? headingTypeFromText(text, headingLevel)
+          ? inferredHeading?.headingType ?? headingTypeFromText(text, headingLevel)
           : undefined;
     const start = characterOffset;
     const end = start + text.length;
+    const warnings =
+      inferredHeading && !styledHeadingLevel
+        ? [
+            ...blockWarnings,
+            warning({
+              code: "docx_unstyled_heading",
+              message:
+                "DOCX paragraph was treated as a heading based on its text because no heading style was present.",
+              severity: "info",
+              confidence: inferredHeading.confidence
+            })
+          ]
+        : blockWarnings;
 
     blocks.push({
       id: `docx-${index + 1}`,
@@ -176,7 +207,7 @@ export async function parseDocxToImportManifest(input: {
       confidence: confidenceForDocxBlock(type, headingType),
       list,
       pageBreakBefore: pageBreak,
-      warnings: blockWarnings,
+      warnings,
       metadata: paragraph.inTable ? { docxContainer: "table" } : undefined
     });
 
@@ -450,6 +481,53 @@ function headingTypeFromText(
   }
 
   return headingLevel === 2 ? "section" : "unknown";
+}
+
+function inferUnstyledHeading(text: string, inTable: boolean) {
+  if (inTable) {
+    return null;
+  }
+
+  const trimmed = text.trim();
+  const wordCount = countWords(trimmed);
+
+  if (wordCount === 0 || wordCount > 16 || trimmed.length > 120) {
+    return null;
+  }
+
+  if (CHAPTER_HEADING.test(trimmed) || SWEDISH_ORDINAL_CHAPTER.test(trimmed)) {
+    return {
+      confidence: 0.88,
+      headingType: "chapter" as const,
+      headingLevel: 1
+    };
+  }
+
+  if (NAMED_FRONT_BACK.test(trimmed)) {
+    return {
+      confidence: 0.86,
+      headingType: "front_matter" as const,
+      headingLevel: 1
+    };
+  }
+
+  if (STANDALONE_NUMBER_OR_ROMAN.test(trimmed)) {
+    return {
+      confidence: 0.72,
+      headingType: "chapter" as const,
+      headingLevel: 1
+    };
+  }
+
+  if (/^(scene|scen)\b/iu.test(trimmed)) {
+    return {
+      confidence: 0.82,
+      headingType: "scene" as const,
+      headingLevel: 2
+    };
+  }
+
+  return null;
 }
 
 function listInfo(paragraph: Record<string, unknown>) {

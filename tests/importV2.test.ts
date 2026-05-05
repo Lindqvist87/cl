@@ -22,6 +22,7 @@ import { chunkParsedManuscript } from "../lib/parsing/chunker";
 import { extractTextFromUpload } from "../lib/parsing/extractText";
 import { runPipelineStep } from "../lib/pipeline/manuscriptPipeline";
 import { prisma } from "../lib/prisma";
+import { countWords } from "../lib/text/wordCount";
 
 const fixtureRoot = path.join(process.cwd(), "tests", "fixtures", "import-v2");
 
@@ -89,6 +90,27 @@ test("all-caps prose is not split without nearby chapter evidence", () => {
   );
 });
 
+test("text import v2 uses length fallback only for long unheaded manuscripts", () => {
+  const longUnheaded = Array.from(
+    { length: 16 },
+    (_, index) =>
+      `Stycke ${index + 1} ` +
+      Array.from({ length: 520 }, () => "ord").join(" ")
+  ).join("\n\n");
+  const manifest = buildTextImportManifest({
+    rawText: longUnheaded,
+    sourceFileName: "long-unheaded.txt"
+  });
+  const parsed = importManifestToParsedManuscript(manifest);
+
+  assert.equal(parsed.chapters.length > 1, true);
+  assert.equal(parsed.wordCount, countWords(importManifestToNormalizedText(manifest)));
+  assert.equal(
+    manifest.warnings.some((warning) => warning.code === "fallback_length_chaptering"),
+    true
+  );
+});
+
 test("shell flow projects parse to chunks and import inspector", () => {
   const parsed = importManifestToParsedManuscript(
     buildTextImportManifest({
@@ -132,6 +154,27 @@ test("shell flow projects parse to chunks and import inspector", () => {
     chunks.every((chunk) => Array.isArray(chunk.metadata.importBlockIds)),
     true
   );
+});
+
+test("structured docx import infers unstyled chapters and scene breaks", async () => {
+  const manifest = await parseDocxToImportManifest({
+    buffer: await unstyledDocxFixtureBuffer(),
+    sourceFileName: "unstyled.docx"
+  });
+  const parsed = importManifestToParsedManuscript(manifest);
+
+  assert.equal(
+    manifest.blocks.some(
+      (block) => block.type === "heading" && block.text === "Kapitel 1"
+    ),
+    true
+  );
+  assert.equal(manifest.blocks.some((block) => block.type === "scene_break"), true);
+  assert.deepEqual(
+    parsed.chapters.map((chapter) => chapter.title),
+    ["Kapitel 1"]
+  );
+  assert.equal(parsed.chapters[0].scenes.length, 2);
 });
 
 test("structured docx import reads styles, lists, page breaks, comments and tracked changes", async () => {
@@ -180,7 +223,21 @@ test("broken docx fixture fails structured parsing and surfaces extraction phase
           type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         })
       ),
-    /Could not find|Can't find end of central directory|END header|not a zip/i
+    /Could not find|Can't find end of central directory|END header|not a zip|valid \.docx archive/i
+  );
+});
+
+test("upload extraction rejects mismatched archive signatures", async () => {
+  const docx = await unstyledDocxFixtureBuffer();
+
+  await assert.rejects(
+    () =>
+      extractTextFromUpload(
+        new File([docx], "archive-as-text.txt", {
+          type: "text/plain"
+        })
+      ),
+    /DOCX\/ZIP archive/
   );
 });
 
@@ -288,6 +345,25 @@ async function docxFixtureBuffer() {
     <w:p><w:pPr><w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr></w:pPr><w:r><w:t>Listpunkt ett.</w:t></w:r></w:p>
     <w:p><w:r><w:br w:type="page"/></w:r></w:p>
     <w:p><w:ins w:id="1"><w:r><w:t>Infogat stycke.</w:t></w:r></w:ins><w:del w:id="2"><w:r><w:delText>Borttaget.</w:delText></w:r></w:del></w:p>
+  </w:body>
+</w:document>`
+  );
+
+  return Buffer.from(await zip.generateAsync({ type: "nodebuffer" }));
+}
+
+async function unstyledDocxFixtureBuffer() {
+  const zip = new JSZip();
+
+  zip.file(
+    "word/document.xml",
+    `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+  <w:body>
+    <w:p><w:r><w:t>Kapitel 1</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Forsta scenen borjar.</w:t></w:r></w:p>
+    <w:p><w:r><w:t>***</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Andra scenen fortsatter.</w:t></w:r></w:p>
   </w:body>
 </w:document>`
   );

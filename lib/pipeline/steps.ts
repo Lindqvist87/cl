@@ -23,6 +23,12 @@ export const OPTIONAL_MANUSCRIPT_PIPELINE_STEPS = [
   "generateChapterRewriteDrafts"
 ] as const;
 
+export const IMPORT_CRITICAL_MANUSCRIPT_PIPELINE_STEPS = [
+  "parseAndNormalizeManuscript",
+  "splitIntoChapters",
+  "splitIntoChunks"
+] as const;
+
 export const FULL_MANUSCRIPT_PIPELINE_STEPS = CORE_MANUSCRIPT_PIPELINE_STEPS;
 
 export const MANUSCRIPT_PIPELINE_STEPS = [
@@ -34,6 +40,8 @@ export type CoreManuscriptPipelineStep =
   (typeof CORE_MANUSCRIPT_PIPELINE_STEPS)[number];
 export type OptionalManuscriptPipelineStep =
   (typeof OPTIONAL_MANUSCRIPT_PIPELINE_STEPS)[number];
+export type ImportCriticalManuscriptPipelineStep =
+  (typeof IMPORT_CRITICAL_MANUSCRIPT_PIPELINE_STEPS)[number];
 export type ManuscriptPipelineStep = (typeof MANUSCRIPT_PIPELINE_STEPS)[number];
 
 export type PipelineCheckpoint = {
@@ -93,6 +101,17 @@ export function isOptionalManuscriptPipelineStep(
     typeof step === "string" &&
     OPTIONAL_MANUSCRIPT_PIPELINE_STEPS.includes(
       step as OptionalManuscriptPipelineStep
+    )
+  );
+}
+
+export function isImportCriticalManuscriptPipelineStep(
+  step: unknown
+): step is ImportCriticalManuscriptPipelineStep {
+  return (
+    typeof step === "string" &&
+    IMPORT_CRITICAL_MANUSCRIPT_PIPELINE_STEPS.includes(
+      step as ImportCriticalManuscriptPipelineStep
     )
   );
 }

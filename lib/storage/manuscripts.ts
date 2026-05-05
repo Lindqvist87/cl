@@ -190,6 +190,11 @@ export async function createUploadedManuscriptShell(
 ) {
   const originalText = normalizeWhitespace(input.originalText);
   const wordCount = countWords(originalText);
+
+  if (wordCount === 0) {
+    throw new Error("No readable manuscript text was found in the uploaded file.");
+  }
+
   const importManifest = input.importManifest;
   const sourceHash =
     importManifest?.fileHash ?? createHash("sha256").update(originalText).digest("hex");

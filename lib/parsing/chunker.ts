@@ -7,6 +7,7 @@ export function chunkParsedManuscript(
   manuscript: ParsedManuscript,
   maxWords = DEFAULT_MAX_WORDS
 ): ParsedChunk[] {
+  const effectiveMaxWords = Math.max(1, Math.floor(maxWords));
   const chunks: ParsedChunk[] = [];
   let chunkIndex = 0;
 
@@ -57,9 +58,9 @@ export function chunkParsedManuscript(
       };
 
       for (const paragraph of scene.paragraphs) {
-        if (paragraph.wordCount > maxWords) {
+        if (paragraph.wordCount > effectiveMaxWords) {
           flush();
-          chunkLongParagraph(paragraph, maxWords).forEach((chunkText) => {
+          chunkLongParagraph(paragraph, effectiveMaxWords).forEach((chunkText) => {
             const wordCount = chunkText.split(/\s+/).filter(Boolean).length;
             chunks.push({
               chunkIndex,
@@ -87,7 +88,7 @@ export function chunkParsedManuscript(
           continue;
         }
 
-        if (pendingWords + paragraph.wordCount > maxWords) {
+        if (pendingWords + paragraph.wordCount > effectiveMaxWords) {
           flush();
         }
 

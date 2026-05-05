@@ -1,6 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  FULL_MANUSCRIPT_PIPELINE_STEPS,
+  IMPORT_CRITICAL_MANUSCRIPT_PIPELINE_STEPS,
   isStepComplete,
   markStepComplete,
   markStepStarted,
@@ -30,6 +32,16 @@ test("pipeline progress ignores unknown checkpoint values", () => {
 
   assert.equal(progress.completed, 1);
   assert.equal(progress.total > 1, true);
+});
+
+test("import-critical pipeline steps stay as the prereview prefix", () => {
+  assert.deepEqual(
+    FULL_MANUSCRIPT_PIPELINE_STEPS.slice(
+      0,
+      IMPORT_CRITICAL_MANUSCRIPT_PIPELINE_STEPS.length
+    ),
+    [...IMPORT_CRITICAL_MANUSCRIPT_PIPELINE_STEPS]
+  );
 });
 
 test("pipeline import steps create structure from a shell idempotently", async () => {

@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import {
   extractTextFromUpload,
+  MAX_MANUSCRIPT_UPLOAD_BYTES,
+  validateExtractedManuscriptText,
+  validateManuscriptUploadFile,
   type ExtractedManuscriptText
 } from "@/lib/parsing/extractText";
 import {
@@ -51,10 +54,28 @@ const defaultUploadRouteDependencies: UploadRouteDependencies = {
 
 export const uploadPostHandler = createUploadPostHandler();
 
+const MAX_UPLOAD_FORM_BYTES = MAX_MANUSCRIPT_UPLOAD_BYTES + 1024 * 1024;
+
 export function createUploadPostHandler(
   dependencies: UploadRouteDependencies = defaultUploadRouteDependencies
 ) {
   return async function POST(request: Request) {
+    const contentLength = request.headers.get("content-length");
+    const contentBytes = contentLength ? Number(contentLength) : null;
+
+    if (
+      contentBytes !== null &&
+      Number.isFinite(contentBytes) &&
+      contentBytes > MAX_UPLOAD_FORM_BYTES
+    ) {
+      return uploadFailureResponse(
+        "validation",
+        new Error("The uploaded manuscript request is too large."),
+        400,
+        "The uploaded manuscript request is too large."
+      );
+    }
+
     let formData: FormData;
 
     try {
@@ -79,10 +100,22 @@ export function createUploadPostHandler(
       );
     }
 
+    try {
+      validateManuscriptUploadFile(file);
+    } catch (error) {
+      return uploadFailureResponse(
+        "validation",
+        error,
+        400,
+        "Invalid manuscript file."
+      );
+    }
+
     let extracted: ExtractedManuscriptText;
 
     try {
       extracted = await dependencies.extractTextFromUpload(file);
+      validateExtractedManuscriptText(extracted);
     } catch (error) {
       return uploadFailureResponse(
         "extraction",

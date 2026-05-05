@@ -12,6 +12,17 @@ import {
 } from "@/lib/import/v2/types";
 import { countWords, normalizeWhitespace } from "@/lib/text/wordCount";
 
+export const MAX_MANUSCRIPT_UPLOAD_BYTES = 25 * 1024 * 1024;
+
+const DOCX_MIME_TYPE =
+  "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+const GENERIC_BINARY_MIME_TYPES = new Set([
+  "",
+  "application/zip",
+  "application/octet-stream",
+  "application/x-zip-compressed"
+]);
+
 export type ExtractedManuscriptText = {
   text: string;
   format: ManuscriptFormat;
@@ -19,12 +30,42 @@ export type ExtractedManuscriptText = {
   importManifest?: ImportManifest;
 };
 
+type UploadFormat = "txt" | "docx";
+
+export function validateManuscriptUploadFile(file: File) {
+  if (file.size <= 0) {
+    throw new Error("The uploaded manuscript file is empty.");
+  }
+
+  if (file.size > MAX_MANUSCRIPT_UPLOAD_BYTES) {
+    throw new Error(
+      `The uploaded manuscript is too large. Maximum size is ${Math.floor(
+        MAX_MANUSCRIPT_UPLOAD_BYTES / (1024 * 1024)
+      )} MB.`
+    );
+  }
+
+  detectUploadFormat(file.name, file.type || undefined);
+}
+
+export function validateExtractedManuscriptText(
+  extracted: ExtractedManuscriptText
+) {
+  if (countWords(extracted.text) === 0) {
+    throw new Error("No readable manuscript text was found in the uploaded file.");
+  }
+}
+
 export async function extractTextFromUpload(file: File): Promise<ExtractedManuscriptText> {
-  const fileName = file.name.toLowerCase();
+  validateManuscriptUploadFile(file);
+
   const mimeType = file.type || undefined;
   const buffer = Buffer.from(await file.arrayBuffer());
+  const format = detectUploadFormat(file.name, mimeType);
 
-  if (fileName.endsWith(".txt") || mimeType === "text/plain") {
+  validateFormatSignature(format, buffer);
+
+  if (format === "txt") {
     const text = normalizeWhitespace(new TextDecoder("utf-8").decode(buffer));
     const importManifest = buildTextImportManifest({
       rawText: text,
@@ -41,11 +82,7 @@ export async function extractTextFromUpload(file: File): Promise<ExtractedManusc
     };
   }
 
-  if (
-    fileName.endsWith(".docx") ||
-    mimeType ===
-      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-  ) {
+  if (format === "docx") {
     try {
       const importManifest = await parseDocxToImportManifest({
         buffer,
@@ -105,6 +142,56 @@ export async function extractTextFromUpload(file: File): Promise<ExtractedManusc
   }
 
   throw new Error("Unsupported file type. Upload a .txt or .docx manuscript.");
+}
+
+function detectUploadFormat(
+  sourceFileName: string,
+  sourceMimeType?: string
+): UploadFormat {
+  const fileName = sourceFileName.toLowerCase();
+  const mimeType = (sourceMimeType ?? "").toLowerCase();
+  const extensionFormat = fileName.endsWith(".txt")
+    ? "txt"
+    : fileName.endsWith(".docx")
+      ? "docx"
+      : null;
+  const mimeFormat =
+    mimeType === "text/plain"
+      ? "txt"
+      : mimeType === DOCX_MIME_TYPE
+        ? "docx"
+        : null;
+
+  if (extensionFormat && mimeFormat && extensionFormat !== mimeFormat) {
+    throw new Error(
+      "The manuscript file extension does not match its MIME type."
+    );
+  }
+
+  if (mimeType && !mimeFormat && !GENERIC_BINARY_MIME_TYPES.has(mimeType)) {
+    throw new Error("Unsupported file type. Upload a .txt or .docx manuscript.");
+  }
+
+  const format = extensionFormat ?? mimeFormat;
+  if (!format) {
+    throw new Error("Unsupported file type. Upload a .txt or .docx manuscript.");
+  }
+
+  return format;
+}
+
+function validateFormatSignature(format: UploadFormat, buffer: Buffer) {
+  const looksLikeZip = buffer.length >= 2 && buffer[0] === 0x50 && buffer[1] === 0x4b;
+
+  if (format === "docx" && !looksLikeZip) {
+    throw new Error("The DOCX file does not look like a valid .docx archive.");
+  }
+
+  if (format === "txt" && looksLikeZip) {
+    throw new Error(
+      "The uploaded file looks like a DOCX/ZIP archive, not a plain text manuscript."
+    );
+  }
 }
 
 async function docxCoverageGuard(input: {
