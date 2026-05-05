@@ -136,6 +136,122 @@ test("auto-continue stops on failed job", async () => {
   assert.equal(result.hasRemainingWork, true);
 });
 
+test("auto-continue waits for retry windows that fit the request budget", async () => {
+  let now = 0;
+  const waits: number[] = [];
+  const retryReadyAt = new Date(1000).toISOString();
+  const retryingJob = {
+    id: "embeddings-retry",
+    type: "createEmbeddingsForChunks",
+    status: "RETRYING",
+    error: "Embedding API timed out.",
+    lockedBy: null,
+    lockedAt: null,
+    lockExpiresAt: null,
+    readyAt: retryReadyAt,
+    stale: false
+  };
+  const batches = [
+    runReadyResult({
+      jobsRun: 0,
+      state: "more_work_remains",
+      reason: "waiting_for_retry_ready_at",
+      blockingJob: retryingJob,
+      message:
+        "0 jobs ran because createEmbeddingsForChunks is waiting for its retry window."
+    }),
+    runReadyResult({
+      jobsRun: 1,
+      state: "done",
+      unfinishedJobs: 0,
+      hasRemainingWork: false,
+      moreWorkRemains: false,
+      results: [jobResult("embeddings-retry")]
+    })
+  ];
+
+  const result = await autoContinueManuscriptPipeline(
+    {
+      manuscriptId: "manuscript-retry-window",
+      maxBatches: 1,
+      maxSeconds: 5
+    },
+    {
+      runReadyJobs: async () => {
+        const next = batches.shift();
+        assert.ok(next);
+        return next;
+      },
+      getSnapshot: async () => snapshot({ finalState: "done" }),
+      nowMs: () => now,
+      sleepMs: async (durationMs) => {
+        waits.push(durationMs);
+        now += durationMs;
+      }
+    }
+  );
+
+  assert.deepEqual(waits, [1000]);
+  assert.equal(result.batchesRun, 2);
+  assert.equal(result.totalJobsRun, 1);
+  assert.equal(result.stoppedReason, "done");
+  assert.equal(result.message, "Pipeline completed.");
+});
+
+test("auto-continue pauses on retry windows outside the request budget", async () => {
+  let now = 0;
+  const waits: number[] = [];
+  const retryReadyAt = new Date(5000).toISOString();
+  const retryingJob = {
+    id: "embeddings-retry-later",
+    type: "createEmbeddingsForChunks",
+    status: "RETRYING",
+    error: "Embedding API timed out.",
+    lockedBy: null,
+    lockedAt: null,
+    lockExpiresAt: null,
+    readyAt: retryReadyAt,
+    stale: false
+  };
+
+  const result = await autoContinueManuscriptPipeline(
+    {
+      manuscriptId: "manuscript-retry-window-later",
+      maxBatches: 5,
+      maxSeconds: 1
+    },
+    {
+      runReadyJobs: async () =>
+        runReadyResult({
+          jobsRun: 0,
+          state: "more_work_remains",
+          reason: "waiting_for_retry_ready_at",
+          blockingJob: retryingJob,
+          message:
+            "0 jobs ran because createEmbeddingsForChunks is waiting for its retry window."
+        }),
+      getSnapshot: async () =>
+        snapshot({
+          finalState: "more_work_remains",
+          remainingJobs: [retryingJob]
+        }),
+      nowMs: () => now,
+      sleepMs: async (durationMs) => {
+        waits.push(durationMs);
+        now += durationMs;
+      }
+    }
+  );
+
+  assert.deepEqual(waits, []);
+  assert.equal(result.batchesRun, 1);
+  assert.equal(result.totalJobsRun, 0);
+  assert.equal(result.stoppedReason, "no_ready_jobs");
+  assert.equal(result.hasRemainingWork, true);
+  assert.equal(result.blockingJob?.readyAt, retryReadyAt);
+  assert.match(result.message, /waiting for its retry window/);
+});
+
 test("auto-continue stops when maxBatches is reached", async () => {
   const result = await autoContinueManuscriptPipeline(
     {

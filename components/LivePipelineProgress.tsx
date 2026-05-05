@@ -61,6 +61,8 @@ export function LivePipelineProgress({
     useState<OptimisticPhase>(null);
   const refreshInFlightRef = useRef(false);
   const autoRunStartedRef = useRef(false);
+  const autoRunInFlightRef = useRef(false);
+  const autoRunRetryKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     setStatus(initialStatus);
@@ -74,8 +76,12 @@ export function LivePipelineProgress({
     [diagnostics, status]
   );
   const shouldPoll = shouldPollPipelineDiagnostics(pollingSnapshot);
+  const retryReadyAtMs = retryReadyAtFromDiagnostics(diagnostics);
+  const waitingForRetryReadyAt =
+    retryReadyAtMs !== null && retryReadyAtMs > Date.now();
   const waitingForManualRun =
     manualQueuedMode &&
+    !waitingForRetryReadyAt &&
     !status.complete &&
     !autoRunnerActive &&
     optimisticPhase === null &&
@@ -88,6 +94,7 @@ export function LivePipelineProgress({
     status.currentJobStatus !== "FAILED";
   const liveShouldPoll =
     (waitingForManualRun ? false : shouldPoll) ||
+    waitingForRetryReadyAt ||
     analysisIsRunning ||
     autoRunnerActive ||
     optimisticPhase === "starting" ||
@@ -105,6 +112,7 @@ export function LivePipelineProgress({
     !isBlockedByError &&
     (status.currentJobStatus === "BLOCKED" ||
       diagnostics?.manualRunner?.reason === "waiting_for_lock_expiry" ||
+      diagnostics?.manualRunner?.reason === "waiting_for_retry_ready_at" ||
       (diagnostics?.state === "more_work_remains" &&
         !diagnostics.nextEligibleJob &&
         (diagnostics.remainingJobCount ?? 0) > 0));
@@ -283,17 +291,22 @@ export function LivePipelineProgress({
     };
   }, [manuscriptId, manualQueuedMode, refreshDiagnostics]);
 
-  useEffect(() => {
-    if (!autoRunEndpoint || autoRunStartedRef.current || status.complete) {
-      return;
-    }
+  const runAutomaticAttempt = useCallback(
+    async (
+      endpoint: string,
+      options: {
+        clearAutoRunSearch?: boolean;
+        isCancelled?: () => boolean;
+      } = {}
+    ) => {
+      if (autoRunInFlightRef.current || options.isCancelled?.()) {
+        return;
+      }
 
-    autoRunStartedRef.current = true;
-    const endpoint = autoRunEndpoint;
-    let cancelled = false;
-    let completedAttempt = false;
+      autoRunInFlightRef.current = true;
+      let completedAttempt = false;
+      let result: unknown = null;
 
-    async function runAutomatically() {
       setAutoRunnerActive(true);
       setOptimisticPhase("starting");
       setManualNotice(null);
@@ -304,17 +317,18 @@ export function LivePipelineProgress({
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({})
         });
-        const result = await response.json().catch(() => ({}));
+        result = await response.json().catch(() => ({}));
 
         if (!response.ok) {
+          const record = recordFromUnknown(result);
           throw new Error(
-            typeof result.error === "string"
-              ? result.error
+            typeof record.error === "string"
+              ? record.error
               : "Analysen kunde inte startas automatiskt."
           );
         }
 
-        if (cancelled) {
+        if (options.isCancelled?.()) {
           return;
         }
 
@@ -323,7 +337,7 @@ export function LivePipelineProgress({
         await refreshDiagnostics();
         completedAttempt = true;
       } catch (error) {
-        if (cancelled) {
+        if (options.isCancelled?.()) {
           return;
         }
 
@@ -334,16 +348,35 @@ export function LivePipelineProgress({
         );
         setOptimisticPhase(null);
       } finally {
-        if (!cancelled) {
+        autoRunInFlightRef.current = false;
+        if (!options.isCancelled?.()) {
           setAutoRunnerActive(false);
-          if (completedAttempt) {
+          if (
+            completedAttempt &&
+            options.clearAutoRunSearch &&
+            !resultHasRemainingWork(result)
+          ) {
             clearAutoRunSearchParam();
           }
         }
       }
+    },
+    [refreshDiagnostics]
+  );
+
+  useEffect(() => {
+    if (!autoRunEndpoint || autoRunStartedRef.current || status.complete) {
+      return;
     }
 
-    void runAutomatically();
+    autoRunStartedRef.current = true;
+    const endpoint = autoRunEndpoint;
+    let cancelled = false;
+
+    void runAutomaticAttempt(endpoint, {
+      clearAutoRunSearch: true,
+      isCancelled: () => cancelled
+    });
 
     return () => {
       cancelled = true;
@@ -351,7 +384,39 @@ export function LivePipelineProgress({
   }, [
     autoRunEndpoint,
     manuscriptId,
-    refreshDiagnostics,
+    runAutomaticAttempt,
+    status.complete
+  ]);
+
+  useEffect(() => {
+    if (!autoRunEndpoint || retryReadyAtMs === null || status.complete) {
+      return;
+    }
+
+    const retryKey = `${autoRunEndpoint}:${retryReadyAtMs}`;
+    if (autoRunRetryKeyRef.current === retryKey) {
+      return;
+    }
+
+    autoRunRetryKeyRef.current = retryKey;
+    const endpoint = autoRunEndpoint;
+    const delayMs = Math.max(0, retryReadyAtMs - Date.now() + 500);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void runAutomaticAttempt(endpoint, {
+        clearAutoRunSearch: false,
+        isCancelled: () => cancelled
+      });
+    }, delayMs);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    autoRunEndpoint,
+    retryReadyAtMs,
+    runAutomaticAttempt,
     status.complete
   ]);
 
@@ -737,6 +802,28 @@ function recordFromUnknown(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function retryReadyAtFromDiagnostics(
+  diagnostics: PipelineDiagnosticsResponse | null
+) {
+  if (diagnostics?.manualRunner?.reason !== "waiting_for_retry_ready_at") {
+    return null;
+  }
+
+  const blockingJob = recordFromUnknown(diagnostics.manualRunner.blockingJob);
+  const readyAt =
+    typeof blockingJob.readyAt === "string"
+      ? Date.parse(blockingJob.readyAt)
+      : NaN;
+
+  return Number.isFinite(readyAt) ? readyAt : null;
+}
+
+function resultHasRemainingWork(result: unknown) {
+  const record = recordFromUnknown(result);
+
+  return record.hasRemainingWork === true || record.moreWorkRemains === true;
 }
 
 function clearAutoRunSearchParam() {

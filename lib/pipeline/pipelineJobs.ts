@@ -418,8 +418,16 @@ async function buildRunReadyPipelineJobsResult(input: {
       : unfinishedJobs > 0
         ? "more_work_remains"
         : "done";
+  const resultsEndedInRetry = input.results.some(
+    (result) => result.status === "retrying"
+  );
+  const shouldExplainPause =
+    state !== "done" &&
+    (input.results.length === 0 ||
+      remainingReadyJobs === 0 ||
+      resultsEndedInRetry);
   const reasonDetails =
-    input.results.length === 0 && state !== "done"
+    shouldExplainPause
       ? await getZeroRunReason(input.scope, state, input.recoveredStaleJobs)
       : {};
   const readyJobIds = Array.from(new Set(input.readyJobIds));

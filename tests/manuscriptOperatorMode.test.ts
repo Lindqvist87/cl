@@ -67,7 +67,7 @@ test("manual manuscript runner targets the server-side run-jobs endpoint", () =>
   );
 });
 
-test("upload autorun only starts for queued work in operator-safe mode", () => {
+test("upload autorun starts for explicit queued upload redirects", () => {
   assert.equal(
     shouldAutoRunQueuedAnalysisAfterUpload({
       requested: true,
@@ -84,7 +84,7 @@ test("upload autorun only starts for queued work in operator-safe mode", () => {
       showOperatorTools: false,
       pipelineStatus: queuedPipelineStatus()
     }),
-    false
+    true
   );
   assert.equal(
     shouldAutoRunQueuedAnalysisAfterUpload({
@@ -94,6 +94,25 @@ test("upload autorun only starts for queued work in operator-safe mode", () => {
       pipelineStatus: queuedPipelineStatus()
     }),
     false
+  );
+  assert.equal(
+    shouldAutoRunQueuedAnalysisAfterUpload({
+      requested: true,
+      analysisReady: false,
+      showOperatorTools: true,
+      pipelineStatus: {
+        ...queuedPipelineStatus(),
+        currentJobStatus: PIPELINE_JOB_STATUS.RETRYING,
+        jobCounts: {
+          queued: 0,
+          running: 0,
+          blocked: 14,
+          failed: 0,
+          completed: 3
+        }
+      }
+    }),
+    true
   );
   assert.equal(
     shouldAutoRunQueuedAnalysisAfterUpload({
@@ -171,7 +190,7 @@ test("manual queued retrying progress is not shown as a terminal failure", () =>
         currentJobStatus: PIPELINE_JOB_STATUS.RETRYING,
         lastError: "Embedding API timed out.",
         jobCounts: {
-          queued: 1,
+          queued: 0,
           running: 0,
           blocked: 14,
           failed: 0,

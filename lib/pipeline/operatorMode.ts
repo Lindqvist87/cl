@@ -62,8 +62,7 @@ export function shouldAutoRunQueuedAnalysisAfterUpload(input: {
   if (
     !input.requested ||
     input.analysisReady ||
-    input.pipelineStatus.complete ||
-    !input.showOperatorTools
+    input.pipelineStatus.complete
   ) {
     return false;
   }
