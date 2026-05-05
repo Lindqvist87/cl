@@ -6,6 +6,7 @@ export type RunReadyJobsReason =
   | "waiting_for_lock_expiry"
   | "stale_running_job_recovered"
   | "blocked_by_error"
+  | "waiting_for_retry_ready_at"
   | "no_ready_jobs_but_unfinished_work";
 
 export type PipelineBlockingJob = {
@@ -15,6 +16,7 @@ export type PipelineBlockingJob = {
   lockedBy: string | null;
   lockedAt: string | null;
   lockExpiresAt: string | null;
+  readyAt: string | null;
   stale: boolean;
 };
 
@@ -26,6 +28,7 @@ type JobForRunReason = Pick<
   | "lockedBy"
   | "lockedAt"
   | "lockExpiresAt"
+  | "readyAt"
   | "startedAt"
   | "updatedAt"
 >;
@@ -54,6 +57,7 @@ export function pipelineBlockingJob(
     lockedBy: job.lockedBy,
     lockedAt: job.lockedAt?.toISOString() ?? null,
     lockExpiresAt: job.lockExpiresAt?.toISOString() ?? null,
+    readyAt: job.readyAt?.toISOString() ?? null,
     stale: isLockStale(job, now)
   };
 }
@@ -107,6 +111,20 @@ export function zeroRunReasonForJobs(
     );
   }
 
+  const retryWaiting = input.jobs.find(
+    (job) =>
+      job.status === PIPELINE_JOB_STATUS.RETRYING &&
+      job.readyAt !== null &&
+      job.readyAt > now
+  );
+
+  if (retryWaiting) {
+    return runReasonResult(
+      "waiting_for_retry_ready_at",
+      pipelineBlockingJob(retryWaiting, now)
+    );
+  }
+
   const unfinished = input.jobs.find((job) =>
     new Set<string>([
       PIPELINE_JOB_STATUS.QUEUED,
@@ -141,6 +159,10 @@ export function runReadyJobsReasonMessage(
       return `Recovered stale running job ${jobType}. Run again to continue.`;
     case "blocked_by_error":
       return `0 jobs ran because ${jobType} is blocked by an error. Review or retry the failed job.`;
+    case "waiting_for_retry_ready_at":
+      return `0 jobs ran because ${jobType} is waiting for its retry window at ${
+        blockingJob?.readyAt ?? "the retry time"
+      }.`;
     case "no_ready_jobs_but_unfinished_work":
       return `0 jobs ran because unfinished work remains but no job is currently ready to run${
         blockingJob ? `; ${blockingJob.type} is ${blockingJob.status}` : ""

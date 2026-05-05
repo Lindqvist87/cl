@@ -96,7 +96,11 @@ export function LivePipelineProgress({
     diagnostics?.state === "blocked_by_error" ||
     analysisStatus?.toUpperCase() === "FAILED" ||
     status.currentJobStatus === "FAILED" ||
-    Boolean(status.lastError && !liveShouldPoll);
+    Boolean(
+      status.lastError &&
+        !liveShouldPoll &&
+        !isRecoverableJobStatus(status.currentJobStatus)
+    );
   const isWaitingForNextPhase =
     !isBlockedByError &&
     (status.currentJobStatus === "BLOCKED" ||
@@ -840,6 +844,15 @@ function liveStatusLabel(input: {
   }
 
   return input.liveShouldPoll ? "Analysen pågår" : "Status uppdaterad";
+}
+
+function isRecoverableJobStatus(status: string | null) {
+  return (
+    status === "QUEUED" ||
+    status === "RUNNING" ||
+    status === "RETRYING" ||
+    status === "BLOCKED"
+  );
 }
 
 function lastUpdatedLabel(value: string | null, refreshedAt: Date | null) {

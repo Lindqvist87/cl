@@ -64,6 +64,7 @@ export type PipelineJobSummary = {
   lockedBy: string | null;
   lockedAt: string | null;
   lockExpiresAt: string | null;
+  readyAt: string | null;
   stale: boolean;
 };
 
@@ -492,6 +493,7 @@ function jobSummary(job: PipelineJob, now: Date): PipelineJobSummary {
     lockedBy: job.lockedBy,
     lockedAt: job.lockedAt?.toISOString() ?? null,
     lockExpiresAt: job.lockExpiresAt?.toISOString() ?? null,
+    readyAt: job.readyAt?.toISOString() ?? null,
     stale: isLockStale(job, now)
   };
 }
@@ -506,6 +508,7 @@ function pipelineBlockingJobFromSummary(
     lockedBy: job.lockedBy,
     lockedAt: job.lockedAt,
     lockExpiresAt: job.lockExpiresAt,
+    readyAt: job.readyAt,
     stale: job.stale
   };
 }

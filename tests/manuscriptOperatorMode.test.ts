@@ -159,6 +159,34 @@ test("manual queued progress copy does not imply active background work", () => 
   assert.doesNotMatch(markup, /Analysen pågår/);
 });
 
+test("manual queued retrying progress is not shown as a terminal failure", () => {
+  const markup = renderToStaticMarkup(
+    createElement(LivePipelineProgress, {
+      manuscriptId: "manuscript-1",
+      initialStatus: {
+        ...queuedPipelineStatus(),
+        currentStep: "createEmbeddingsForChunks",
+        completedSteps: 3,
+        percent: 17,
+        currentJobStatus: PIPELINE_JOB_STATUS.RETRYING,
+        lastError: "Embedding API timed out.",
+        jobCounts: {
+          queued: 1,
+          running: 0,
+          blocked: 14,
+          failed: 0,
+          completed: 3
+        }
+      },
+      analysisStatus: "RUNNING",
+      manualQueuedMode: true
+    })
+  );
+
+  assert.match(markup, /Analys k/);
+  assert.doesNotMatch(markup, /Analysen kunde inte slutf/);
+});
+
 function queuedPipelineStatus(): PipelineStatusDisplay {
   return {
     currentStep: "summarizeChunks",

@@ -108,6 +108,7 @@ test("auto-continue stops on failed job", async () => {
     lockedBy: null,
     lockedAt: null,
     lockExpiresAt: null,
+    readyAt: null,
     stale: false
   };
 
@@ -419,6 +420,7 @@ function jobSummary(id: string, type: string) {
     lockedBy: null,
     lockedAt: null,
     lockExpiresAt: null,
+    readyAt: null,
     stale: false
   };
 }
@@ -436,6 +438,7 @@ function blockingJobSummary(overrides: {
     lockedBy: "test-worker",
     lockedAt: "2026-05-02T10:00:00.000Z",
     lockExpiresAt: overrides.lockExpiresAt ?? "2026-05-02T10:05:00.000Z",
+    readyAt: null,
     stale: overrides.stale ?? false
   };
 }
