@@ -1,16 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { ManuscriptFormat } from "@prisma/client";
 import {
   createUploadPostHandler,
   type UploadRouteDependencies
 } from "../lib/server/uploadImport";
 import {
-  ADMIN_JOBS_PATH,
-  UploadStatusLinks,
-  uploadFeedbackFromResponse
+  uploadFeedbackFromResponse,
+  uploadRedirectHref
 } from "../components/UploadForm";
 
 test("upload route returns validation phase when file is missing", async (t) => {
@@ -256,7 +253,7 @@ test("upload route succeeds when pipeline start is accepted", async () => {
   assert.equal(body.message, "Import started");
 });
 
-test("frontend keeps manuscript and admin links for queued uploads", () => {
+test("frontend redirects queued uploads into automatic analysis run", () => {
   const feedback = uploadFeedbackFromResponse(true, {
     manuscriptId: "manuscript-1",
     pipelineStarted: false,
@@ -265,27 +262,19 @@ test("frontend keeps manuscript and admin links for queued uploads", () => {
       "Manuset är uppladdat och analysjobben är köade. Starta eller återuppta analysen via admin."
   });
 
-  if (feedback.kind !== "notice") {
-    assert.fail(`Expected notice feedback, received ${feedback.kind}`);
+  if (feedback.kind !== "redirect") {
+    assert.fail(`Expected redirect feedback, received ${feedback.kind}`);
   }
 
   assert.equal(feedback.manuscriptId, "manuscript-1");
-  assert.equal(feedback.showAdminJobsLink, true);
-  assert.match(feedback.message, /analysjobben är köade/);
-
-  const markup = renderToStaticMarkup(
-    createElement(UploadStatusLinks, {
-      manuscriptId: feedback.manuscriptId,
-      showAdminJobsLink: feedback.showAdminJobsLink
-    })
+  assert.equal(feedback.autoRunAnalysis, true);
+  assert.equal(
+    uploadRedirectHref(feedback),
+    "/manuscripts/manuscript-1?autorun=1"
   );
-
-  assert.match(markup, /href="\/manuscripts\/manuscript-1"/);
-  assert.match(markup, /Visa uppladdat manus/);
-  assert.match(markup, new RegExp(`href="${escapeRegExp(ADMIN_JOBS_PATH)}"`));
 });
 
-test("frontend keeps manuscript and admin links for queued pipeline warning uploads", () => {
+test("frontend redirects queued pipeline warning uploads into automatic analysis run", () => {
   const feedback = uploadFeedbackFromResponse(true, {
     manuscriptId: "manuscript-1",
     pipelineStarted: false,
@@ -293,24 +282,16 @@ test("frontend keeps manuscript and admin links for queued pipeline warning uplo
     pipelineWarning: "Inngest branch environment returned 404."
   });
 
-  if (feedback.kind !== "notice") {
-    assert.fail(`Expected notice feedback, received ${feedback.kind}`);
+  if (feedback.kind !== "redirect") {
+    assert.fail(`Expected redirect feedback, received ${feedback.kind}`);
   }
 
   assert.equal(feedback.manuscriptId, "manuscript-1");
-  assert.equal(feedback.showAdminJobsLink, true);
-  assert.match(feedback.message, /analysjobben är köade/);
-
-  const markup = renderToStaticMarkup(
-    createElement(UploadStatusLinks, {
-      manuscriptId: feedback.manuscriptId,
-      showAdminJobsLink: feedback.showAdminJobsLink
-    })
+  assert.equal(feedback.autoRunAnalysis, true);
+  assert.equal(
+    uploadRedirectHref(feedback),
+    "/manuscripts/manuscript-1?autorun=1"
   );
-
-  assert.match(markup, /href="\/manuscripts\/manuscript-1"/);
-  assert.match(markup, /Visa uppladdat manus/);
-  assert.match(markup, new RegExp(`href="${escapeRegExp(ADMIN_JOBS_PATH)}"`));
 });
 
 test("frontend only classifies actual upload failures as red errors", () => {
@@ -376,8 +357,4 @@ function uploadRequest() {
     method: "POST",
     body: formData
   });
-}
-
-function escapeRegExp(value: string) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

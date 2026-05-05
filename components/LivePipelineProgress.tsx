@@ -39,13 +39,15 @@ export function LivePipelineProgress({
   initialStatus,
   analysisStatus,
   manualQueuedMode = false,
-  showTechnicalDetails = false
+  showTechnicalDetails = false,
+  autoRunEndpoint = null
 }: {
   manuscriptId: string;
   initialStatus: PipelineStatusDisplay;
   analysisStatus?: string;
   manualQueuedMode?: boolean;
   showTechnicalDetails?: boolean;
+  autoRunEndpoint?: string | null;
 }) {
   const [status, setStatus] = useState(initialStatus);
   const [diagnostics, setDiagnostics] =
@@ -58,6 +60,7 @@ export function LivePipelineProgress({
   const [optimisticPhase, setOptimisticPhase] =
     useState<OptimisticPhase>(null);
   const refreshInFlightRef = useRef(false);
+  const autoRunStartedRef = useRef(false);
 
   useEffect(() => {
     setStatus(initialStatus);
@@ -275,6 +278,78 @@ export function LivePipelineProgress({
       );
     };
   }, [manuscriptId, manualQueuedMode, refreshDiagnostics]);
+
+  useEffect(() => {
+    if (!autoRunEndpoint || autoRunStartedRef.current || status.complete) {
+      return;
+    }
+
+    autoRunStartedRef.current = true;
+    const endpoint = autoRunEndpoint;
+    let cancelled = false;
+    let completedAttempt = false;
+
+    async function runAutomatically() {
+      setAutoRunnerActive(true);
+      setOptimisticPhase("starting");
+      setManualNotice(null);
+
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({})
+        });
+        const result = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          throw new Error(
+            typeof result.error === "string"
+              ? result.error
+              : "Analysen kunde inte startas automatiskt."
+          );
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        setManualNotice(manualNoticeFromResult(result));
+        setOptimisticPhase("running");
+        await refreshDiagnostics();
+        completedAttempt = true;
+      } catch (error) {
+        if (cancelled) {
+          return;
+        }
+
+        setFetchError(
+          error instanceof Error
+            ? error.message
+            : "Analysen kunde inte startas automatiskt."
+        );
+        setOptimisticPhase(null);
+      } finally {
+        if (!cancelled) {
+          setAutoRunnerActive(false);
+          if (completedAttempt) {
+            clearAutoRunSearchParam();
+          }
+        }
+      }
+    }
+
+    void runAutomatically();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    autoRunEndpoint,
+    manuscriptId,
+    refreshDiagnostics,
+    status.complete
+  ]);
 
   return (
     <section className="overflow-hidden rounded-xl border border-accent/15 bg-[#fffdfc] p-4 shadow-panel sm:p-5">
@@ -658,6 +733,16 @@ function recordFromUnknown(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function clearAutoRunSearchParam() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("autorun");
+  window.history.replaceState(
+    null,
+    "",
+    `${url.pathname}${url.search}${url.hash}`
+  );
 }
 
 function formatNullableStatus(status: string | null) {

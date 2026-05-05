@@ -26,17 +26,20 @@ import {
   analysisStatusLabel,
   isManualQueuedAnalysisMode,
   manuscriptManualRunEndpoint,
-  operatorToolsVisibilityFromEnv
+  operatorToolsVisibilityFromEnv,
+  shouldAutoRunQueuedAnalysisAfterUpload
 } from "@/lib/pipeline/operatorMode";
 
 export const dynamic = "force-dynamic";
 
 export default async function ManuscriptPage({
-  params
+  params,
+  searchParams
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ autorun?: string }>;
 }) {
-  const { id } = await params;
+  const [{ id }, query] = await Promise.all([params, searchParams]);
   const operatorTools = operatorToolsVisibilityFromEnv(process.env);
   const { showDeveloperAdminTools, showOperatorTools } = operatorTools;
   const manuscript = await prisma.manuscript.findUnique({
@@ -109,6 +112,12 @@ export default async function ManuscriptPage({
   });
   const analysisReady =
     manuscript.analysisStatus === "COMPLETED" || pipelineStatus.complete;
+  const autoRunAfterUpload = shouldAutoRunQueuedAnalysisAfterUpload({
+    requested: query.autorun === "1",
+    analysisReady,
+    showOperatorTools,
+    pipelineStatus
+  });
 
   return (
     <div className="space-y-6">
@@ -208,6 +217,7 @@ export default async function ManuscriptPage({
         analysisStatus={manuscript.analysisStatus}
         manualQueuedMode={manualQueuedMode}
         showTechnicalDetails={showDeveloperAdminTools}
+        autoRunEndpoint={autoRunAfterUpload ? manualRunEndpoint : null}
       />
 
       {showOperatorPanel ? (

@@ -10,7 +10,8 @@ import {
   analysisStatusLabel,
   isManualQueuedAnalysisMode,
   manuscriptManualRunEndpoint,
-  operatorToolsVisibilityFromEnv
+  operatorToolsVisibilityFromEnv,
+  shouldAutoRunQueuedAnalysisAfterUpload
 } from "../lib/pipeline/operatorMode";
 
 test("preview production environment shows the safe operator runner", () => {
@@ -63,6 +64,67 @@ test("manual manuscript runner targets the server-side run-jobs endpoint", () =>
   assert.equal(
     manuscriptManualRunEndpoint("manuscript-1"),
     "/api/admin/manuscripts/manuscript-1/run-jobs"
+  );
+});
+
+test("upload autorun only starts for queued work in operator-safe mode", () => {
+  assert.equal(
+    shouldAutoRunQueuedAnalysisAfterUpload({
+      requested: true,
+      analysisReady: false,
+      showOperatorTools: true,
+      pipelineStatus: queuedPipelineStatus()
+    }),
+    true
+  );
+  assert.equal(
+    shouldAutoRunQueuedAnalysisAfterUpload({
+      requested: true,
+      analysisReady: false,
+      showOperatorTools: false,
+      pipelineStatus: queuedPipelineStatus()
+    }),
+    false
+  );
+  assert.equal(
+    shouldAutoRunQueuedAnalysisAfterUpload({
+      requested: true,
+      analysisReady: true,
+      showOperatorTools: true,
+      pipelineStatus: queuedPipelineStatus()
+    }),
+    false
+  );
+  assert.equal(
+    shouldAutoRunQueuedAnalysisAfterUpload({
+      requested: true,
+      analysisReady: false,
+      showOperatorTools: true,
+      pipelineStatus: {
+        ...queuedPipelineStatus(),
+        jobCounts: {
+          ...queuedPipelineStatus().jobCounts,
+          queued: 0,
+          running: 1
+        }
+      }
+    }),
+    false
+  );
+  assert.equal(
+    shouldAutoRunQueuedAnalysisAfterUpload({
+      requested: true,
+      analysisReady: false,
+      showOperatorTools: true,
+      pipelineStatus: {
+        ...queuedPipelineStatus(),
+        jobCounts: {
+          ...queuedPipelineStatus().jobCounts,
+          failed: 1
+        }
+      }
+    }),
+    false
   );
 });
 

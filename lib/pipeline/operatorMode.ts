@@ -50,6 +50,37 @@ export function isManualQueuedAnalysisMode(input: {
   return hasQueuedWork && input.pipelineStatus.jobCounts.running === 0;
 }
 
+export function shouldAutoRunQueuedAnalysisAfterUpload(input: {
+  requested: boolean;
+  analysisReady: boolean;
+  showOperatorTools: boolean;
+  pipelineStatus: Pick<
+    PipelineStatusDisplay,
+    "complete" | "currentJobStatus" | "jobCounts"
+  >;
+}) {
+  if (
+    !input.requested ||
+    input.analysisReady ||
+    input.pipelineStatus.complete ||
+    !input.showOperatorTools
+  ) {
+    return false;
+  }
+
+  const currentJobStatus = input.pipelineStatus.currentJobStatus?.toUpperCase();
+  const hasQueuedWork =
+    input.pipelineStatus.jobCounts.queued > 0 ||
+    currentJobStatus === PIPELINE_JOB_STATUS.QUEUED ||
+    currentJobStatus === PIPELINE_JOB_STATUS.RETRYING;
+
+  return (
+    hasQueuedWork &&
+    input.pipelineStatus.jobCounts.running === 0 &&
+    input.pipelineStatus.jobCounts.failed === 0
+  );
+}
+
 export function analysisStatusLabel(input: {
   analysisStatus: string;
   manualQueuedMode: boolean;
