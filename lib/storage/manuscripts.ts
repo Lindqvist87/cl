@@ -2,6 +2,12 @@ import type { Prisma } from "@prisma/client";
 import { createHash, randomUUID } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import type { ParsedChunk, ParsedManuscript } from "@/lib/types";
+import {
+  importManifestFromMetadata,
+  importSignatureFromManifest,
+  metadataWithImportManifest
+} from "@/lib/import/v2/manifest";
+import type { ImportManifest } from "@/lib/import/v2/types";
 import { jsonInput } from "@/lib/json";
 import { countWords, normalizeWhitespace } from "@/lib/text/wordCount";
 
@@ -25,6 +31,7 @@ type CreateUploadedManuscriptShellInput = {
   targetGenre?: string;
   targetAudience?: string;
   title?: string;
+  importManifest?: ImportManifest;
 };
 
 const CREATE_MANY_BATCH_SIZE = 500;
@@ -34,6 +41,15 @@ const MANUSCRIPT_UPLOAD_TRANSACTION = {
 } as const;
 
 export async function createStoredManuscript(input: CreateManuscriptInput) {
+  const parsedManifest = importManifestFromMetadata(input.parsed.metadata);
+  const parsedMetadata = parsedManifest
+    ? metadataWithImportManifest(input.parsed.metadata, parsedManifest)
+    : input.parsed.metadata;
+  const parserVersion = parsedManifest?.parserVersion ?? "mvp-1";
+  const sourceHash =
+    parsedManifest?.fileHash ??
+    createHash("sha256").update(input.parsed.normalizedText).digest("hex");
+
   return prisma.$transaction(async (tx) => {
     const manuscript = await tx.manuscript.create({
       data: {
@@ -49,7 +65,7 @@ export async function createStoredManuscript(input: CreateManuscriptInput) {
         chapterCount: input.parsed.chapters.length,
         paragraphCount: input.parsed.paragraphCount,
         chunkCount: input.chunks.length,
-        metadata: jsonInput(input.parsed.metadata)
+        metadata: jsonInput(parsedMetadata)
       }
     });
 
@@ -58,10 +74,8 @@ export async function createStoredManuscript(input: CreateManuscriptInput) {
         manuscriptId: manuscript.id,
         versionNumber: 1,
         sourceText: input.parsed.normalizedText,
-        sourceHash: createHash("sha256")
-          .update(input.parsed.normalizedText)
-          .digest("hex"),
-        parserVersion: "mvp-1"
+        sourceHash,
+        parserVersion
       }
     });
 
@@ -176,10 +190,25 @@ export async function createUploadedManuscriptShell(
 ) {
   const originalText = normalizeWhitespace(input.originalText);
   const wordCount = countWords(originalText);
-  const sourceHash = createHash("sha256").update(originalText).digest("hex");
+  const importManifest = input.importManifest;
+  const sourceHash =
+    importManifest?.fileHash ?? createHash("sha256").update(originalText).digest("hex");
+  const importSignature = importManifest
+    ? importSignatureFromManifest(importManifest)
+    : null;
   const title =
     input.title?.trim() ||
     inferManuscriptTitle(originalText, input.sourceFileName);
+  const metadata = {
+    compilerVersion: "compiler-v1",
+    importFlow: "shell",
+    sourceFileName: input.sourceFileName,
+    sourceMimeType: input.sourceMimeType,
+    sourceFormat: input.sourceFormat,
+    sourceHash,
+    roughWordCount: wordCount,
+    ...(importSignature ? { importSignature } : {})
+  };
 
   return prisma.$transaction(async (tx) => {
     const manuscript = await tx.manuscript.create({
@@ -198,15 +227,11 @@ export async function createUploadedManuscriptShell(
         chunkCount: 0,
         status: "IMPORT_QUEUED",
         analysisStatus: "NOT_STARTED",
-        metadata: jsonInput({
-          compilerVersion: "compiler-v1",
-          importFlow: "shell",
-          sourceFileName: input.sourceFileName,
-          sourceMimeType: input.sourceMimeType,
-          sourceFormat: input.sourceFormat,
-          sourceHash,
-          roughWordCount: wordCount
-        })
+        metadata: jsonInput(
+          importManifest
+            ? metadataWithImportManifest(metadata, importManifest)
+            : metadata
+        )
       }
     });
 
@@ -216,7 +241,7 @@ export async function createUploadedManuscriptShell(
         versionNumber: 1,
         sourceText: originalText,
         sourceHash,
-        parserVersion: "compiler-shell-v1"
+        parserVersion: importManifest?.parserVersion ?? "compiler-shell-v1"
       }
     });
 

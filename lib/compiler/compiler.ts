@@ -6,6 +6,7 @@ import {
   type ReasoningEffort
 } from "@/lib/ai/modelConfig";
 import { hashJson, hashText } from "@/lib/compiler/hash";
+import { importSignatureFromMetadata } from "@/lib/import/v2/manifest";
 import { jsonInput } from "@/lib/json";
 import { prisma } from "@/lib/prisma";
 import { countWords } from "@/lib/text/wordCount";
@@ -295,7 +296,8 @@ export async function compileChapterCapsules(
         id: manuscript.id,
         title: manuscript.title,
         targetGenre: manuscript.targetGenre,
-        targetAudience: manuscript.targetAudience
+        targetAudience: manuscript.targetAudience,
+        importSignature: importSignatureFromMetadata(manuscript.metadata)
       },
       chapter: {
         id: chapter.id,
@@ -433,6 +435,7 @@ export async function compileWholeBookMap(
       title: manuscript.title,
       targetGenre: manuscript.targetGenre,
       targetAudience: manuscript.targetAudience,
+      importSignature: importSignatureFromMetadata(manuscript.metadata),
       wordCount: manuscript.wordCount,
       chapterCount: manuscript.chapterCount
     },
@@ -943,6 +946,7 @@ function sceneDigestInputHash(
     title: string;
     targetGenre?: string | null;
     targetAudience?: string | null;
+    metadata?: unknown;
   },
   scene: {
     id: string;
@@ -959,7 +963,8 @@ function sceneDigestInputHash(
       id: manuscript.id,
       title: manuscript.title,
       targetGenre: manuscript.targetGenre,
-      targetAudience: manuscript.targetAudience
+      targetAudience: manuscript.targetAudience,
+      importSignature: importSignatureFromMetadata(manuscript.metadata)
     },
     scene: {
       id: scene.id,

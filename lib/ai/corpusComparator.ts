@@ -256,8 +256,26 @@ export function serializeCorpusComparisonInput(input: CorpusComparisonInput) {
 
 export function isCorpusRequestTooLargeError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
-  return /request too large|context(?: window| length| size)?|maximum context|too many tokens|token limit|TPM|tokens per minute/i.test(
-    message
+  const errorRecord =
+    error && typeof error === "object"
+      ? (error as Record<string, unknown>)
+      : {};
+  const status =
+    typeof errorRecord.status === "number" ? errorRecord.status : undefined;
+  const combined = [
+    message,
+    errorRecord.code,
+    errorRecord.type,
+    errorRecord.param
+  ]
+    .filter((part): part is string => typeof part === "string")
+    .join(" ");
+
+  return (
+    /request too large|context(?: window| length| size)?|maximum context|too many tokens|token limit|TPM|tokens per min(?:ute)?|token(?:s)? rate.?limit|rate.?limit.*token/i.test(
+      combined
+    ) ||
+    (status === 429 && /token|TPM|context|rate.?limit/i.test(combined))
   );
 }
 

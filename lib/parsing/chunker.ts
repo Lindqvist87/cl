@@ -38,7 +38,16 @@ export function chunkParsedManuscript(
           metadata: {
             chapterTitle: chapter.title,
             sceneTitle: scene.title,
-            paragraphCount: pending.length
+            paragraphCount: pending.length,
+            importBlockIds: pending
+              .map((paragraph) => paragraph.importBlockId)
+              .filter(Boolean),
+            sourceAnchors: pending
+              .map((paragraph) => paragraph.sourceAnchor)
+              .filter(Boolean),
+            importConfidence: averageConfidence(
+              pending.map((paragraph) => paragraph.confidence)
+            )
           }
         });
 
@@ -65,7 +74,12 @@ export function chunkParsedManuscript(
                 chapterTitle: chapter.title,
                 sceneTitle: scene.title,
                 paragraphCount: 1,
-                splitLongParagraph: true
+                splitLongParagraph: true,
+                importBlockIds: paragraph.importBlockId
+                  ? [paragraph.importBlockId]
+                  : [],
+                sourceAnchors: paragraph.sourceAnchor ? [paragraph.sourceAnchor] : [],
+                importConfidence: paragraph.confidence
               }
             });
             chunkIndex += 1;
@@ -86,6 +100,22 @@ export function chunkParsedManuscript(
   }
 
   return chunks;
+}
+
+function averageConfidence(values: Array<number | undefined>) {
+  const numbers = values.filter(
+    (value): value is number => typeof value === "number" && Number.isFinite(value)
+  );
+
+  if (numbers.length === 0) {
+    return undefined;
+  }
+
+  return (
+    Math.round(
+      (numbers.reduce((total, value) => total + value, 0) / numbers.length) * 100
+    ) / 100
+  );
 }
 
 function chunkLongParagraph(paragraph: ParsedParagraph, maxWords: number) {

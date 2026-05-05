@@ -2,7 +2,12 @@ import { jsonInput } from "@/lib/json";
 import { hashText } from "@/lib/compiler/hash";
 import { prisma } from "@/lib/prisma";
 
+export const REQUIRED_COMPILER_FOUNDATION_MIGRATION =
+  "20260503190000_manuscript_compiler_foundation";
+
 export async function buildManuscriptNodes(manuscriptId: string) {
+  await assertCompilerFoundationMigrationApplied();
+
   const manuscript = await prisma.manuscript.findUniqueOrThrow({
     where: { id: manuscriptId },
     include: {
@@ -184,6 +189,39 @@ export async function buildManuscriptNodes(manuscriptId: string) {
 
 export function nodeKey(manuscriptId: string, type: string, id: string) {
   return `${manuscriptId}:${type}:${id}`;
+}
+
+export async function assertCompilerFoundationMigrationApplied() {
+  type MigrationRow = {
+    migration_name: string;
+    finished_at: Date | null;
+    rolled_back_at: Date | null;
+  };
+
+  let rows: MigrationRow[];
+
+  try {
+    rows = await prisma.$queryRaw<MigrationRow[]>`
+      SELECT "migration_name", "finished_at", "rolled_back_at"
+      FROM "_prisma_migrations"
+      WHERE "migration_name" = ${REQUIRED_COMPILER_FOUNDATION_MIGRATION}
+      LIMIT 1
+    `;
+  } catch (error) {
+    throw new Error(
+      `Cannot build manuscript compiler nodes until Prisma migrations are readable and ${REQUIRED_COMPILER_FOUNDATION_MIGRATION} is applied.`
+    );
+  }
+
+  const applied = rows.some(
+    (row) => row.finished_at !== null && row.rolled_back_at === null
+  );
+
+  if (!applied) {
+    throw new Error(
+      `Cannot build manuscript compiler nodes until migration ${REQUIRED_COMPILER_FOUNDATION_MIGRATION} is applied.`
+    );
+  }
 }
 
 function toRecord(value: unknown) {

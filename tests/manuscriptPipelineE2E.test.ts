@@ -7,6 +7,7 @@ import {
   AnalysisStatus
 } from "@prisma/client";
 import { PIPELINE_JOB_STATUS } from "../lib/pipeline/jobRules";
+import { REQUIRED_COMPILER_FOUNDATION_MIGRATION } from "../lib/compiler/nodes";
 import {
   FULL_MANUSCRIPT_PIPELINE_STEPS,
   normalizeCheckpoint
@@ -374,7 +375,19 @@ function createPatches(db: FakeDb): Array<[object, Record<string, unknown>]> {
     [prisma.rewritePlan, rewritePlanDelegate(db)],
     [prisma.editorialDecision, editorialDecisionDelegate(db)],
     [prisma.chapterRewrite, chapterRewriteDelegate(db)],
-    [prisma, { $executeRawUnsafe: async () => 0 }]
+    [
+      prisma,
+      {
+        $queryRaw: async () => [
+          {
+            migration_name: REQUIRED_COMPILER_FOUNDATION_MIGRATION,
+            finished_at: new Date("2026-05-03T19:05:00Z"),
+            rolled_back_at: null
+          }
+        ],
+        $executeRawUnsafe: async () => 0
+      }
+    ]
   ];
 }
 

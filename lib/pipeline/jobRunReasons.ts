@@ -20,7 +20,14 @@ export type PipelineBlockingJob = {
 
 type JobForRunReason = Pick<
   PipelineJob,
-  "id" | "type" | "status" | "lockedBy" | "lockedAt" | "lockExpiresAt"
+  | "id"
+  | "type"
+  | "status"
+  | "lockedBy"
+  | "lockedAt"
+  | "lockExpiresAt"
+  | "startedAt"
+  | "updatedAt"
 >;
 
 export type RunReadyJobsReasonInput = {

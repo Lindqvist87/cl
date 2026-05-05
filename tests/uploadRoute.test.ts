@@ -155,7 +155,7 @@ test("upload route succeeds when pipeline start is not accepted", async (t) => {
   assert.equal(body.status, "IMPORT_QUEUED");
   assert.equal(body.executionMode, "INNGEST");
   assert.equal(body.pipelineStarted, false);
-  assert.equal(body.pipelineQueued, false);
+  assert.equal(body.pipelineQueued, true);
   assert.equal(
     body.pipelineWarning,
     "Inngest rejected the event. Event key is missing."
@@ -185,7 +185,7 @@ test("upload route keeps shell success when Inngest branch environment is missin
   assert.equal(response.status, 202);
   assert.equal(body.manuscriptId, "manuscript-1");
   assert.equal(body.pipelineStarted, false);
-  assert.equal(body.pipelineQueued, false);
+  assert.equal(body.pipelineQueued, true);
   assert.match(body.pipelineWarning, /404/);
   assert.match(body.pipelineWarning, /Preview branch environment/);
 });
@@ -235,11 +235,11 @@ test("frontend keeps manuscript and admin links for queued uploads", () => {
   assert.match(markup, new RegExp(`href="${escapeRegExp(ADMIN_JOBS_PATH)}"`));
 });
 
-test("frontend keeps manuscript link for pipeline warning uploads", () => {
+test("frontend keeps manuscript and admin links for queued pipeline warning uploads", () => {
   const feedback = uploadFeedbackFromResponse(true, {
     manuscriptId: "manuscript-1",
     pipelineStarted: false,
-    pipelineQueued: false,
+    pipelineQueued: true,
     pipelineWarning: "Inngest branch environment returned 404."
   });
 
@@ -248,9 +248,8 @@ test("frontend keeps manuscript link for pipeline warning uploads", () => {
   }
 
   assert.equal(feedback.manuscriptId, "manuscript-1");
-  assert.equal(feedback.showAdminJobsLink, false);
-  assert.match(feedback.message, /Manuset är uppladdat/);
-  assert.match(feedback.message, /404/);
+  assert.equal(feedback.showAdminJobsLink, true);
+  assert.match(feedback.message, /analysjobben är köade/);
 
   const markup = renderToStaticMarkup(
     createElement(UploadStatusLinks, {
@@ -261,7 +260,7 @@ test("frontend keeps manuscript link for pipeline warning uploads", () => {
 
   assert.match(markup, /href="\/manuscripts\/manuscript-1"/);
   assert.match(markup, /Visa uppladdat manus/);
-  assert.doesNotMatch(markup, /admin\/jobs/);
+  assert.match(markup, new RegExp(`href="${escapeRegExp(ADMIN_JOBS_PATH)}"`));
 });
 
 test("frontend only classifies actual upload failures as red errors", () => {

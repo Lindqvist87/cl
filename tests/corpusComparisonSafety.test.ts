@@ -224,7 +224,7 @@ test("request-too-large model errors save skipped output and complete the corpus
     modelInputs.push(input);
     modelOptions.push(options ?? {});
     throw new Error(
-      "429 Request too large for gpt-5.4-mini. Limit 200000 TPM. Requested 273212."
+      "Rate limit reached for gpt-5.4-mini on tokens per min. Limit 200000 / min. Requested 273212 / min."
     );
   });
 

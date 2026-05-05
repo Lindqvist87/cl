@@ -388,6 +388,45 @@ test("ready runner recovers stale running manuscript jobs before retrying them",
   );
 });
 
+test("stale running manuscript jobs without lock expiry are recovered", async () => {
+  const manuscriptId = "manuscript-stale-running-without-expiry";
+  const checkpoint = checkpointBeforeRunChapterAudits();
+  const runningPlan = plannedPipelineJobs(manuscriptId, checkpoint).find(
+    (job) => job.type === "runChapterAudits"
+  );
+  assert.ok(runningPlan);
+
+  const jobs: MutableJob[] = [
+    mutableJob("old-running-audits-job", {
+      manuscriptId,
+      type: "runChapterAudits",
+      status: PIPELINE_JOB_STATUS.RUNNING,
+      idempotencyKey: runningPlan.idempotencyKey,
+      lockedAt: new Date(Date.now() - 20 * 60 * 1000),
+      lockedBy: "legacy-worker-without-expiry",
+      lockExpiresAt: null,
+      attempts: 1,
+      maxAttempts: 3
+    })
+  ];
+  const run = mutableRun(manuscriptId, checkpoint);
+
+  await withPatchedPrisma(
+    manuscriptRunnerPatches({ manuscriptId, run, jobs }),
+    async () => {
+      const recovered = await releaseStaleLocks(manuscriptId);
+
+      assert.equal(recovered[0]?.id, "old-running-audits-job");
+      assert.equal(recovered[0]?.stale, true);
+      assert.equal(jobs[0].status, PIPELINE_JOB_STATUS.RETRYING);
+      assert.equal(jobs[0].lockedAt, null);
+      assert.equal(jobs[0].lockedBy, null);
+      assert.equal(jobs[0].lockExpiresAt, null);
+      assert.equal(jobs[0].error, "Job lock expired before completion.");
+    }
+  );
+});
+
 test("zero ready jobs with unfinished work returns a specific runner reason", async () => {
   const jobs: MutableJob[] = [
     mutableJob("blocked-rewrite-plan", {

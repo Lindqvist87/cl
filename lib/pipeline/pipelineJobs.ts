@@ -631,13 +631,13 @@ export async function findNextReadyJob(scopeOrManuscriptId?: string | PipelineJo
 export async function releaseStaleLocks(scopeOrManuscriptId?: string | PipelineJobScope) {
   const scope = normalizePipelineJobScope(scopeOrManuscriptId);
   const now = new Date();
-  const staleJobs = await prisma.pipelineJob.findMany({
+  const runningJobs = await prisma.pipelineJob.findMany({
     where: {
       ...pipelineJobScopeWhere(scope),
-      status: PIPELINE_JOB_STATUS.RUNNING,
-      lockExpiresAt: { lte: now }
+      status: PIPELINE_JOB_STATUS.RUNNING
     }
   });
+  const staleJobs = runningJobs.filter((job) => isLockStale(job, now));
   const recoveredJobs = staleJobs.map((job) => pipelineBlockingJob(job, now));
 
   for (const job of staleJobs) {

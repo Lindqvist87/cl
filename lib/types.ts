@@ -9,6 +9,10 @@ export type ParsedParagraph = {
   chapterOrder: number;
   sceneOrder: number;
   approximateOffset?: number;
+  sourceAnchor?: JsonRecord;
+  importBlockId?: string;
+  confidence?: number;
+  warnings?: JsonRecord[];
 };
 
 export type ParsedScene = {
@@ -26,6 +30,10 @@ export type ParsedChapter = {
   wordCount: number;
   startOffset?: number;
   endOffset?: number;
+  sourceAnchor?: JsonRecord;
+  importBlockId?: string;
+  confidence?: number;
+  warnings?: JsonRecord[];
   scenes: ParsedScene[];
 };
 

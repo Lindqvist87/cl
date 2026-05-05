@@ -1,6 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildManuscriptNodes } from "../lib/compiler/nodes";
+import {
+  buildManuscriptNodes,
+  REQUIRED_COMPILER_FOUNDATION_MIGRATION
+} from "../lib/compiler/nodes";
 import {
   compileChapterCapsules,
   compileWholeBookMap,
@@ -29,6 +32,21 @@ test("buildManuscriptNodes creates stable book chapter scene and chunk nodes", a
       ["BOOK", "CHAPTER", "SCENE", "CHUNK"]
     );
   });
+});
+
+test("buildManuscriptNodes refuses to run before compiler foundation migration", async () => {
+  const db = createCompilerDb();
+
+  await withPatchedPrisma(
+    createNodePatches(db, { migrationApplied: false }),
+    async () => {
+      await assert.rejects(
+        () => buildManuscriptNodes(db.manuscript.id),
+        /20260503190000_manuscript_compiler_foundation/
+      );
+      assert.equal(db.nodes.length, 0);
+    }
+  );
 });
 
 test("compileSceneDigests saves artifact and durable memory rows", async () => {
@@ -556,8 +574,28 @@ function seedChapterCapsules(db: ReturnType<typeof createChapterCapsuleDb>) {
   );
 }
 
-function createNodePatches(db: ReturnType<typeof createCompilerDb>) {
+function createNodePatches(
+  db: ReturnType<typeof createCompilerDb>,
+  options: { migrationApplied?: boolean } = {}
+) {
+  const migrationApplied = options.migrationApplied ?? true;
+
   return [
+    [
+      prisma,
+      {
+        $queryRaw: async () =>
+          migrationApplied
+            ? [
+                {
+                  migration_name: REQUIRED_COMPILER_FOUNDATION_MIGRATION,
+                  finished_at: new Date("2026-05-03T19:05:00Z"),
+                  rolled_back_at: null
+                }
+              ]
+            : []
+      }
+    ],
     [
       prisma.manuscript,
       {

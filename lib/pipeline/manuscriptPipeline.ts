@@ -50,7 +50,21 @@ import {
   rightsStatusCounts
 } from "@/lib/corpus/rights";
 import { jsonInput } from "@/lib/json";
-import { parseManuscriptText } from "@/lib/parsing/chapterDetector";
+import {
+  importManifestFromMetadata,
+  importManifestToNormalizedText,
+  importSignatureFromManifest,
+  importSignatureFromMetadata,
+  metadataWithImportManifest
+} from "@/lib/import/v2/manifest";
+import {
+  buildImportInvalidationPlan,
+  invalidateImportDerivedArtifacts,
+  type ImportInvalidationPlan
+} from "@/lib/import/v2/invalidation";
+import { importManifestToParsedManuscript } from "@/lib/import/v2/adapter";
+import { buildTextImportManifest } from "@/lib/import/v2/text";
+import type { ImportManifest } from "@/lib/import/v2/types";
 import { chunkParsedManuscript } from "@/lib/parsing/chunker";
 import {
   FULL_MANUSCRIPT_PIPELINE_STEPS,
@@ -248,11 +262,16 @@ export async function runPipelineStep(
   runId: string,
   options: PipelineStepRunOptions = {}
 ) {
+  const importGate = await importVerificationGate(step, manuscriptId);
+  if (importGate) {
+    return importGate;
+  }
+
   switch (step) {
     case "parseAndNormalizeManuscript":
       return parseAndNormalizeManuscript(manuscriptId);
     case "splitIntoChapters":
-      return splitIntoChapters(manuscriptId);
+      return splitIntoChapters(manuscriptId, runId);
     case "splitIntoChunks":
       return splitIntoChunks(manuscriptId);
     case "createEmbeddingsForChunks":
@@ -290,6 +309,60 @@ export async function runPipelineStep(
   }
 }
 
+const IMPORT_STRUCTURE_PREREVIEW_STEPS = new Set<ManuscriptPipelineStep>([
+  "parseAndNormalizeManuscript",
+  "splitIntoChapters",
+  "splitIntoChunks"
+]);
+
+async function importVerificationGate(
+  step: ManuscriptPipelineStep,
+  manuscriptId: string
+): Promise<PipelineStepRunResult | null> {
+  if (IMPORT_STRUCTURE_PREREVIEW_STEPS.has(step)) {
+    return null;
+  }
+
+  if (!process.env.DATABASE_URL) {
+    return null;
+  }
+
+  let manuscript: { metadata: unknown } | null;
+
+  try {
+    manuscript = await prisma.manuscript.findUnique({
+      where: { id: manuscriptId },
+      select: { metadata: true }
+    });
+  } catch {
+    return null;
+  }
+  const metadata = toJsonRecord(manuscript?.metadata);
+  const manifest = importManifestFromMetadata(metadata);
+  const structureReview = toJsonRecord(metadata.structureReview);
+  const importV2 = toJsonRecord(metadata.importV2);
+  const approved =
+    importV2.reviewStatus === "approved" || manifest?.review.status === "approved";
+  const needsReview =
+    toJsonRecord(metadata.importReview).pendingInvalidation === true ||
+    manifest?.review.verifiedEnough === false ||
+    structureReview.recommended === true;
+
+  if (!manifest || approved || !needsReview) {
+    return null;
+  }
+
+  return {
+    complete: false,
+    remaining: 1,
+    blockedReason: "import_structure_review_required",
+    reviewStatus: manifest.review.status,
+    warningCount:
+      numberOrZero(structureReview.warningCount) || manifest.review.warningCount,
+    nextStep: "Open import inspector and approve the structure before deep analysis."
+  };
+}
+
 export function isPipelineStepRunComplete(result: PipelineStepRunResult) {
   if (result.complete === false) {
     return false;
@@ -317,11 +390,15 @@ async function parseAndNormalizeManuscript(manuscriptId: string) {
   if (!originalText) {
     throw new Error("Manuscript has no stored source text.");
   }
-  const normalized = parseManuscriptText(
-    originalText,
-    manuscript.sourceFileName
-  ).normalizedText;
+  const manifest = importManifestFromMetadata(manuscript.metadata) ??
+    buildTextImportManifest({
+      rawText: originalText,
+      sourceFileName: manuscript.sourceFileName,
+      sourceMimeType: manuscript.sourceMimeType ?? undefined
+    });
+  const normalized = importManifestToNormalizedText(manifest);
   const wordCount = countWords(normalized);
+  const importSignature = importSignatureFromManifest(manifest);
 
   await prisma.manuscript.update({
     where: { id: manuscriptId },
@@ -329,25 +406,36 @@ async function parseAndNormalizeManuscript(manuscriptId: string) {
       originalText: normalized,
       wordCount,
       status: "PARSED",
-      metadata: jsonInput({
-        ...toJsonRecord(manuscript.metadata),
-        import: {
-          ...toJsonRecord(toJsonRecord(manuscript.metadata).import),
-          parserVersion: "compiler-v1",
-          normalizedAt: new Date().toISOString(),
-          sourceHash: createHash("sha256").update(normalized).digest("hex")
-        }
-      })
+      metadata: jsonInput(
+        metadataWithImportManifest(
+          {
+            ...toJsonRecord(manuscript.metadata),
+            import: {
+              ...toJsonRecord(toJsonRecord(manuscript.metadata).import),
+              parserVersion: manifest.parserVersion,
+              normalizedAt: new Date().toISOString(),
+              sourceHash: manifest.fileHash,
+              normalizedTextHash: createHash("sha256")
+                .update(normalized)
+                .digest("hex"),
+              importSignature
+            }
+          },
+          manifest
+        )
+      )
     }
   });
 
   return {
     wordCount,
-    hasOriginalText: true
+    hasOriginalText: true,
+    importSignature,
+    parserVersion: manifest.parserVersion
   };
 }
 
-async function splitIntoChapters(manuscriptId: string) {
+async function splitIntoChapters(manuscriptId: string, runId?: string) {
   const manuscript = await prisma.manuscript.findUnique({
     where: { id: manuscriptId },
     include: {
@@ -385,15 +473,33 @@ async function splitIntoChapters(manuscriptId: string) {
       throw new Error("Manuscript has no stored source text.");
     }
 
-    const parsed = parseManuscriptText(originalText, manuscript.sourceFileName);
+    const manifest = importManifestFromMetadata(manuscript.metadata) ??
+      buildTextImportManifest({
+        rawText: originalText,
+        sourceFileName: manuscript.sourceFileName,
+        sourceMimeType: manuscript.sourceMimeType ?? undefined
+      });
+    const parsed = importManifestToParsedManuscript(manifest);
+    const previousSignature = importSignatureFromMetadata(manuscript.metadata);
+    const invalidationPlan = buildImportInvalidationPlan({
+      previousSignature,
+      manifest
+    });
+    const replaceExisting = chapters.length > 0 || existingParagraphCount > 0;
+
     await persistParsedManuscriptStructure(manuscriptId, parsed, {
-      replaceExisting: chapters.length > 0
+      replaceExisting,
+      invalidationPlan: replaceExisting ? invalidationPlan : undefined,
+      keepAnalysisRunId: runId,
+      previousMetadata: manuscript.metadata
     });
 
     return {
       chapterCount: parsed.chapters.length,
       paragraphCount: parsed.paragraphCount,
-      wordCount: parsed.wordCount
+      wordCount: parsed.wordCount,
+      importSignature: importSignatureFromManifest(manifest),
+      invalidated: replaceExisting && invalidationPlan.changed
     };
   }
 
@@ -435,7 +541,7 @@ async function splitIntoChapters(manuscriptId: string) {
 async function splitIntoChunks(manuscriptId: string) {
   const manuscript = await prisma.manuscript.findUnique({
     where: { id: manuscriptId },
-    select: { chunkCount: true }
+    select: { chunkCount: true, metadata: true }
   });
   const chunks = await prisma.manuscriptChunk.findMany({
     where: { manuscriptId },
@@ -446,7 +552,8 @@ async function splitIntoChunks(manuscriptId: string) {
     const parsed = await storedManuscriptAsParsed(manuscriptId);
     const parsedChunks = chunkParsedManuscript(parsed);
     await persistParsedChunks(manuscriptId, parsedChunks, {
-      replaceExisting: chunks.length > 0
+      replaceExisting: chunks.length > 0,
+      previousMetadata: manuscript?.metadata
     });
 
     return {
@@ -485,8 +592,14 @@ async function splitIntoChunks(manuscriptId: string) {
 async function persistParsedManuscriptStructure(
   manuscriptId: string,
   parsed: ParsedManuscript,
-  options: { replaceExisting?: boolean } = {}
+  options: {
+    replaceExisting?: boolean;
+    invalidationPlan?: ImportInvalidationPlan;
+    keepAnalysisRunId?: string;
+    previousMetadata?: unknown;
+  } = {}
 ) {
+  const manifest = importManifestFromMetadata(parsed.metadata);
   const chapterRows: Prisma.ManuscriptChapterCreateManyInput[] = [];
   const sceneRows: Prisma.SceneCreateManyInput[] = [];
   const paragraphRows: Prisma.ParagraphCreateManyInput[] = [];
@@ -543,6 +656,14 @@ async function persistParsedManuscriptStructure(
   }
 
   await prisma.$transaction(async (tx) => {
+    if (options.invalidationPlan?.changed) {
+      await invalidateImportDerivedArtifacts(tx, {
+        manuscriptId,
+        plan: options.invalidationPlan,
+        keepAnalysisRunId: options.keepAnalysisRunId
+      });
+    }
+
     if (options.replaceExisting) {
       await tx.manuscriptChunk.deleteMany({ where: { manuscriptId } });
       await tx.paragraph.deleteMany({ where: { manuscriptId } });
@@ -570,12 +691,21 @@ async function persistParsedManuscriptStructure(
         paragraphCount: parsed.paragraphCount,
         status: "CHAPTERS_READY",
         metadata: jsonInput({
-          ...parsed.metadata,
+          ...toJsonRecord(options.previousMetadata),
+          ...(manifest
+            ? metadataWithImportManifest(parsed.metadata, manifest)
+            : parsed.metadata),
+          importReview: {
+            ...toJsonRecord(toJsonRecord(options.previousMetadata).importReview),
+            pendingInvalidation: false,
+            rebuiltAt: new Date().toISOString()
+          },
           compilerVersion: "compiler-v1",
           importFlow: "pipeline",
           structuralHash: createHash("sha256")
             .update(parsed.normalizedText)
-            .digest("hex")
+            .digest("hex"),
+          importSignature: manifest ? importSignatureFromManifest(manifest) : undefined
         })
       }
     });
@@ -608,6 +738,15 @@ async function storedManuscriptAsParsed(
     throw new Error("No chapters found. Run splitIntoChapters first.");
   }
 
+  const manifest = importManifestFromMetadata(manuscript.metadata);
+  const paragraphBlocks = manifest
+    ? manifest.blocks.filter(
+        (block) =>
+          block.type === "paragraph" ||
+          block.type === "list_item" ||
+          block.type === "front_matter"
+      )
+    : [];
   const chapters: ParsedManuscript["chapters"] = manuscript.chapters.map(
     (chapter) => ({
       order: chapter.order,
@@ -627,7 +766,11 @@ async function storedManuscriptAsParsed(
           globalOrder: paragraph.globalOrder,
           chapterOrder: paragraph.chapterOrder,
           sceneOrder: paragraph.sceneOrder,
-          approximateOffset: paragraph.approximateOffset ?? undefined
+          approximateOffset: paragraph.approximateOffset ?? undefined,
+          sourceAnchor: paragraphBlocks[paragraph.globalOrder]?.sourceAnchor,
+          importBlockId: paragraphBlocks[paragraph.globalOrder]?.id,
+          confidence: paragraphBlocks[paragraph.globalOrder]?.confidence,
+          warnings: paragraphBlocks[paragraph.globalOrder]?.warnings
         }))
       }))
     })
@@ -658,8 +801,23 @@ async function storedManuscriptAsParsed(
 async function persistParsedChunks(
   manuscriptId: string,
   parsedChunks: ParsedChunk[],
-  options: { replaceExisting?: boolean } = {}
+  options: { replaceExisting?: boolean; previousMetadata?: unknown } = {}
 ) {
+  const previousMetadata = toJsonRecord(options.previousMetadata);
+  const importV2 = toJsonRecord(previousMetadata.importV2);
+  const chunkHash = createHash("sha256")
+    .update(
+      JSON.stringify(
+        parsedChunks.map((chunk) => ({
+          chapterOrder: chunk.chapterOrder,
+          sceneOrder: chunk.sceneOrder,
+          text: chunk.text,
+          startParagraph: chunk.startParagraph,
+          endParagraph: chunk.endParagraph
+        }))
+      )
+    )
+    .digest("hex");
   const chapters = await prisma.manuscriptChapter.findMany({
     where: { manuscriptId },
     orderBy: { order: "asc" },
@@ -707,7 +865,10 @@ async function persistParsedChunks(
         tokenCount: chunk.tokenEstimate,
         metadata: jsonInput({
           ...chunk.metadata,
-          source: "compiler-v1"
+          source: "compiler-v1",
+          importSignature: importV2.signature,
+          importStructureHash: importV2.structureHash,
+          chunkHash
         })
       };
     }
@@ -726,7 +887,14 @@ async function persistParsedChunks(
       where: { id: manuscriptId },
       data: {
         chunkCount: rows.length,
-        status: "CHUNKS_READY"
+        status: "CHUNKS_READY",
+        metadata: jsonInput({
+          ...previousMetadata,
+          importV2: {
+            ...importV2,
+            chunkHash
+          }
+        })
       }
     });
   });
@@ -1984,6 +2152,10 @@ function normalizeMaxItems(value: number | undefined, fallback: number) {
   }
 
   return Math.max(1, Math.floor(value));
+}
+
+function numberOrZero(value: unknown) {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function sceneKey(chapterOrder: number, sceneOrder: number) {

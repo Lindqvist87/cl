@@ -102,7 +102,8 @@ export function createUploadPostHandler(
         sourceFormat: extracted.format,
         authorName: textField(formData, "authorName"),
         targetGenre: textField(formData, "targetGenre"),
-        targetAudience: textField(formData, "targetAudience")
+        targetAudience: textField(formData, "targetAudience"),
+        importManifest: extracted.importManifest
       });
     } catch (error) {
       return uploadFailureResponse(
@@ -182,13 +183,19 @@ function pipelineNotStartedResponse(
       status: "IMPORT_QUEUED",
       executionMode: pipeline?.executionMode,
       pipelineStarted: false,
-      pipelineQueued: false,
+      pipelineQueued: hasQueuedPipelineJobs(pipeline),
       pipelineWarning,
       message: PIPELINE_NOT_STARTED_MESSAGE,
       pipeline
     },
     { status: 202 }
   );
+}
+
+function hasQueuedPipelineJobs(pipeline?: PipelineStartResultForRoute) {
+  const jobCount = pipeline?.jobCount;
+
+  return typeof jobCount === "number" && Number.isFinite(jobCount) && jobCount > 0;
 }
 
 function uploadFailureResponse(
