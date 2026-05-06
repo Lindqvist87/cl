@@ -14,6 +14,7 @@ import {
   type ManuscriptIRBlock
 } from "@/lib/import/v2/types";
 import { countWords } from "@/lib/text/wordCount";
+import type { DocumentPaginationLayout } from "@/lib/document/pageMarkers";
 
 const DOCX_MIME_TYPE =
   "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -57,7 +58,8 @@ export async function parseDocxToImportManifest(input: {
   const styles = parseStyles(readZipText(zip, "word/styles.xml"));
   const comments = parseComments(readZipText(zip, "word/comments.xml"));
   const parsed = parser.parse(documentXml);
-  const body = record(parsed.document).body;
+  const body = record(record(parsed.document).body);
+  const pageLayout = parsePageLayout(body);
   const paragraphs = collectParagraphs(body, "word/document.xml/body");
   const standaloneRomanChapterParagraphs =
     findSequentialStandaloneRomanParagraphs(paragraphs);
@@ -76,6 +78,7 @@ export async function parseDocxToImportManifest(input: {
     const styleName = styleId ? styles.get(styleId) : undefined;
     const text = extractParagraphText(p).trim();
     const pageBreak = hasPageBreak(p);
+    const metadata = paragraphMetadata(p, paragraph.inTable);
     const commentIds = collectIds(p, "commentReference");
     const hasTrackedChange = containsKey(p, "ins") || containsKey(p, "del");
     if (paragraph.inTable) {
@@ -137,7 +140,7 @@ export async function parseDocxToImportManifest(input: {
         },
         confidence: 0.9,
         warnings: blockWarnings,
-        metadata: paragraph.inTable ? { docxContainer: "table" } : undefined
+        metadata
       });
       continue;
     }
@@ -215,7 +218,7 @@ export async function parseDocxToImportManifest(input: {
       list,
       pageBreakBefore: pageBreak,
       warnings,
-      metadata: paragraph.inTable ? { docxContainer: "table" } : undefined
+      metadata
     });
 
     characterOffset = end + 2;
@@ -244,9 +247,54 @@ export async function parseDocxToImportManifest(input: {
       paragraphCount: paragraphs.length,
       tableParagraphCount,
       styleCount: styles.size,
-      commentCount: comments.size
+      commentCount: comments.size,
+      ...(Object.keys(pageLayout).length > 0 ? { pageLayout } : {})
     }
   });
+}
+
+function parsePageLayout(body: Record<string, unknown>) {
+  const sectionProperties = findFirstRecordByKey(body, "sectPr");
+  const pageSize = record(sectionProperties.pgSz);
+  const margins = record(sectionProperties.pgMar);
+  const layout: DocumentPaginationLayout = {};
+
+  assignNumber(layout, "pageWidthTwips", pageSize.w);
+  assignNumber(layout, "pageHeightTwips", pageSize.h);
+  assignNumber(layout, "marginTopTwips", margins.top);
+  assignNumber(layout, "marginRightTwips", margins.right);
+  assignNumber(layout, "marginBottomTwips", margins.bottom);
+  assignNumber(layout, "marginLeftTwips", margins.left);
+
+  return layout as Record<string, unknown>;
+}
+
+function paragraphMetadata(
+  paragraph: Record<string, unknown>,
+  inTable: boolean
+) {
+  const metadata: Record<string, unknown> = {};
+  const spacing = paragraphSpacing(paragraph);
+
+  if (inTable) {
+    metadata.docxContainer = "table";
+  }
+
+  if (Object.keys(spacing).length > 0) {
+    metadata.docxSpacing = spacing;
+  }
+
+  return Object.keys(metadata).length > 0 ? metadata : undefined;
+}
+
+function paragraphSpacing(paragraph: Record<string, unknown>) {
+  const spacing = record(record(paragraph.pPr).spacing);
+  const values: Record<string, number> = {};
+
+  assignNumber(values, "beforeTwips", spacing.before);
+  assignNumber(values, "afterTwips", spacing.after);
+
+  return values;
 }
 
 function collectParagraphs(
@@ -397,6 +445,10 @@ function hasPageBreak(value: unknown): boolean {
 
   const item = record(value);
   if (item.lastRenderedPageBreak !== undefined) {
+    return true;
+  }
+
+  if (record(item.pPr).pageBreakBefore !== undefined) {
     return true;
   }
 
@@ -672,6 +724,38 @@ function record(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function findFirstRecordByKey(value: unknown, keyName: string): Record<string, unknown> {
+  if (!value || typeof value !== "object") {
+    return {};
+  }
+
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const match = findFirstRecordByKey(item, keyName);
+      if (Object.keys(match).length > 0) {
+        return match;
+      }
+    }
+
+    return {};
+  }
+
+  const item = record(value);
+  const child = item[keyName];
+  if (child !== undefined) {
+    return record(child);
+  }
+
+  for (const candidate of Object.values(item)) {
+    const match = findFirstRecordByKey(candidate, keyName);
+    if (Object.keys(match).length > 0) {
+      return match;
+    }
+  }
+
+  return {};
+}
+
 function stringValue(value: unknown) {
   return typeof value === "string" || typeof value === "number"
     ? String(value)
@@ -689,4 +773,11 @@ function numberValue(value: unknown) {
   }
 
   return undefined;
+}
+
+function assignNumber(target: object, key: string, value: unknown) {
+  const parsed = numberValue(value);
+  if (parsed !== undefined) {
+    (target as Record<string, unknown>)[key] = parsed;
+  }
 }

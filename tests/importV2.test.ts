@@ -265,6 +265,41 @@ test("docx upload text preserves imported page boundaries for the editor", async
   assert.match(extracted.text, /Infogat stycke/);
 });
 
+test("docx upload text estimates page boundaries when Word page breaks are missing", async () => {
+  const paragraphs = Array.from(
+    { length: 40 },
+    (_, index) =>
+      `<w:p><w:pPr><w:spacing w:after="160"/></w:pPr><w:r><w:t>Stycke ${index + 1} ${Array.from({ length: 60 }, () => "ord").join(" ")}</w:t></w:r></w:p>`
+  ).join("\n");
+  const extracted = await extractTextFromUpload(
+    new File(
+      [
+        await docxBodyFixtureBuffer(`
+${paragraphs}
+    <w:sectPr><w:pgSz w:w="6000" w:h="6000"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr>`)
+      ],
+      "estimated-pages.docx",
+      {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      }
+    )
+  );
+  const pageMarkers = extracted.text.match(/\[\[Sida [0-9]+\]\]/g) ?? [];
+  const pageLayout = extracted.importManifest?.metadata?.pageLayout as
+    | Record<string, unknown>
+    | undefined;
+
+  assert.equal(pageMarkers.length > 1, true);
+  assert.match(extracted.text, /\[\[Sida 2\]\]/);
+  assert.equal(pageLayout?.pageWidthTwips, 6000);
+  assert.equal(
+    extracted.importManifest?.blocks.some(
+      (block) => block.type === "page_break" || block.pageBreakBefore
+    ),
+    false
+  );
+});
+
 test("broken docx fixture fails structured parsing and surfaces extraction phase", async () => {
   const broken = readFileSync(path.join(fixtureRoot, "broken.docx"));
 
