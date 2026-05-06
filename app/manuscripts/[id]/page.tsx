@@ -433,40 +433,6 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function DocumentPreview({
-  text,
-  sourceFileName
-}: {
-  text: string | null;
-  sourceFileName: string;
-}) {
-  const content = text?.trim();
-
-  return (
-    <section className="border border-line bg-white shadow-panel">
-      <div className="border-b border-line px-5 py-4">
-        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
-          Dokument
-        </h2>
-        <p className="mt-1 text-sm text-muted">{sourceFileName}</p>
-      </div>
-      <div className="bg-[#FAFAF7] px-3 py-4 sm:px-6 sm:py-7">
-        <article className="mx-auto min-h-[520px] max-w-3xl border border-line bg-white px-5 py-7 shadow-[0_18px_42px_rgba(23,23,23,0.08)] sm:px-10 sm:py-11">
-          {content ? (
-            <div className="whitespace-pre-wrap text-base leading-8 text-slate-800">
-              {content}
-            </div>
-          ) : (
-            <p className="text-sm leading-6 text-slate-600">
-              Dokumentet är uppladdat, men ingen läsbar text kunde visas.
-            </p>
-          )}
-        </article>
-      </div>
-    </section>
-  );
-}
-
 function formatManuscriptFormat(format: string) {
   return format === "DOCX" ? "DOCX" : format;
 }
