@@ -7,6 +7,7 @@ import {
 } from "../lib/storage/manuscripts";
 import { buildTextImportManifest } from "../lib/import/v2/text";
 import { importManifestFromMetadata } from "../lib/import/v2/manifest";
+import { isDocOnlyManuscript } from "../lib/manuscripts/docOnly";
 import { saveEditableManuscriptDocument } from "../lib/server/manuscriptDocument";
 import { prisma } from "../lib/prisma";
 import type { ParsedChunk, ParsedManuscript } from "../lib/types";
@@ -126,9 +127,24 @@ test("createUploadedManuscriptShell does not use chapter markers as title", asyn
   assert.equal(createdRows[0].title, "Test");
 });
 
+test("doc-only manuscripts stop using the document-only view after analysis artifacts exist", () => {
+  assert.equal(
+    isDocOnlyManuscript({
+      metadata: { importFlow: "doc-only" },
+      status: "PIPELINE_COMPLETED",
+      analysisStatus: "COMPLETED",
+      originalText: "Analyzed manuscript text.",
+      chapterCount: 2,
+      chunkCount: 8
+    }),
+    false
+  );
+});
+
 test("saveEditableManuscriptDocument autosaves edited document text", async () => {
   const updates: Array<Record<string, unknown>> = [];
   const savedAt = new Date("2026-05-06T10:20:00Z");
+  const originalText = "[[Sida 1]]\n\nOne\nTwo\n\n[[Sida 2]]\n\nThree";
 
   await withPatchedPrisma(
     [
@@ -138,6 +154,10 @@ test("saveEditableManuscriptDocument autosaves edited document text", async () =
           manuscript: {
             findUnique: async () => ({
               id: "manuscript-1",
+              originalText,
+              sourceFileName: "test.docx",
+              sourceMimeType:
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
               metadata: {
                 importFlow: "doc-only",
                 documentEditor: {
@@ -184,13 +204,15 @@ test("saveEditableManuscriptDocument autosaves edited document text", async () =
   assert.equal(editor.lastAutosavedAt, savedAt.toISOString());
 });
 
-test("saveEditableManuscriptDocument clears stale import manifest when text changes", async () => {
+test("saveEditableManuscriptDocument resets analysis state when text changes", async () => {
   const updates: Array<Record<string, unknown>> = [];
+  const deleteCalls: Array<{ model: string; where: unknown }> = [];
   const savedAt = new Date("2026-05-06T11:30:00Z");
   const manifest = buildTextImportManifest({
     rawText: "Old title\n\nOld paragraph.",
     sourceFileName: "old.docx"
   });
+  const tx = editableDocumentTx(updates, deleteCalls, savedAt);
 
   await withPatchedPrisma(
     [
@@ -201,6 +223,9 @@ test("saveEditableManuscriptDocument clears stale import manifest when text chan
             findUnique: async () => ({
               id: "manuscript-1",
               originalText: "Old title\n\nOld paragraph.",
+              sourceFileName: "old.docx",
+              sourceMimeType:
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
               metadata: {
                 importFlow: "doc-only",
                 importManifestV2: manifest,
@@ -225,25 +250,18 @@ test("saveEditableManuscriptDocument clears stale import manifest when text chan
                   note: "preserve"
                 }
               }
-            }),
-            update: async (args: { data: Record<string, unknown> }) => {
-              updates.push(args.data);
-              return {
-                id: "manuscript-1",
-                title: "Test Manuscript",
-                originalText: args.data.originalText,
-                wordCount: args.data.wordCount,
-                updatedAt: savedAt
-              };
-            }
-          }
+            })
+          },
+          $transaction: async (
+            callback: (transactionClient: typeof tx) => Promise<unknown>
+          ) => callback(tx)
         }
       ]
     ],
     async () => {
       await saveEditableManuscriptDocument({
         manuscriptId: "manuscript-1",
-        text: "New title\n\nNew paragraph text.",
+        text: "[[Sida 1]]\n\nNew title\n\n[[Sida 2]]\n\nNew paragraph text.",
         now: savedAt
       });
     }
@@ -251,21 +269,53 @@ test("saveEditableManuscriptDocument clears stale import manifest when text chan
 
   const metadata = updates[0].metadata as Record<string, unknown>;
   const editor = metadata.documentEditor as Record<string, unknown>;
+  const nextManifest = importManifestFromMetadata(metadata);
 
-  assert.equal(importManifestFromMetadata(metadata), null);
-  assert.equal("importManifestV2" in metadata, false);
+  assert.ok(nextManifest);
+  assert.doesNotMatch(JSON.stringify(nextManifest), /\[\[Sida/);
+  assert.doesNotMatch(JSON.stringify(metadata), /stale-signature/);
+  assert.equal("importManifestV2" in metadata, true);
   assert.equal("importManifest" in metadata, false);
-  assert.equal("importV2" in metadata, false);
-  assert.equal("import" in metadata, false);
+  assert.equal("importV2" in metadata, true);
+  assert.equal("import" in metadata, true);
   assert.equal("importReview" in metadata, false);
   assert.equal("structureReview" in metadata, false);
-  assert.equal("importSignature" in metadata, false);
+  assert.equal("importSignature" in metadata, true);
   assert.equal(metadata.importFlow, "doc-only");
   assert.equal(metadata.roughWordCount, 5);
   assert.equal(metadata.sourceHash, editor.sourceHash);
   assert.equal(editor.revision, 5);
   assert.equal(editor.note, "preserve");
   assert.equal(editor.importManifestInvalidatedAt, savedAt.toISOString());
+  assert.equal(updates[0].chapterCount, 0);
+  assert.equal(updates[0].paragraphCount, 0);
+  assert.equal(updates[0].chunkCount, 0);
+  assert.equal(updates[0].status, "UPLOADED");
+  assert.equal(updates[0].analysisStatus, "NOT_STARTED");
+  assert.deepEqual(
+    deleteCalls.map((call) => call.model),
+    [
+      "editorialDecision",
+      "chapterRewrite",
+      "rewritePlan",
+      "auditReport",
+      "finding",
+      "analysisOutput",
+      "manuscriptProfile",
+      "compilerArtifact",
+      "manuscriptNode",
+      "narrativeFact",
+      "characterState",
+      "plotEvent",
+      "styleFingerprint",
+      "manuscriptChunk",
+      "paragraph",
+      "scene",
+      "manuscriptChapter",
+      "pipelineJob",
+      "analysisRun"
+    ]
+  );
 });
 
 test("createStoredManuscript persists large parsed manuscripts with batched createMany calls", async () => {
@@ -408,6 +458,53 @@ function createManyOnlyDelegate(
       });
       return { count: args.data.length };
     }
+  };
+}
+
+function editableDocumentTx(
+  updates: Array<Record<string, unknown>>,
+  deleteCalls: Array<{ model: string; where: unknown }>,
+  savedAt: Date
+) {
+  const deleteDelegate = (model: string) => ({
+    deleteMany: async (args: { where: unknown }) => {
+      deleteCalls.push({ model, where: args.where });
+      return { count: 1 };
+    }
+  });
+
+  return {
+    manuscript: {
+      update: async (args: { data: Record<string, unknown> }) => {
+        updates.push(args.data);
+        return {
+          id: "manuscript-1",
+          title: "Test Manuscript",
+          originalText: args.data.originalText,
+          wordCount: args.data.wordCount,
+          updatedAt: savedAt
+        };
+      }
+    },
+    editorialDecision: deleteDelegate("editorialDecision"),
+    chapterRewrite: deleteDelegate("chapterRewrite"),
+    rewritePlan: deleteDelegate("rewritePlan"),
+    auditReport: deleteDelegate("auditReport"),
+    finding: deleteDelegate("finding"),
+    analysisOutput: deleteDelegate("analysisOutput"),
+    manuscriptProfile: deleteDelegate("manuscriptProfile"),
+    compilerArtifact: deleteDelegate("compilerArtifact"),
+    manuscriptNode: deleteDelegate("manuscriptNode"),
+    narrativeFact: deleteDelegate("narrativeFact"),
+    characterState: deleteDelegate("characterState"),
+    plotEvent: deleteDelegate("plotEvent"),
+    styleFingerprint: deleteDelegate("styleFingerprint"),
+    manuscriptChunk: deleteDelegate("manuscriptChunk"),
+    paragraph: deleteDelegate("paragraph"),
+    scene: deleteDelegate("scene"),
+    manuscriptChapter: deleteDelegate("manuscriptChapter"),
+    pipelineJob: deleteDelegate("pipelineJob"),
+    analysisRun: deleteDelegate("analysisRun")
   };
 }
 
