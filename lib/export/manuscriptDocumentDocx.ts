@@ -1,10 +1,12 @@
 import {
   Document,
   HeadingLevel,
+  PageBreak,
   Packer,
   Paragraph,
   TextRun
 } from "docx";
+import { splitDocumentIntoPages } from "@/lib/document/pageMarkers";
 
 type ManuscriptDocumentDocxInput = {
   title: string;
@@ -14,12 +16,16 @@ type ManuscriptDocumentDocxInput = {
 export async function manuscriptDocumentToDocxBuffer(
   input: ManuscriptDocumentDocxInput
 ) {
+  const pages = splitDocumentIntoPages(input.text);
   const children = [
     new Paragraph({
       text: input.title,
       heading: HeadingLevel.TITLE
     }),
-    ...textToDocxParagraphs(input.text)
+    ...pages.flatMap((page, index) => [
+      ...(index > 0 ? [pageBreakParagraph()] : []),
+      ...textToDocxParagraphs(page.text)
+    ])
   ];
 
   const doc = new Document({
@@ -54,5 +60,11 @@ export function textToDocxParagraphs(text: string | null) {
     return new Paragraph({
       children
     });
+  });
+}
+
+function pageBreakParagraph() {
+  return new Paragraph({
+    children: [new PageBreak()]
   });
 }

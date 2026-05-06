@@ -115,7 +115,7 @@ test("saveEditableManuscriptDocument autosaves edited document text", async () =
     async () => {
       const manuscript = await saveEditableManuscriptDocument({
         manuscriptId: "manuscript-1",
-        text: "One\r\nTwo\t \n\nThree",
+        text: "[[Sida 1]]\r\n\r\nOne\r\nTwo\t \n\n[[Sida 2]]\n\nThree",
         now: savedAt
       });
 
@@ -124,7 +124,7 @@ test("saveEditableManuscriptDocument autosaves edited document text", async () =
   );
 
   assert.equal(updates.length, 1);
-  assert.equal(updates[0].originalText, "One\nTwo\n\nThree");
+  assert.equal(updates[0].originalText, "[[Sida 1]]\n\nOne\nTwo\n\n[[Sida 2]]\n\nThree");
   assert.equal(updates[0].wordCount, 3);
 
   const metadata = updates[0].metadata as Record<string, unknown>;

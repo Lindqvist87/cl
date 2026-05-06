@@ -69,7 +69,7 @@ test("buildRewrittenJson preserves structured rewrite metadata", () => {
 test("manuscriptDocumentToDocxBuffer exports the edited document text", async () => {
   const buffer = await manuscriptDocumentToDocxBuffer({
     title: "Edited Book",
-    text: "First paragraph.\nLine two.\n\nSecond paragraph."
+    text: "[[Sida 1]]\n\nFirst paragraph.\nLine two.\n\n[[Sida 2]]\n\nSecond paragraph."
   });
   const archive = new AdmZip(buffer);
   const documentXml = archive.readAsText("word/document.xml");
@@ -78,4 +78,6 @@ test("manuscriptDocumentToDocxBuffer exports the edited document text", async ()
   assert.match(documentXml, /First paragraph/);
   assert.match(documentXml, /Line two/);
   assert.match(documentXml, /Second paragraph/);
+  assert.match(documentXml, /w:type="page"/);
+  assert.doesNotMatch(documentXml, /\[\[Sida/);
 });

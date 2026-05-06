@@ -6,9 +6,15 @@ import {
   Clock3,
   Download,
   Loader2,
+  Plus,
   Save
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  joinDocumentPages,
+  splitDocumentIntoPages,
+  type DocumentPage
+} from "@/lib/document/pageMarkers";
 
 type SaveStatus = "saved" | "dirty" | "saving" | "error";
 
@@ -37,14 +43,20 @@ export function ManuscriptDocumentEditor({
   sourceFileName,
   downloadHref
 }: ManuscriptDocumentEditorProps) {
-  const [text, setText] = useState(initialText);
+  const initialPages = useMemo(() => splitDocumentIntoPages(initialText), [initialText]);
+  const initialSerializedText = useMemo(
+    () => joinDocumentPages(initialPages),
+    [initialPages]
+  );
+  const [pages, setPages] = useState<DocumentPage[]>(initialPages);
+  const [text, setText] = useState(initialSerializedText);
   const [wordCount, setWordCount] = useState(initialWordCount);
   const [status, setStatus] = useState<SaveStatus>("saved");
   const [error, setError] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(initialUpdatedAt);
 
-  const textRef = useRef(initialText);
-  const lastSavedTextRef = useRef(initialText);
+  const textRef = useRef(initialSerializedText);
+  const lastSavedTextRef = useRef(initialSerializedText);
   const isSavingRef = useRef(false);
   const queuedTextRef = useRef<string | null>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -173,6 +185,30 @@ export function ManuscriptDocumentEditor({
     }
   }
 
+  function updatePageText(pageIndex: number, nextText: string) {
+    setPages((currentPages) => {
+      const nextPages = currentPages.map((page, index) =>
+        index === pageIndex ? { ...page, text: nextText } : page
+      );
+      setText(joinDocumentPages(nextPages));
+      return nextPages;
+    });
+  }
+
+  function addPage() {
+    setPages((currentPages) => {
+      const nextPages = [
+        ...currentPages,
+        {
+          pageNumber: currentPages.length + 1,
+          text: ""
+        }
+      ];
+      setText(joinDocumentPages(nextPages));
+      return nextPages;
+    });
+  }
+
   return (
     <section className="border border-line bg-white shadow-panel">
       <div className="flex flex-col gap-4 border-b border-line px-5 py-4 lg:flex-row lg:items-center lg:justify-between">
@@ -188,11 +224,18 @@ export function ManuscriptDocumentEditor({
             aria-live="polite"
             className={`inline-flex min-h-9 items-center gap-2 rounded-full border px-3 text-sm font-semibold ${statusMeta.className}`}
           >
-            <statusMeta.Icon size={16} className={status === "saving" ? "animate-spin" : ""} aria-hidden="true" />
+            <statusMeta.Icon
+              size={16}
+              className={status === "saving" ? "animate-spin" : ""}
+              aria-hidden="true"
+            />
             {statusMeta.label}
           </span>
           <span className="inline-flex min-h-9 items-center rounded-full border border-line bg-paper-alt px-3 text-sm font-semibold text-slate-600">
             {wordCount.toLocaleString("sv-SE")} ord
+          </span>
+          <span className="inline-flex min-h-9 items-center rounded-full border border-line bg-paper-alt px-3 text-sm font-semibold text-slate-600">
+            {pages.length.toLocaleString("sv-SE")} sidor
           </span>
           {formattedSavedAt ? (
             <span
@@ -213,6 +256,14 @@ export function ManuscriptDocumentEditor({
           </button>
           <button
             type="button"
+            onClick={addPage}
+            className="secondary-button min-h-9 px-3"
+          >
+            <Plus size={16} aria-hidden="true" />
+            Ny sida
+          </button>
+          <button
+            type="button"
             onClick={handleDownload}
             disabled={status === "saving"}
             className="secondary-button min-h-9 px-3"
@@ -224,27 +275,47 @@ export function ManuscriptDocumentEditor({
       </div>
 
       {error ? (
-        <div className="border-b border-danger/20 bg-red-50 px-5 py-3 text-sm font-semibold text-danger" role="alert">
+        <div
+          className="border-b border-danger/20 bg-red-50 px-5 py-3 text-sm font-semibold text-danger"
+          role="alert"
+        >
           {error}
         </div>
       ) : null}
 
-      <div className="bg-[#FAFAF7] px-3 py-4 sm:px-6 sm:py-7">
-        <article className="mx-auto min-h-[560px] max-w-3xl border border-line bg-white px-5 py-7 shadow-[0_18px_42px_rgba(23,23,23,0.08)] sm:px-10 sm:py-11">
-          <textarea
-            aria-label="Dokumenttext"
-            spellCheck
-            value={text}
-            onChange={(event) => setText(event.target.value)}
-            onBlur={() => {
-              if (textRef.current !== lastSavedTextRef.current) {
-                void saveDocument(textRef.current);
-              }
-            }}
-            className="block min-h-[500px] w-full resize-y border-0 bg-transparent p-0 text-base leading-8 text-slate-800 outline-none placeholder:text-slate-400 focus:ring-0"
-            placeholder="Börja skriva här..."
-          />
-        </article>
+      <div className="space-y-8 bg-[#FAFAF7] px-3 py-4 sm:px-6 sm:py-7">
+        {pages.map((page, index) => (
+          <article
+            key={`${page.pageNumber}-${index}`}
+            className="mx-auto max-w-3xl border border-line bg-white shadow-[0_18px_42px_rgba(23,23,23,0.08)]"
+          >
+            <div className="flex items-center justify-between gap-4 border-b border-line bg-paper-alt px-5 py-3 sm:px-10">
+              <h3 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+                Sida {page.pageNumber}
+              </h3>
+              <span className="text-xs font-semibold text-slate-500">
+                {page.text.trim()
+                  ? `${page.text.length.toLocaleString("sv-SE")} tecken`
+                  : "Tom sida"}
+              </span>
+            </div>
+            <div className="min-h-[560px] px-5 py-7 sm:px-10 sm:py-11">
+              <textarea
+                aria-label={`Sida ${page.pageNumber} dokumenttext`}
+                spellCheck
+                value={page.text}
+                onChange={(event) => updatePageText(index, event.target.value)}
+                onBlur={() => {
+                  if (textRef.current !== lastSavedTextRef.current) {
+                    void saveDocument(textRef.current);
+                  }
+                }}
+                className="block min-h-[500px] w-full resize-y border-0 bg-transparent p-0 text-base leading-8 text-slate-800 outline-none placeholder:text-slate-400 focus:ring-0"
+                placeholder="Börja skriva här..."
+              />
+            </div>
+          </article>
+        ))}
       </div>
     </section>
   );

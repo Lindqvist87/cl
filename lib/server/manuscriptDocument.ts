@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import { jsonInput } from "@/lib/json";
+import { stripDocumentPageMarkers } from "@/lib/document/pageMarkers";
 import { countWords } from "@/lib/text/wordCount";
 
 export const MAX_EDITABLE_DOCUMENT_CHARS = 5_000_000;
@@ -50,7 +51,7 @@ export async function saveEditableManuscriptDocument(
   }
 
   const text = normalizeEditableManuscriptText(input.text);
-  const wordCount = countWords(text);
+  const wordCount = countWords(stripDocumentPageMarkers(text));
   const savedAt = input.now ?? new Date();
   const metadata = metadataRecord(manuscript.metadata);
   const currentEditorMetadata = metadataRecord(metadata.documentEditor);

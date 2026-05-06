@@ -10,6 +10,7 @@ import {
 import {
   buildImportInvalidationPlan
 } from "../lib/import/v2/invalidation";
+import { importManifestToPagedDocumentText } from "../lib/document/pageMarkers";
 import {
   importManifestToNormalizedText
 } from "../lib/import/v2/manifest";
@@ -237,6 +238,8 @@ test("structured docx import reads styles, lists, page breaks, comments and trac
   assert.equal(manifest.blocks.some((block) => block.type === "title"), true);
   assert.equal(manifest.blocks.some((block) => block.type === "list_item"), true);
   assert.equal(manifest.blocks.some((block) => block.type === "page_break"), true);
+  assert.match(importManifestToPagedDocumentText(manifest), /\[\[Sida 1\]\]/);
+  assert.match(importManifestToPagedDocumentText(manifest), /\[\[Sida 2\]\]/);
   assert.equal(
     manifest.blocks.some((block) => block.text === "Tabellrad som inte far tappas."),
     true
@@ -247,6 +250,19 @@ test("structured docx import reads styles, lists, page breaks, comments and trac
     parsed.chapters.map((chapter) => chapter.title),
     ["Kapitel 1"]
   );
+});
+
+test("docx upload text preserves imported page boundaries for the editor", async () => {
+  const extracted = await extractTextFromUpload(
+    new File([await docxFixtureBuffer()], "structured.docx", {
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    })
+  );
+
+  assert.match(extracted.text, /\[\[Sida 1\]\]/);
+  assert.match(extracted.text, /\[\[Sida 2\]\]/);
+  assert.match(extracted.text, /Forsta stycket/);
+  assert.match(extracted.text, /Infogat stycke/);
 });
 
 test("broken docx fixture fails structured parsing and surfaces extraction phase", async () => {
