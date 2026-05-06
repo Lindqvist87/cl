@@ -11,6 +11,7 @@ import {
 import { prisma } from "@/lib/prisma";
 import { AuditButton } from "@/components/AuditButton";
 import { LivePipelineProgress } from "@/components/LivePipelineProgress";
+import { ManuscriptDocumentEditor } from "@/components/ManuscriptDocumentEditor";
 import { PipelineActionButton } from "@/components/PipelineActionButton";
 import { StructureReviewPanel } from "@/components/StructureReviewPanel";
 import { executionModeLabel } from "@/lib/pipeline/jobRules";
@@ -230,9 +231,13 @@ export default async function ManuscriptPage({
         )}
       </section>
 
-      <DocumentPreview
-        text={manuscript.originalText}
+      <ManuscriptDocumentEditor
+        manuscriptId={manuscript.id}
+        initialText={manuscript.originalText ?? ""}
+        initialWordCount={manuscript.wordCount}
+        initialUpdatedAt={manuscript.updatedAt.toISOString()}
         sourceFileName={manuscript.sourceFileName}
+        downloadHref={`/api/manuscripts/${manuscript.id}/document/docx`}
       />
 
       {!docOnlyMode ? (

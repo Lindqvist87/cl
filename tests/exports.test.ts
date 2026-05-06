@@ -4,6 +4,8 @@ import {
   buildRewrittenJson,
   buildRewrittenMarkdown
 } from "../lib/export/rewriteExports";
+import AdmZip from "adm-zip";
+import { manuscriptDocumentToDocxBuffer } from "../lib/export/manuscriptDocumentDocx";
 
 const manuscript = {
   id: "m1",
@@ -62,4 +64,18 @@ test("buildRewrittenJson preserves structured rewrite metadata", () => {
   assert.equal(firstChapter.text, "accepted text");
   assert.deepEqual(firstChapter.changeLog, [{ change: "tightened" }]);
   assert.deepEqual(firstChapter.continuityNotes, { fact: "canon" });
+});
+
+test("manuscriptDocumentToDocxBuffer exports the edited document text", async () => {
+  const buffer = await manuscriptDocumentToDocxBuffer({
+    title: "Edited Book",
+    text: "First paragraph.\nLine two.\n\nSecond paragraph."
+  });
+  const archive = new AdmZip(buffer);
+  const documentXml = archive.readAsText("word/document.xml");
+
+  assert.match(documentXml, /Edited Book/);
+  assert.match(documentXml, /First paragraph/);
+  assert.match(documentXml, /Line two/);
+  assert.match(documentXml, /Second paragraph/);
 });

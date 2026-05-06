@@ -5,6 +5,7 @@ import {
   createStoredManuscript,
   createUploadedManuscriptShell
 } from "../lib/storage/manuscripts";
+import { saveEditableManuscriptDocument } from "../lib/server/manuscriptDocument";
 import { prisma } from "../lib/prisma";
 import type { ParsedChunk, ParsedManuscript } from "../lib/types";
 
@@ -75,6 +76,64 @@ test("createUploadedManuscriptShell stores only manuscript and version", async (
   assert.equal(createdRows[0].chunkCount, 0);
   assert.match(JSON.stringify(createdRows[0].metadata), /doc-only/);
   assert.equal(createdRows[1].parserVersion, "doc-only-v1");
+});
+
+test("saveEditableManuscriptDocument autosaves edited document text", async () => {
+  const updates: Array<Record<string, unknown>> = [];
+  const savedAt = new Date("2026-05-06T10:20:00Z");
+
+  await withPatchedPrisma(
+    [
+      [
+        prisma,
+        {
+          manuscript: {
+            findUnique: async () => ({
+              id: "manuscript-1",
+              metadata: {
+                importFlow: "doc-only",
+                documentEditor: {
+                  revision: 2,
+                  note: "preserve"
+                }
+              }
+            }),
+            update: async (args: { data: Record<string, unknown> }) => {
+              updates.push(args.data);
+              return {
+                id: "manuscript-1",
+                title: "Test Manuscript",
+                originalText: args.data.originalText,
+                wordCount: args.data.wordCount,
+                updatedAt: savedAt
+              };
+            }
+          }
+        }
+      ]
+    ],
+    async () => {
+      const manuscript = await saveEditableManuscriptDocument({
+        manuscriptId: "manuscript-1",
+        text: "One\r\nTwo\t \n\nThree",
+        now: savedAt
+      });
+
+      assert.equal(manuscript.wordCount, 3);
+    }
+  );
+
+  assert.equal(updates.length, 1);
+  assert.equal(updates[0].originalText, "One\nTwo\n\nThree");
+  assert.equal(updates[0].wordCount, 3);
+
+  const metadata = updates[0].metadata as Record<string, unknown>;
+  const editor = metadata.documentEditor as Record<string, unknown>;
+
+  assert.equal(metadata.importFlow, "doc-only");
+  assert.equal(editor.revision, 3);
+  assert.equal(editor.note, "preserve");
+  assert.equal(editor.lastAutosavedAt, savedAt.toISOString());
 });
 
 test("createStoredManuscript persists large parsed manuscripts with batched createMany calls", async () => {
