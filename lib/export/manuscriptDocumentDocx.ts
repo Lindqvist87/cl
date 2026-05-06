@@ -1,6 +1,5 @@
 import {
   Document,
-  HeadingLevel,
   PageBreak,
   Packer,
   Paragraph,
@@ -17,16 +16,10 @@ export async function manuscriptDocumentToDocxBuffer(
   input: ManuscriptDocumentDocxInput
 ) {
   const pages = splitDocumentIntoPages(input.text);
-  const children = [
-    new Paragraph({
-      text: input.title,
-      heading: HeadingLevel.TITLE
-    }),
-    ...pages.flatMap((page, index) => [
+  const children = pages.flatMap((page, index) => [
       ...(index > 0 ? [pageBreakParagraph()] : []),
       ...textToDocxParagraphs(page.text)
-    ])
-  ];
+    ]);
 
   const doc = new Document({
     sections: [

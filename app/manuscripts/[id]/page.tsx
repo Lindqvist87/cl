@@ -231,14 +231,16 @@ export default async function ManuscriptPage({
         )}
       </section>
 
-      <ManuscriptDocumentEditor
-        manuscriptId={manuscript.id}
-        initialText={manuscript.originalText ?? ""}
-        initialWordCount={manuscript.wordCount}
-        initialUpdatedAt={manuscript.updatedAt.toISOString()}
-        sourceFileName={manuscript.sourceFileName}
-        downloadHref={`/api/manuscripts/${manuscript.id}/document/docx`}
-      />
+      {docOnlyMode ? (
+        <ManuscriptDocumentEditor
+          manuscriptId={manuscript.id}
+          initialText={manuscript.originalText ?? ""}
+          initialWordCount={manuscript.wordCount}
+          initialUpdatedAt={manuscript.updatedAt.toISOString()}
+          sourceFileName={manuscript.sourceFileName}
+          downloadHref={`/api/manuscripts/${manuscript.id}/document/docx`}
+        />
+      ) : null}
 
       {!docOnlyMode ? (
         <>
