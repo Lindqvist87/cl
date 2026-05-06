@@ -508,7 +508,7 @@ function ChapterOverview({
               }
               onBlur={onChapterTextBlur}
               className="mt-4 block min-h-[260px] w-full resize-y border-0 bg-transparent p-0 text-base leading-8 text-slate-800 outline-none placeholder:text-slate-400 focus:ring-0"
-              placeholder="BÃ¶rja skriva hÃ¤r..."
+              placeholder="Börja skriva här..."
             />
           </article>
         ))}
