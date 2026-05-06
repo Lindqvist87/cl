@@ -305,7 +305,7 @@ test("document chapter detection accepts sequential numeric page headings", () =
   const detection = detectDocumentChapters([
     {
       pageNumber: 1,
-      text: "1\n\nForsta kapitlet oppnar med en tydlig scen."
+      text: "1\n\nForsta kapitlet oppnar med en tydlig scen.\n\nV\n\nRomerska tecken i brodtexten ska inte bryta nummerserien."
     },
     {
       pageNumber: 2,
@@ -327,6 +327,15 @@ test("document chapter detection accepts sequential numeric page headings", () =
     detection.chapters.map((chapter) => chapter.method),
     ["numeric_sequence", "numeric_sequence", "numeric_sequence"]
   );
+  assert.deepEqual(
+    detection.chapters.map((chapter) => [chapter.startPageNumber, chapter.endPageNumber]),
+    [
+      [1, 1],
+      [2, 2],
+      [3, 3]
+    ]
+  );
+  assert.equal(detection.chapters[2].wordCount, 4);
 });
 
 test("document chapter detection accepts short headings at the top of pages", () => {

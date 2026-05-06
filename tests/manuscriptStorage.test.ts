@@ -78,6 +78,52 @@ test("createUploadedManuscriptShell stores only manuscript and version", async (
   assert.equal(createdRows[1].parserVersion, "doc-only-v1");
 });
 
+test("createUploadedManuscriptShell does not use chapter markers as title", async () => {
+  const createdRows: Array<Record<string, unknown>> = [];
+  const tx = {
+    manuscript: {
+      create: async (args: { data: Record<string, unknown> }) => {
+        const row = {
+          id: "shell-title",
+          ...args.data
+        };
+        createdRows.push(row);
+        return row;
+      }
+    },
+    manuscriptVersion: {
+      create: async (args: { data: Record<string, unknown> }) => {
+        createdRows.push({ id: "version-title", ...args.data });
+        return { id: "version-title", ...args.data };
+      }
+    }
+  };
+
+  await withPatchedPrisma(
+    [
+      [
+        prisma,
+        {
+          $transaction: async (
+            callback: (transactionClient: typeof tx) => Promise<unknown>
+          ) => callback(tx)
+        }
+      ]
+    ],
+    async () => {
+      await createUploadedManuscriptShell({
+        originalText: "1\n\nForsta kapitlet borjar.\n\n2\n\nAndra kapitlet fortsatter.",
+        sourceFileName: "Test.docx",
+        sourceMimeType:
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        sourceFormat: ManuscriptFormat.DOCX
+      });
+    }
+  );
+
+  assert.equal(createdRows[0].title, "Test");
+});
+
 test("saveEditableManuscriptDocument autosaves edited document text", async () => {
   const updates: Array<Record<string, unknown>> = [];
   const savedAt = new Date("2026-05-06T10:20:00Z");

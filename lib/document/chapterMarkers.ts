@@ -50,6 +50,11 @@ type ChapterStartCandidate = {
   priority: number;
 };
 
+type StandaloneNumberCandidate = {
+  value: number;
+  kind: "digit" | "roman";
+};
+
 const CHAPTER_HEADING =
   /^(chapter|kapitel)\s+([0-9]+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|ett|en|tv\u00e5|tva|tre|fyra|fem|sex|sju|\u00e5tta|atta|nio|tio)(?=$|[\s:.\-])[:.\-\s]*(.*)$/iu;
 const SWEDISH_ORDINAL_CHAPTER =
@@ -138,37 +143,28 @@ function findExplicitHeadingCandidates(lines: LineRef[]) {
 function findSequentialNumericCandidates(lines: LineRef[]) {
   const numericLines = lines
     .map((line) => {
-      const value = standaloneNumberValue(line.trimmed);
-      return value === null || !lineIsHeadingPosition(lines, line)
+      const candidate = standaloneNumberCandidate(line.trimmed);
+      return candidate === null || !lineIsHeadingPosition(lines, line)
         ? null
-        : { line, value };
+        : { line, ...candidate };
     })
     .filter(
-      (candidate): candidate is { line: LineRef; value: number } =>
+      (
+        candidate
+      ): candidate is {
+        line: LineRef;
+        value: number;
+        kind: StandaloneNumberCandidate["kind"];
+      } =>
         Boolean(candidate)
     );
   const starts = new Set<LineRef>();
-  let sequence: Array<{ line: LineRef; value: number }> = [];
 
-  const flush = () => {
-    if (sequence.length >= 2) {
-      sequence.forEach((candidate) => starts.add(candidate.line));
-    }
-  };
-
-  for (const candidate of numericLines) {
-    const previous = sequence[sequence.length - 1];
-
-    if (!previous || candidate.value === previous.value + 1) {
-      sequence.push(candidate);
-      continue;
-    }
-
-    flush();
-    sequence = [candidate];
+  for (const kind of ["digit", "roman"] as const) {
+    collectSequentialNumberStarts(
+      numericLines.filter((candidate) => candidate.kind === kind)
+    ).forEach((line) => starts.add(line));
   }
-
-  flush();
 
   return [...starts]
     .sort((a, b) => a.globalLineIndex - b.globalLineIndex)
@@ -228,7 +224,8 @@ function buildDetectedChapters(
         (!nextCandidate ||
           line.globalLineIndex < nextCandidate.line.globalLineIndex)
     );
-    const chapterText = rangeLines.map((line) => line.text).join("\n").trim();
+    const bodyLines = rangeLines.slice(1);
+    const chapterText = bodyLines.map((line) => line.text).join("\n").trim();
     const lastContentLine =
       [...rangeLines].reverse().find((line) => line.trimmed) ?? candidate.line;
 
@@ -239,7 +236,7 @@ function buildDetectedChapters(
       startPageNumber: candidate.line.pageNumber,
       endPageNumber: lastContentLine.pageNumber,
       wordCount: countWords(chapterText),
-      preview: chapterPreview(rangeLines.slice(1)),
+      preview: chapterPreview(bodyLines),
       confidence: candidate.confidence,
       method: candidate.method
     } satisfies DocumentChapter;
@@ -332,17 +329,52 @@ function isShortHeadingText(text: string) {
   return words > 0 && words <= 14 && text.length <= 120 && !text.includes("\t");
 }
 
-function standaloneNumberValue(text: string) {
+function standaloneNumberCandidate(
+  text: string
+): StandaloneNumberCandidate | null {
   const digitMatch = text.match(STANDALONE_DIGITS);
   if (digitMatch) {
-    return Number(digitMatch[1]);
+    return { value: Number(digitMatch[1]), kind: "digit" };
   }
 
   if (STANDALONE_ROMAN.test(text)) {
-    return romanToNumber(text.replace(/[.)]/g, ""));
+    const value = romanToNumber(text.replace(/[.)]/g, ""));
+    return value === null ? null : { value, kind: "roman" };
   }
 
   return null;
+}
+
+function collectSequentialNumberStarts(
+  candidates: Array<{
+    line: LineRef;
+    value: number;
+    kind: StandaloneNumberCandidate["kind"];
+  }>
+) {
+  const starts = new Set<LineRef>();
+  let sequence: Array<{ line: LineRef; value: number }> = [];
+
+  const flush = () => {
+    if (sequence.length >= 2) {
+      sequence.forEach((candidate) => starts.add(candidate.line));
+    }
+  };
+
+  for (const candidate of candidates) {
+    const previous = sequence[sequence.length - 1];
+
+    if (!previous || candidate.value === previous.value + 1) {
+      sequence.push(candidate);
+      continue;
+    }
+
+    flush();
+    sequence = [candidate];
+  }
+
+  flush();
+  return [...starts];
 }
 
 function romanToNumber(value: string) {

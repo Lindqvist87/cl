@@ -40,6 +40,10 @@ const MANUSCRIPT_UPLOAD_TRANSACTION = {
   maxWait: 10_000,
   timeout: 120_000
 } as const;
+const STANDALONE_CHAPTER_NUMBER =
+  /^([0-9]{1,3}|[ivxlcdm]{1,8})[.)]?$/iu;
+const CHAPTER_TITLE_MARKER =
+  /^(chapter|kapitel)\s+([0-9]+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|ett|en|tv\u00e5|tva|tre|fyra|fem|sex|sju|\u00e5tta|atta|nio|tio)(?=$|[\s:.\-])/iu;
 
 export async function createStoredManuscript(input: CreateManuscriptInput) {
   const parsedManifest = importManifestFromMetadata(input.parsed.metadata);
@@ -270,17 +274,29 @@ async function createManyInBatches<T>(
 }
 
 function inferManuscriptTitle(text: string, sourceFileName: string) {
-  const firstShortParagraph = text
+  const firstParagraph = text
     .split(/\n{2,}/)
     .map((paragraph) => paragraph.trim())
-    .find((paragraph) => {
-      const words = countWords(paragraph);
-      return words > 0 && words <= 14 && paragraph.length <= 120;
-    });
+    .find((paragraph) => countWords(paragraph) > 0);
+  const firstParagraphWords = firstParagraph ? countWords(firstParagraph) : 0;
 
-  if (firstShortParagraph) {
-    return firstShortParagraph;
+  if (
+    firstParagraph &&
+    firstParagraphWords <= 14 &&
+    firstParagraph.length <= 120 &&
+    !looksLikeChapterTitleMarker(firstParagraph)
+  ) {
+    return firstParagraph;
   }
 
   return sourceFileName.replace(/\.docx$/i, "").replace(/[_-]+/g, " ");
+}
+
+function looksLikeChapterTitleMarker(text: string) {
+  const normalized = text.trim();
+
+  return (
+    STANDALONE_CHAPTER_NUMBER.test(normalized) ||
+    CHAPTER_TITLE_MARKER.test(normalized)
+  );
 }
