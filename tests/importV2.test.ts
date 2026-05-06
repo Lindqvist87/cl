@@ -282,19 +282,20 @@ test("upload extraction rejects mismatched archive signatures", async () => {
           type: "text/plain"
         })
       ),
-    /DOCX\/ZIP archive/
+    /Upload a \.docx manuscript/
   );
 });
 
-test("upload extraction accepts plain text that starts with PK letters", async () => {
-  const extracted = await extractTextFromUpload(
-    new File(["PK stood at the door.\n\nThe scene continued."], "pk.txt", {
-      type: "text/plain"
-    })
+test("upload extraction rejects plain text uploads in doc-only mode", async () => {
+  await assert.rejects(
+    () =>
+      extractTextFromUpload(
+        new File(["PK stood at the door.\n\nThe scene continued."], "pk.txt", {
+          type: "text/plain"
+        })
+      ),
+    /Upload a \.docx manuscript/
   );
-
-  assert.equal(extracted.format, "TXT");
-  assert.match(extracted.text, /^PK stood/);
 });
 
 test("import invalidation detects parser/source/structure changes", () => {

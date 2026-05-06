@@ -69,11 +69,12 @@ test("createUploadedManuscriptShell stores only manuscript and version", async (
 
   assert.deepEqual(childWrites, []);
   assert.equal(createdRows.length, 2);
-  assert.equal(createdRows[0].status, "IMPORT_QUEUED");
+  assert.equal(createdRows[0].status, "UPLOADED");
   assert.equal(createdRows[0].analysisStatus, "NOT_STARTED");
   assert.equal(createdRows[0].chapterCount, 0);
   assert.equal(createdRows[0].chunkCount, 0);
-  assert.equal(createdRows[1].parserVersion, "compiler-shell-v1");
+  assert.match(JSON.stringify(createdRows[0].metadata), /doc-only/);
+  assert.equal(createdRows[1].parserVersion, "doc-only-v1");
 });
 
 test("createStoredManuscript persists large parsed manuscripts with batched createMany calls", async () => {

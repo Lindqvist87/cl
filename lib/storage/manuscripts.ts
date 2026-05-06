@@ -206,7 +206,7 @@ export async function createUploadedManuscriptShell(
     inferManuscriptTitle(originalText, input.sourceFileName);
   const metadata = {
     compilerVersion: "compiler-v1",
-    importFlow: "shell",
+    importFlow: "doc-only",
     sourceFileName: input.sourceFileName,
     sourceMimeType: input.sourceMimeType,
     sourceFormat: input.sourceFormat,
@@ -230,7 +230,7 @@ export async function createUploadedManuscriptShell(
         chapterCount: 0,
         paragraphCount: 0,
         chunkCount: 0,
-        status: "IMPORT_QUEUED",
+        status: "UPLOADED",
         analysisStatus: "NOT_STARTED",
         metadata: jsonInput(
           importManifest
@@ -246,7 +246,7 @@ export async function createUploadedManuscriptShell(
         versionNumber: 1,
         sourceText: originalText,
         sourceHash,
-        parserVersion: importManifest?.parserVersion ?? "compiler-shell-v1"
+        parserVersion: importManifest?.parserVersion ?? "doc-only-v1"
       }
     });
 
@@ -280,5 +280,5 @@ function inferManuscriptTitle(text: string, sourceFileName: string) {
     return firstShortParagraph;
   }
 
-  return sourceFileName.replace(/\.(docx|txt)$/i, "").replace(/[_-]+/g, " ");
+  return sourceFileName.replace(/\.docx$/i, "").replace(/[_-]+/g, " ");
 }
