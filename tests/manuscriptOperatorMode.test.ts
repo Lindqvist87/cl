@@ -10,7 +10,8 @@ import {
   analysisStatusLabel,
   isManualQueuedAnalysisMode,
   manuscriptManualRunEndpoint,
-  operatorToolsVisibilityFromEnv
+  operatorToolsVisibilityFromEnv,
+  shouldAutoRunQueuedAnalysisAfterUpload
 } from "../lib/pipeline/operatorMode";
 
 test("preview production environment shows the safe operator runner", () => {
@@ -66,6 +67,86 @@ test("manual manuscript runner targets the server-side run-jobs endpoint", () =>
   );
 });
 
+test("upload autorun starts for explicit queued upload redirects", () => {
+  assert.equal(
+    shouldAutoRunQueuedAnalysisAfterUpload({
+      requested: true,
+      analysisReady: false,
+      showOperatorTools: true,
+      pipelineStatus: queuedPipelineStatus()
+    }),
+    true
+  );
+  assert.equal(
+    shouldAutoRunQueuedAnalysisAfterUpload({
+      requested: true,
+      analysisReady: false,
+      showOperatorTools: false,
+      pipelineStatus: queuedPipelineStatus()
+    }),
+    true
+  );
+  assert.equal(
+    shouldAutoRunQueuedAnalysisAfterUpload({
+      requested: true,
+      analysisReady: true,
+      showOperatorTools: true,
+      pipelineStatus: queuedPipelineStatus()
+    }),
+    false
+  );
+  assert.equal(
+    shouldAutoRunQueuedAnalysisAfterUpload({
+      requested: true,
+      analysisReady: false,
+      showOperatorTools: true,
+      pipelineStatus: {
+        ...queuedPipelineStatus(),
+        currentJobStatus: PIPELINE_JOB_STATUS.RETRYING,
+        jobCounts: {
+          queued: 0,
+          running: 0,
+          blocked: 14,
+          failed: 0,
+          completed: 3
+        }
+      }
+    }),
+    true
+  );
+  assert.equal(
+    shouldAutoRunQueuedAnalysisAfterUpload({
+      requested: true,
+      analysisReady: false,
+      showOperatorTools: true,
+      pipelineStatus: {
+        ...queuedPipelineStatus(),
+        jobCounts: {
+          ...queuedPipelineStatus().jobCounts,
+          queued: 0,
+          running: 1
+        }
+      }
+    }),
+    false
+  );
+  assert.equal(
+    shouldAutoRunQueuedAnalysisAfterUpload({
+      requested: true,
+      analysisReady: false,
+      showOperatorTools: true,
+      pipelineStatus: {
+        ...queuedPipelineStatus(),
+        jobCounts: {
+          ...queuedPipelineStatus().jobCounts,
+          failed: 1
+        }
+      }
+    }),
+    false
+  );
+});
+
 test("operator visibility model never includes secret values", () => {
   const visibility = operatorToolsVisibilityFromEnv({
     NODE_ENV: "production",
@@ -95,6 +176,34 @@ test("manual queued progress copy does not imply active background work", () => 
   assert.match(markup, /Analys köad/);
   assert.match(markup, /Väntar på körning/);
   assert.doesNotMatch(markup, /Analysen pågår/);
+});
+
+test("manual queued retrying progress is not shown as a terminal failure", () => {
+  const markup = renderToStaticMarkup(
+    createElement(LivePipelineProgress, {
+      manuscriptId: "manuscript-1",
+      initialStatus: {
+        ...queuedPipelineStatus(),
+        currentStep: "createEmbeddingsForChunks",
+        completedSteps: 3,
+        percent: 17,
+        currentJobStatus: PIPELINE_JOB_STATUS.RETRYING,
+        lastError: "Embedding API timed out.",
+        jobCounts: {
+          queued: 0,
+          running: 0,
+          blocked: 14,
+          failed: 0,
+          completed: 3
+        }
+      },
+      analysisStatus: "RUNNING",
+      manualQueuedMode: true
+    })
+  );
+
+  assert.match(markup, /Analys k/);
+  assert.doesNotMatch(markup, /Analysen kunde inte slutf/);
 });
 
 function queuedPipelineStatus(): PipelineStatusDisplay {

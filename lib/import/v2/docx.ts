@@ -21,8 +21,9 @@ const CHAPTER_HEADING =
   /^(chapter|kapitel)\s+([0-9]+|[ivxlcdm]+|one|two|three|four|five|six|seven|eight|nine|ten|ett|en|tv\u00e5|tva|tre|fyra|fem|sex|sju|\u00e5tta|atta|nio|tio)(?=$|[\s:.\-])[:.\-\s]*(.*)$/iu;
 const SWEDISH_ORDINAL_CHAPTER =
   /^(f\u00f6rsta|forsta|andra|tredje|fj\u00e4rde|fjarde|femte|sj\u00e4tte|sjatte|sjunde|\u00e5ttonde|attonde|nionde|tionde)\s+kapitlet(?:\s*[:.\-]\s*(.*))?$/iu;
-const STANDALONE_NUMBER_OR_ROMAN =
-  /^([0-9]{1,3}|[ivxlcdm]{1,8})[.)]?$/iu;
+const STANDALONE_DIGITS = /^([0-9]{1,3})[.)]?$/u;
+const STANDALONE_ROMAN =
+  /^(?=[ivxlcdm]{1,8}[.)]?$)m{0,4}(cm|cd|d?c{0,3})(xc|xl|l?x{0,3})(ix|iv|v?i{0,3})[.)]?$/iu;
 const NAMED_FRONT_BACK = /^(prologue|prolog|epilogue|epilog)$/iu;
 const SCENE_BREAK = /^(\*{3,}|#{1,3}|-{3,}|~{3,}|\u00a7)$/u;
 
@@ -58,6 +59,8 @@ export async function parseDocxToImportManifest(input: {
   const parsed = parser.parse(documentXml);
   const body = record(parsed.document).body;
   const paragraphs = collectParagraphs(body, "word/document.xml/body");
+  const standaloneRomanChapterParagraphs =
+    findSequentialStandaloneRomanParagraphs(paragraphs);
   const blocks: Array<
     Omit<ManuscriptIRBlock, "textHash" | "warnings"> & {
       warnings?: ImportWarning[];
@@ -146,7 +149,11 @@ export async function parseDocxToImportManifest(input: {
     const list = listInfo(p);
     const styledHeadingLevel = headingLevelFromStyle(styleId, styleName);
     const inferredHeading = !list
-      ? inferUnstyledHeading(text, paragraph.inTable)
+      ? inferUnstyledHeading(
+          text,
+          paragraph.inTable,
+          standaloneRomanChapterParagraphs.has(paragraph.paragraphIndex)
+        )
       : null;
     const headingLevel = styledHeadingLevel ?? inferredHeading?.headingLevel;
     const sceneBreak = SCENE_BREAK.test(text.trim());
@@ -483,7 +490,11 @@ function headingTypeFromText(
   return headingLevel === 2 ? "section" : "unknown";
 }
 
-function inferUnstyledHeading(text: string, inTable: boolean) {
+function inferUnstyledHeading(
+  text: string,
+  inTable: boolean,
+  romanSequenceCandidate = false
+) {
   if (inTable) {
     return null;
   }
@@ -511,7 +522,10 @@ function inferUnstyledHeading(text: string, inTable: boolean) {
     };
   }
 
-  if (STANDALONE_NUMBER_OR_ROMAN.test(trimmed)) {
+  if (
+    STANDALONE_DIGITS.test(trimmed) ||
+    (romanSequenceCandidate && STANDALONE_ROMAN.test(trimmed))
+  ) {
     return {
       confidence: 0.72,
       headingType: "chapter" as const,
@@ -528,6 +542,89 @@ function inferUnstyledHeading(text: string, inTable: boolean) {
   }
 
   return null;
+}
+
+function findSequentialStandaloneRomanParagraphs(paragraphs: DocxParagraphRef[]) {
+  const starts = new Set<number>();
+  const candidates = paragraphs
+    .map((paragraph) => {
+      if (paragraph.inTable) {
+        return null;
+      }
+
+      const value = standaloneRomanValue(
+        extractParagraphText(paragraph.value).trim()
+      );
+
+      return value
+        ? { paragraphIndex: paragraph.paragraphIndex, value }
+        : null;
+    })
+    .filter(
+      (
+        candidate
+      ): candidate is { paragraphIndex: number; value: number } =>
+        Boolean(candidate)
+    );
+  let sequence: Array<{ paragraphIndex: number; value: number }> = [];
+
+  const flush = () => {
+    if (sequence.length >= 2) {
+      sequence.forEach((candidate) => starts.add(candidate.paragraphIndex));
+    }
+  };
+
+  for (const candidate of candidates) {
+    const previous = sequence[sequence.length - 1];
+
+    if (!previous || candidate.value === previous.value + 1) {
+      sequence.push(candidate);
+      continue;
+    }
+
+    flush();
+    sequence = [candidate];
+  }
+
+  flush();
+  return starts;
+}
+
+function standaloneRomanValue(text: string) {
+  const trimmed = text.trim();
+
+  if (!STANDALONE_ROMAN.test(trimmed)) {
+    return null;
+  }
+
+  return romanToNumber(trimmed.replace(/[.)]/g, ""));
+}
+
+function romanToNumber(value: string) {
+  const values: Record<string, number> = {
+    i: 1,
+    v: 5,
+    x: 10,
+    l: 50,
+    c: 100,
+    d: 500,
+    m: 1000
+  };
+  const normalized = value.toLowerCase();
+  let total = 0;
+  let previous = 0;
+
+  for (let index = normalized.length - 1; index >= 0; index -= 1) {
+    const current = values[normalized[index]];
+    if (!current) {
+      return null;
+    }
+
+    total += current < previous ? -current : current;
+    previous = current;
+  }
+
+  return total > 0 ? total : null;
 }
 
 function listInfo(paragraph: Record<string, unknown>) {

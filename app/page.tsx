@@ -1,9 +1,10 @@
 import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
-import { ArrowRight, FileText, Map, ShieldCheck, Sparkles } from "lucide-react";
+import { ArrowRight, Eye, FileText, ShieldCheck, Sparkles } from "lucide-react";
 import copy from "@/content/app-copy.json";
 import { prisma } from "@/lib/prisma";
 import { UploadForm } from "@/components/UploadForm";
+import { isDocOnlyManuscript } from "@/lib/manuscripts/docOnly";
 
 export const dynamic = "force-dynamic";
 
@@ -58,14 +59,14 @@ export default async function DashboardPage() {
         <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_360px] lg:items-start">
           <div className="max-w-3xl">
             <p className="text-sm font-semibold text-accent/90">
-              Starta nytt manus
+              Starta med dokumentet
             </p>
             <h1 className="mt-4 max-w-2xl text-4xl font-semibold tracking-normal text-ink sm:text-5xl">
-              Ladda upp ditt manus
+              Ladda upp ditt dokument
             </h1>
             <p className="mt-5 max-w-2xl text-base leading-8 text-slate-700 sm:text-lg">
-              Få en redaktionell översikt, prioriterade förbättringsområden och
-              ett tydligt första steg.
+              Vi börjar om från en ren doc-väg: dokumentet laddas upp, sparas
+              och visas direkt på sidan.
             </p>
 
             <div className="mt-8">
@@ -94,17 +95,17 @@ export default async function DashboardPage() {
               <ManuscriptStep
                 icon={FileText}
                 label="1"
-                title="Vi läser in manuset"
+                title="Du laddar upp DOCX"
               />
               <ManuscriptStep
-                icon={Map}
+                icon={ShieldCheck}
                 label="2"
-                title="Vi skapar en redaktionell karta"
+                title="Vi sparar dokumentet"
               />
               <ManuscriptStep
-                icon={ArrowRight}
+                icon={Eye}
                 label="3"
-                title="Du får veta var du bör börja"
+                title="Du ser dokumentet"
               />
             </div>
           </aside>
@@ -120,7 +121,7 @@ export default async function DashboardPage() {
               {copy.dashboard.sectionTitle}
             </h2>
             <p className="mt-1 text-sm text-muted">
-              Dina uppladdade manus samlade som redaktionella projekt.
+              Dina uppladdade dokument samlade på ett ställe.
             </p>
           </div>
           <Link href="/#nytt-manus" className="secondary-button min-h-9 px-3">
@@ -223,6 +224,8 @@ function ManuscriptProjectCard({
 }: {
   manuscript: DashboardManuscript;
 }) {
+  const docOnly = isDocOnlyManuscript(manuscript);
+
   return (
     <article className="grid gap-4 rounded-lg border border-line bg-white p-4 shadow-[0_12px_28px_rgba(23,23,23,0.045)] transition hover:border-accent/20 hover:shadow-panel lg:grid-cols-[1fr_auto] lg:items-center">
       <div className="flex min-w-0 gap-4">
@@ -241,24 +244,32 @@ function ManuscriptProjectCard({
               label={copy.dashboard.metrics.words}
               value={manuscript.wordCount.toLocaleString()}
             />
-            <StatusBadge status={manuscript.analysisStatus} />
+            <StatusBadge
+              status={docOnly ? "UPLOADED" : manuscript.analysisStatus}
+            />
           </div>
         </div>
       </div>
       <div className="flex flex-col gap-2 sm:flex-row lg:justify-end">
         <Link
-          href={`/manuscripts/${manuscript.id}/workspace`}
+          href={
+            docOnly
+              ? `/manuscripts/${manuscript.id}`
+              : `/manuscripts/${manuscript.id}/workspace`
+          }
           className="primary-button min-h-10 px-4"
         >
-          Öppna arbetsyta
+          {docOnly ? "Visa dokument" : "Öppna arbetsyta"}
           <ArrowRight size={16} aria-hidden="true" />
         </Link>
-        <Link
-          href={`/manuscripts/${manuscript.id}`}
-          className="secondary-button min-h-10 px-4"
-        >
-          Översikt
-        </Link>
+        {!docOnly ? (
+          <Link
+            href={`/manuscripts/${manuscript.id}`}
+            className="secondary-button min-h-10 px-4"
+          >
+            Översikt
+          </Link>
+        ) : null}
       </div>
     </article>
   );
@@ -281,6 +292,8 @@ function StatusBadge({ status }: { status: string }) {
         ? "border-accent/20 bg-accent/10 text-accent"
         : status === "FAILED"
           ? "border-danger/20 bg-red-50 text-danger"
+          : status === "UPLOADED"
+            ? "border-success/20 bg-green-50 text-success"
           : "border-line bg-paper-alt text-slate-600";
 
   return (
@@ -297,7 +310,8 @@ function formatStatus(status: string) {
     COMPLETED: "Analysen är klar",
     FAILED: "Behöver ses över",
     NOT_STARTED: "Utkast skapat",
-    RUNNING: "Analysen pågår"
+    RUNNING: "Analysen pågår",
+    UPLOADED: "Dokument uppladdat"
   };
 
   return labels[status] ?? "Behöver ses över";

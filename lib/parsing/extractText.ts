@@ -10,7 +10,7 @@ import {
   TEXT_IMPORT_PARSER_VERSION,
   type ImportManifest
 } from "@/lib/import/v2/types";
-import { countWords, normalizeWhitespace } from "@/lib/text/wordCount";
+import { countWords } from "@/lib/text/wordCount";
 
 export const MAX_MANUSCRIPT_UPLOAD_BYTES = 25 * 1024 * 1024;
 
@@ -30,7 +30,7 @@ export type ExtractedManuscriptText = {
   importManifest?: ImportManifest;
 };
 
-type UploadFormat = "txt" | "docx";
+type UploadFormat = "docx";
 
 export function validateManuscriptUploadFile(file: File) {
   if (file.size <= 0) {
@@ -64,23 +64,6 @@ export async function extractTextFromUpload(file: File): Promise<ExtractedManusc
   const format = detectUploadFormat(file.name, mimeType);
 
   validateFormatSignature(format, buffer);
-
-  if (format === "txt") {
-    const text = normalizeWhitespace(new TextDecoder("utf-8").decode(buffer));
-    const importManifest = buildTextImportManifest({
-      rawText: text,
-      sourceFileName: file.name,
-      sourceMimeType: mimeType,
-      fileHash: hashText(buffer.toString("utf8"))
-    });
-
-    return {
-      text: importManifestToNormalizedText(importManifest),
-      format: ManuscriptFormat.TXT,
-      mimeType,
-      importManifest
-    };
-  }
 
   if (format === "docx") {
     try {
@@ -141,7 +124,7 @@ export async function extractTextFromUpload(file: File): Promise<ExtractedManusc
     }
   }
 
-  throw new Error("Unsupported file type. Upload a .txt or .docx manuscript.");
+  throw new Error("Unsupported file type. Upload a .docx manuscript.");
 }
 
 function detectUploadFormat(
@@ -150,17 +133,14 @@ function detectUploadFormat(
 ): UploadFormat {
   const fileName = sourceFileName.toLowerCase();
   const mimeType = (sourceMimeType ?? "").toLowerCase();
-  const extensionFormat = fileName.endsWith(".txt")
-    ? "txt"
-    : fileName.endsWith(".docx")
-      ? "docx"
-      : null;
-  const mimeFormat =
-    mimeType === "text/plain"
-      ? "txt"
-      : mimeType === DOCX_MIME_TYPE
-        ? "docx"
-        : null;
+  const extensionFormat = fileName.endsWith(".docx") ? "docx" : null;
+  const mimeFormat = mimeType === DOCX_MIME_TYPE ? "docx" : null;
+  const hasUnsupportedNamedExtension =
+    /\.[a-z0-9]+$/i.test(fileName) && !extensionFormat;
+
+  if (hasUnsupportedNamedExtension) {
+    throw new Error("Unsupported file type. Upload a .docx manuscript.");
+  }
 
   if (extensionFormat && mimeFormat && extensionFormat !== mimeFormat) {
     throw new Error(
@@ -169,29 +149,36 @@ function detectUploadFormat(
   }
 
   if (mimeType && !mimeFormat && !GENERIC_BINARY_MIME_TYPES.has(mimeType)) {
-    throw new Error("Unsupported file type. Upload a .txt or .docx manuscript.");
+    throw new Error("Unsupported file type. Upload a .docx manuscript.");
   }
 
   const format = extensionFormat ?? mimeFormat;
   if (!format) {
-    throw new Error("Unsupported file type. Upload a .txt or .docx manuscript.");
+    throw new Error("Unsupported file type. Upload a .docx manuscript.");
   }
 
   return format;
 }
 
 function validateFormatSignature(format: UploadFormat, buffer: Buffer) {
-  const looksLikeZip = buffer.length >= 2 && buffer[0] === 0x50 && buffer[1] === 0x4b;
+  const looksLikeZip = hasZipSignature(buffer);
 
   if (format === "docx" && !looksLikeZip) {
     throw new Error("The DOCX file does not look like a valid .docx archive.");
   }
 
-  if (format === "txt" && looksLikeZip) {
-    throw new Error(
-      "The uploaded file looks like a DOCX/ZIP archive, not a plain text manuscript."
-    );
+}
+
+function hasZipSignature(buffer: Buffer) {
+  if (buffer.length < 4 || buffer[0] !== 0x50 || buffer[1] !== 0x4b) {
+    return false;
   }
+
+  return (
+    (buffer[2] === 0x03 && buffer[3] === 0x04) ||
+    (buffer[2] === 0x05 && buffer[3] === 0x06) ||
+    (buffer[2] === 0x07 && buffer[3] === 0x08)
+  );
 }
 
 async function docxCoverageGuard(input: {

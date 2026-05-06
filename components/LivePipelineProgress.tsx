@@ -39,13 +39,15 @@ export function LivePipelineProgress({
   initialStatus,
   analysisStatus,
   manualQueuedMode = false,
-  showTechnicalDetails = false
+  showTechnicalDetails = false,
+  autoRunEndpoint = null
 }: {
   manuscriptId: string;
   initialStatus: PipelineStatusDisplay;
   analysisStatus?: string;
   manualQueuedMode?: boolean;
   showTechnicalDetails?: boolean;
+  autoRunEndpoint?: string | null;
 }) {
   const [status, setStatus] = useState(initialStatus);
   const [diagnostics, setDiagnostics] =
@@ -58,6 +60,9 @@ export function LivePipelineProgress({
   const [optimisticPhase, setOptimisticPhase] =
     useState<OptimisticPhase>(null);
   const refreshInFlightRef = useRef(false);
+  const autoRunStartedRef = useRef(false);
+  const autoRunInFlightRef = useRef(false);
+  const autoRunRetryKeyRef = useRef<string | null>(null);
 
   useEffect(() => {
     setStatus(initialStatus);
@@ -71,8 +76,12 @@ export function LivePipelineProgress({
     [diagnostics, status]
   );
   const shouldPoll = shouldPollPipelineDiagnostics(pollingSnapshot);
+  const retryReadyAtMs = retryReadyAtFromDiagnostics(diagnostics);
+  const waitingForRetryReadyAt =
+    retryReadyAtMs !== null && retryReadyAtMs > Date.now();
   const waitingForManualRun =
     manualQueuedMode &&
+    !waitingForRetryReadyAt &&
     !status.complete &&
     !autoRunnerActive &&
     optimisticPhase === null &&
@@ -85,6 +94,7 @@ export function LivePipelineProgress({
     status.currentJobStatus !== "FAILED";
   const liveShouldPoll =
     (waitingForManualRun ? false : shouldPoll) ||
+    waitingForRetryReadyAt ||
     analysisIsRunning ||
     autoRunnerActive ||
     optimisticPhase === "starting" ||
@@ -93,11 +103,16 @@ export function LivePipelineProgress({
     diagnostics?.state === "blocked_by_error" ||
     analysisStatus?.toUpperCase() === "FAILED" ||
     status.currentJobStatus === "FAILED" ||
-    Boolean(status.lastError && !liveShouldPoll);
+    Boolean(
+      status.lastError &&
+        !liveShouldPoll &&
+        !isRecoverableJobStatus(status.currentJobStatus)
+    );
   const isWaitingForNextPhase =
     !isBlockedByError &&
     (status.currentJobStatus === "BLOCKED" ||
       diagnostics?.manualRunner?.reason === "waiting_for_lock_expiry" ||
+      diagnostics?.manualRunner?.reason === "waiting_for_retry_ready_at" ||
       (diagnostics?.state === "more_work_remains" &&
         !diagnostics.nextEligibleJob &&
         (diagnostics.remainingJobCount ?? 0) > 0));
@@ -275,6 +290,135 @@ export function LivePipelineProgress({
       );
     };
   }, [manuscriptId, manualQueuedMode, refreshDiagnostics]);
+
+  const runAutomaticAttempt = useCallback(
+    async (
+      endpoint: string,
+      options: {
+        clearAutoRunSearch?: boolean;
+        isCancelled?: () => boolean;
+      } = {}
+    ) => {
+      if (autoRunInFlightRef.current || options.isCancelled?.()) {
+        return;
+      }
+
+      autoRunInFlightRef.current = true;
+      let completedAttempt = false;
+      let result: unknown = null;
+
+      setAutoRunnerActive(true);
+      setOptimisticPhase("starting");
+      setManualNotice(null);
+
+      try {
+        const response = await fetch(endpoint, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({})
+        });
+        result = await response.json().catch(() => ({}));
+
+        if (!response.ok) {
+          const record = recordFromUnknown(result);
+          throw new Error(
+            typeof record.error === "string"
+              ? record.error
+              : "Analysen kunde inte startas automatiskt."
+          );
+        }
+
+        if (options.isCancelled?.()) {
+          return;
+        }
+
+        setManualNotice(manualNoticeFromResult(result));
+        setOptimisticPhase("running");
+        await refreshDiagnostics();
+        completedAttempt = true;
+      } catch (error) {
+        if (options.isCancelled?.()) {
+          return;
+        }
+
+        setFetchError(
+          error instanceof Error
+            ? error.message
+            : "Analysen kunde inte startas automatiskt."
+        );
+        setOptimisticPhase(null);
+      } finally {
+        autoRunInFlightRef.current = false;
+        if (!options.isCancelled?.()) {
+          setAutoRunnerActive(false);
+          if (
+            completedAttempt &&
+            options.clearAutoRunSearch &&
+            !resultHasRemainingWork(result)
+          ) {
+            clearAutoRunSearchParam();
+          }
+        }
+      }
+    },
+    [refreshDiagnostics]
+  );
+
+  useEffect(() => {
+    if (!autoRunEndpoint || autoRunStartedRef.current || status.complete) {
+      return;
+    }
+
+    autoRunStartedRef.current = true;
+    const endpoint = autoRunEndpoint;
+    let cancelled = false;
+
+    void runAutomaticAttempt(endpoint, {
+      clearAutoRunSearch: true,
+      isCancelled: () => cancelled
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    autoRunEndpoint,
+    manuscriptId,
+    runAutomaticAttempt,
+    status.complete
+  ]);
+
+  useEffect(() => {
+    if (!autoRunEndpoint || retryReadyAtMs === null || status.complete) {
+      return;
+    }
+
+    const retryKey = `${autoRunEndpoint}:${retryReadyAtMs}`;
+    if (autoRunRetryKeyRef.current === retryKey) {
+      return;
+    }
+
+    autoRunRetryKeyRef.current = retryKey;
+    const endpoint = autoRunEndpoint;
+    const delayMs = Math.max(0, retryReadyAtMs - Date.now() + 500);
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      void runAutomaticAttempt(endpoint, {
+        clearAutoRunSearch: false,
+        isCancelled: () => cancelled
+      });
+    }, delayMs);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [
+    autoRunEndpoint,
+    retryReadyAtMs,
+    runAutomaticAttempt,
+    status.complete
+  ]);
 
   return (
     <section className="overflow-hidden rounded-xl border border-accent/15 bg-[#fffdfc] p-4 shadow-panel sm:p-5">
@@ -660,6 +804,38 @@ function recordFromUnknown(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function retryReadyAtFromDiagnostics(
+  diagnostics: PipelineDiagnosticsResponse | null
+) {
+  if (diagnostics?.manualRunner?.reason !== "waiting_for_retry_ready_at") {
+    return null;
+  }
+
+  const blockingJob = recordFromUnknown(diagnostics.manualRunner.blockingJob);
+  const readyAt =
+    typeof blockingJob.readyAt === "string"
+      ? Date.parse(blockingJob.readyAt)
+      : NaN;
+
+  return Number.isFinite(readyAt) ? readyAt : null;
+}
+
+function resultHasRemainingWork(result: unknown) {
+  const record = recordFromUnknown(result);
+
+  return record.hasRemainingWork === true || record.moreWorkRemains === true;
+}
+
+function clearAutoRunSearchParam() {
+  const url = new URL(window.location.href);
+  url.searchParams.delete("autorun");
+  window.history.replaceState(
+    null,
+    "",
+    `${url.pathname}${url.search}${url.hash}`
+  );
+}
+
 function formatNullableStatus(status: string | null) {
   return status ? formatStatus(status) : "None";
 }
@@ -755,6 +931,15 @@ function liveStatusLabel(input: {
   }
 
   return input.liveShouldPoll ? "Analysen pågår" : "Status uppdaterad";
+}
+
+function isRecoverableJobStatus(status: string | null) {
+  return (
+    status === "QUEUED" ||
+    status === "RUNNING" ||
+    status === "RETRYING" ||
+    status === "BLOCKED"
+  );
 }
 
 function lastUpdatedLabel(value: string | null, refreshedAt: Date | null) {

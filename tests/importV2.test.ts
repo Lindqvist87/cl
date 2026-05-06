@@ -177,6 +177,51 @@ test("structured docx import infers unstyled chapters and scene breaks", async (
   assert.equal(parsed.chapters[0].scenes.length, 2);
 });
 
+test("structured docx import keeps lone roman prose inside the scene", async () => {
+  const manifest = await parseDocxToImportManifest({
+    buffer: await docxBodyFixtureBuffer(`
+    <w:p><w:r><w:t>Kapitel 1</w:t></w:r></w:p>
+    <w:p><w:r><w:t>I.</w:t></w:r></w:p>
+    <w:p><w:r><w:t>continued the narrator.</w:t></w:r></w:p>`),
+    sourceFileName: "roman-prose.docx"
+  });
+  const parsed = importManifestToParsedManuscript(manifest);
+
+  assert.equal(
+    manifest.blocks.some(
+      (block) => block.type === "heading" && block.text === "I."
+    ),
+    false
+  );
+  assert.deepEqual(
+    parsed.chapters.map((chapter) => chapter.title),
+    ["Kapitel 1"]
+  );
+  assert.equal(
+    parsed.chapters[0].scenes[0].paragraphs.some(
+      (paragraph) => paragraph.text === "I."
+    ),
+    true
+  );
+});
+
+test("structured docx import accepts sequential standalone roman chapters", async () => {
+  const manifest = await parseDocxToImportManifest({
+    buffer: await docxBodyFixtureBuffer(`
+    <w:p><w:r><w:t>I</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Roman chapter one body.</w:t></w:r></w:p>
+    <w:p><w:r><w:t>II</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Roman chapter two body.</w:t></w:r></w:p>`),
+    sourceFileName: "roman-chapters.docx"
+  });
+  const parsed = importManifestToParsedManuscript(manifest);
+
+  assert.deepEqual(
+    parsed.chapters.map((chapter) => chapter.heading),
+    ["I", "II"]
+  );
+});
+
 test("structured docx import reads styles, lists, page breaks, comments and tracked changes", async () => {
   const manifest = await parseDocxToImportManifest({
     buffer: await docxFixtureBuffer(),
@@ -237,7 +282,19 @@ test("upload extraction rejects mismatched archive signatures", async () => {
           type: "text/plain"
         })
       ),
-    /DOCX\/ZIP archive/
+    /Upload a \.docx manuscript/
+  );
+});
+
+test("upload extraction rejects plain text uploads in doc-only mode", async () => {
+  await assert.rejects(
+    () =>
+      extractTextFromUpload(
+        new File(["PK stood at the door.\n\nThe scene continued."], "pk.txt", {
+          type: "text/plain"
+        })
+      ),
+    /Upload a \.docx manuscript/
   );
 });
 
@@ -353,6 +410,14 @@ async function docxFixtureBuffer() {
 }
 
 async function unstyledDocxFixtureBuffer() {
+  return docxBodyFixtureBuffer(`
+    <w:p><w:r><w:t>Kapitel 1</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Forsta scenen borjar.</w:t></w:r></w:p>
+    <w:p><w:r><w:t>***</w:t></w:r></w:p>
+    <w:p><w:r><w:t>Andra scenen fortsatter.</w:t></w:r></w:p>`);
+}
+
+async function docxBodyFixtureBuffer(bodyXml: string) {
   const zip = new JSZip();
 
   zip.file(
@@ -360,10 +425,7 @@ async function unstyledDocxFixtureBuffer() {
     `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
   <w:body>
-    <w:p><w:r><w:t>Kapitel 1</w:t></w:r></w:p>
-    <w:p><w:r><w:t>Forsta scenen borjar.</w:t></w:r></w:p>
-    <w:p><w:r><w:t>***</w:t></w:r></w:p>
-    <w:p><w:r><w:t>Andra scenen fortsatter.</w:t></w:r></w:p>
+${bodyXml}
   </w:body>
 </w:document>`
   );

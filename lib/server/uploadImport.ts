@@ -6,14 +6,9 @@ import {
   validateManuscriptUploadFile,
   type ExtractedManuscriptText
 } from "@/lib/parsing/extractText";
-import {
-  pipelineStartHttpStatus,
-  startManuscriptPipeline
-} from "@/lib/pipeline/startPipeline";
 import { createUploadedManuscriptShell } from "@/lib/storage/manuscripts";
 
 type UploadFailurePhase = "validation" | "extraction" | "storage";
-type UploadLogPhase = UploadFailurePhase | "pipeline";
 
 type UploadedManuscriptShellForRoute = {
   id: string;
@@ -22,34 +17,18 @@ type UploadedManuscriptShellForRoute = {
   status: string;
 };
 
-type PipelineStartResultForRoute = {
-  executionMode: string;
-  accepted: boolean;
-  warnings?: string[];
-  eventError?: string | null;
-  [key: string]: unknown;
-};
-
 export type UploadRouteDependencies = {
   extractTextFromUpload: (file: File) => Promise<ExtractedManuscriptText>;
   createUploadedManuscriptShell: (
     input: Parameters<typeof createUploadedManuscriptShell>[0]
   ) => Promise<UploadedManuscriptShellForRoute>;
-  startManuscriptPipeline: (
-    input: Parameters<typeof startManuscriptPipeline>[0]
-  ) => Promise<PipelineStartResultForRoute>;
 };
 
-const PIPELINE_QUEUED_MESSAGE =
-  "Manuset är uppladdat och analysjobben är köade. Starta eller återuppta analysen via admin.";
-
-const PIPELINE_NOT_STARTED_MESSAGE =
-  "Manuset är uppladdat, men analysen startade inte automatiskt. Starta eller återuppta analysen via admin.";
+const DOC_ONLY_UPLOAD_MESSAGE = "Dokumentet är uppladdat.";
 
 const defaultUploadRouteDependencies: UploadRouteDependencies = {
   extractTextFromUpload,
-  createUploadedManuscriptShell,
-  startManuscriptPipeline
+  createUploadedManuscriptShell
 };
 
 export const uploadPostHandler = createUploadPostHandler();
@@ -144,91 +123,23 @@ export function createUploadPostHandler(
         error,
         500,
         "Unable to store uploaded manuscript."
-      );
-    }
-
-    try {
-      const pipeline = await dependencies.startManuscriptPipeline({
-        manuscriptId: manuscript.id,
-        mode: "FULL_PIPELINE",
-        requestedBy: "upload",
-        runInlineWhenInngestDisabled: false
-      });
-
-      if (pipeline.executionMode === "QUEUED") {
-        return NextResponse.json(
-          {
-            manuscriptId: manuscript.id,
-            title: manuscript.title,
-            wordCount: manuscript.wordCount,
-            status: manuscript.status,
-            executionMode: "QUEUED",
-            pipelineStarted: false,
-            pipelineQueued: true,
-            message: PIPELINE_QUEUED_MESSAGE,
-            pipeline
-          },
-          { status: 202 }
         );
-      }
-
-      if (!pipeline.accepted) {
-        const warning = pipelineWarningFromResult(pipeline);
-        logUploadFailure("pipeline", new Error(warning), warning);
-        return pipelineNotStartedResponse(manuscript, warning, pipeline);
-      }
-
-      return NextResponse.json(
-        {
-          manuscriptId: manuscript.id,
-          title: manuscript.title,
-          wordCount: manuscript.wordCount,
-          status: manuscript.status,
-          executionMode: pipeline.executionMode,
-          pipelineStarted:
-            pipeline.executionMode === "INNGEST" && pipeline.accepted === true,
-          pipelineQueued: false,
-          message: "Import started",
-          pipeline
-        },
-        { status: pipelineStartHttpStatus(pipeline) }
-      );
-    } catch (error) {
-      const { message } = errorDetails(
-        error,
-        "Unable to start background pipeline."
-      );
-      logUploadFailure("pipeline", error, message);
-      return pipelineNotStartedResponse(manuscript, message);
     }
+
+    return NextResponse.json(
+      {
+        manuscriptId: manuscript.id,
+        title: manuscript.title,
+        wordCount: manuscript.wordCount,
+        status: manuscript.status,
+        executionMode: "DOC_ONLY",
+        pipelineStarted: false,
+        pipelineQueued: false,
+        message: DOC_ONLY_UPLOAD_MESSAGE
+      },
+      { status: 201 }
+    );
   };
-}
-
-function pipelineNotStartedResponse(
-  manuscript: UploadedManuscriptShellForRoute,
-  pipelineWarning: string,
-  pipeline?: PipelineStartResultForRoute
-) {
-  return NextResponse.json(
-    {
-      manuscriptId: manuscript.id,
-      title: manuscript.title,
-      status: "IMPORT_QUEUED",
-      executionMode: pipeline?.executionMode,
-      pipelineStarted: false,
-      pipelineQueued: hasQueuedPipelineJobs(pipeline),
-      pipelineWarning,
-      message: PIPELINE_NOT_STARTED_MESSAGE,
-      pipeline
-    },
-    { status: 202 }
-  );
-}
-
-function hasQueuedPipelineJobs(pipeline?: PipelineStartResultForRoute) {
-  const jobCount = pipeline?.jobCount;
-
-  return typeof jobCount === "number" && Number.isFinite(jobCount) && jobCount > 0;
 }
 
 function uploadFailureResponse(
@@ -244,7 +155,7 @@ function uploadFailureResponse(
 }
 
 function logUploadFailure(
-  phase: UploadLogPhase,
+  phase: UploadFailurePhase,
   error: unknown,
   fallbackMessage: string
 ) {
@@ -271,16 +182,6 @@ function errorDetails(error: unknown, fallbackMessage: string) {
     message: fallbackMessage,
     stack: undefined
   };
-}
-
-function pipelineWarningFromResult(result: PipelineStartResultForRoute) {
-  const warnings = Array.isArray(result.warnings) ? result.warnings : [];
-  const parts = [result.eventError, ...warnings].filter(
-    (warning): warning is string =>
-      typeof warning === "string" && warning.trim().length > 0
-  );
-
-  return parts.join(" ") || "Background pipeline was not accepted.";
 }
 
 function textField(formData: FormData, name: string) {

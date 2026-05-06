@@ -64,6 +64,7 @@ export type PipelineJobSummary = {
   lockedBy: string | null;
   lockedAt: string | null;
   lockExpiresAt: string | null;
+  readyAt: string | null;
   stale: boolean;
 };
 
@@ -107,6 +108,7 @@ export type AutoContinueDependencies = {
   runReadyJobs?: typeof runReadyPipelineJobs;
   getSnapshot?: typeof getManuscriptAutoContinueSnapshot;
   nowMs?: () => number;
+  sleepMs?: (durationMs: number) => Promise<void>;
 };
 
 export async function autoContinueManuscriptPipeline(
@@ -132,6 +134,7 @@ export async function autoContinueManuscriptPipeline(
 
   const runReadyJobs = dependencies.runReadyJobs ?? runReadyPipelineJobs;
   const nowMs = dependencies.nowMs ?? Date.now;
+  const sleepMs = dependencies.sleepMs ?? sleep;
   const maxBatches = positiveInt(options.maxBatches, DEFAULT_MAX_BATCHES);
   const maxSeconds = positiveInt(options.maxSeconds, DEFAULT_MAX_SECONDS);
   const maxJobsPerBatch = positiveInt(
@@ -148,9 +151,11 @@ export async function autoContinueManuscriptPipeline(
   const batchSummaries: AutoContinueBatchSummary[] = [];
   let stoppedReason: AutoContinueStoppedReason | null = null;
   let blockingJob: PipelineBlockingJob | null = null;
+  let retryFollowUpPending = false;
 
   try {
-    while (batchSummaries.length < maxBatches) {
+    while (batchSummaries.length < maxBatches || retryFollowUpPending) {
+      retryFollowUpPending = false;
       const remainingMs = deadline - nowMs();
       if (remainingMs <= 0) {
         stoppedReason = "max_seconds_reached";
@@ -170,6 +175,13 @@ export async function autoContinueManuscriptPipeline(
 
       if (batch.blockingJob) {
         blockingJob = batch.blockingJob;
+      }
+
+      const retryWaitMs = retryWaitWithinDeadline(batch, nowMs(), deadline);
+      if (retryWaitMs !== null) {
+        retryFollowUpPending = true;
+        await sleepMs(retryWaitMs);
+        continue;
       }
 
       stoppedReason = stoppedReasonFromBatch(batch);
@@ -308,6 +320,28 @@ function stoppedReasonFromBatch(
   }
 
   return null;
+}
+
+function retryWaitWithinDeadline(
+  batch: RunReadyPipelineJobsResult,
+  nowMs: number,
+  deadlineMs: number
+) {
+  if (batch.reason !== "waiting_for_retry_ready_at") {
+    return null;
+  }
+
+  const readyAtMs = Date.parse(batch.blockingJob?.readyAt ?? "");
+  if (!Number.isFinite(readyAtMs)) {
+    return null;
+  }
+
+  const waitMs = Math.max(0, readyAtMs - nowMs);
+  if (nowMs + waitMs >= deadlineMs) {
+    return null;
+  }
+
+  return waitMs;
 }
 
 function isSameRunContinuablePartialResult(result: RunPipelineJobResult) {
@@ -492,6 +526,7 @@ function jobSummary(job: PipelineJob, now: Date): PipelineJobSummary {
     lockedBy: job.lockedBy,
     lockedAt: job.lockedAt?.toISOString() ?? null,
     lockExpiresAt: job.lockExpiresAt?.toISOString() ?? null,
+    readyAt: job.readyAt?.toISOString() ?? null,
     stale: isLockStale(job, now)
   };
 }
@@ -506,6 +541,7 @@ function pipelineBlockingJobFromSummary(
     lockedBy: job.lockedBy,
     lockedAt: job.lockedAt,
     lockExpiresAt: job.lockExpiresAt,
+    readyAt: job.readyAt,
     stale: job.stale
   };
 }
@@ -567,4 +603,10 @@ function positiveInt(value: number | undefined, fallback: number) {
   }
 
   return Math.max(1, Math.floor(value));
+}
+
+function sleep(durationMs: number) {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, durationMs);
+  });
 }

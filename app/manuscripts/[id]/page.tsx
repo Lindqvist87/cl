@@ -21,22 +21,26 @@ import {
 } from "@/lib/pipeline/display";
 import { getInngestRuntimeConfig } from "@/src/inngest/events";
 import { buildStructureReviewRows } from "@/lib/editorial/structureReview";
+import { isDocOnlyManuscript } from "@/lib/manuscripts/docOnly";
 import {
   MANUAL_QUEUED_ANALYSIS_COPY,
   analysisStatusLabel,
   isManualQueuedAnalysisMode,
   manuscriptManualRunEndpoint,
-  operatorToolsVisibilityFromEnv
+  operatorToolsVisibilityFromEnv,
+  shouldAutoRunQueuedAnalysisAfterUpload
 } from "@/lib/pipeline/operatorMode";
 
 export const dynamic = "force-dynamic";
 
 export default async function ManuscriptPage({
-  params
+  params,
+  searchParams
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{ autorun?: string }>;
 }) {
-  const { id } = await params;
+  const [{ id }, query] = await Promise.all([params, searchParams]);
   const operatorTools = operatorToolsVisibilityFromEnv(process.env);
   const { showDeveloperAdminTools, showOperatorTools } = operatorTools;
   const manuscript = await prisma.manuscript.findUnique({
@@ -62,6 +66,7 @@ export default async function ManuscriptPage({
   const report = manuscript.reports[0];
   const structured = report?.structured as AuditReportJson | undefined;
   const latestRun = manuscript.runs[0];
+  const docOnlyMode = isDocOnlyManuscript(manuscript);
   const latestRewritePlan = manuscript.rewritePlans[0];
   const latestRewrite = manuscript.rewrites[0];
   const rewriteDraftCount = new Set(
@@ -108,7 +113,14 @@ export default async function ManuscriptPage({
     )
   });
   const analysisReady =
-    manuscript.analysisStatus === "COMPLETED" || pipelineStatus.complete;
+    !docOnlyMode &&
+    (manuscript.analysisStatus === "COMPLETED" || pipelineStatus.complete);
+  const autoRunAfterUpload = shouldAutoRunQueuedAnalysisAfterUpload({
+    requested: !docOnlyMode && query.autorun === "1",
+    analysisReady,
+    showOperatorTools,
+    pipelineStatus
+  });
 
   return (
     <div className="space-y-6">
@@ -124,8 +136,8 @@ export default async function ManuscriptPage({
             </Link>
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <StatusBadge
-                status={manuscript.analysisStatus}
-                label={displayedAnalysisStatus}
+                status={docOnlyMode ? "UPLOADED" : manuscript.analysisStatus}
+                label={docOnlyMode ? "Dokument uppladdat" : displayedAnalysisStatus}
               />
               {latestRewritePlan ? (
                 <span className="inline-flex min-h-8 items-center rounded-full border border-line bg-paper-alt px-3 text-sm font-semibold text-slate-600">
@@ -144,46 +156,48 @@ export default async function ManuscriptPage({
                   .join(" | ")}
               </p>
             ) : null}
-            {latestRun?.error ? (
+            {!docOnlyMode && latestRun?.error ? (
               <p className="mt-4 text-sm font-semibold text-danger">
                 Analysen behöver ses över: {latestRun.error}
               </p>
             ) : null}
           </div>
 
-          <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap lg:justify-end">
-            {!analysisReady ? (
-              <AuditButton
-                manuscriptId={manuscript.id}
-                disabled={manuscript.analysisStatus === "RUNNING"}
-              />
-            ) : null}
-            <Link
-              href={`/manuscripts/${manuscript.id}/workspace`}
-              className="primary-button"
-            >
-              Öppna arbetsyta
-              <ArrowRight size={16} aria-hidden="true" />
-            </Link>
-            <Link
-              href={`/manuscripts/${manuscript.id}/structure`}
-              className="secondary-button"
-            >
-              <BookOpen size={16} aria-hidden="true" />
-              Manusstruktur
-            </Link>
-            <Link
-              href={`/manuscripts/${manuscript.id}/audit`}
-              className="secondary-button"
-            >
-              <FileText size={16} aria-hidden="true" />
-              Rapport
-            </Link>
-          </div>
+          {!docOnlyMode ? (
+            <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap lg:justify-end">
+              {!analysisReady ? (
+                <AuditButton
+                  manuscriptId={manuscript.id}
+                  disabled={manuscript.analysisStatus === "RUNNING"}
+                />
+              ) : null}
+              <Link
+                href={`/manuscripts/${manuscript.id}/workspace`}
+                className="primary-button"
+              >
+                Öppna arbetsyta
+                <ArrowRight size={16} aria-hidden="true" />
+              </Link>
+              <Link
+                href={`/manuscripts/${manuscript.id}/structure`}
+                className="secondary-button"
+              >
+                <BookOpen size={16} aria-hidden="true" />
+                Manusstruktur
+              </Link>
+              <Link
+                href={`/manuscripts/${manuscript.id}/audit`}
+                className="secondary-button"
+              >
+                <FileText size={16} aria-hidden="true" />
+                Rapport
+              </Link>
+            </div>
+          ) : null}
         </div>
       </section>
 
-      {latestRewritePlan && !rewriteDraftsComplete ? (
+      {!docOnlyMode && latestRewritePlan && !rewriteDraftsComplete ? (
         <section className="rounded-xl border border-accent/20 bg-white px-5 py-4 shadow-panel">
           <h2 className="text-sm font-semibold uppercase tracking-wide text-accent">
             Nästa steg
@@ -195,32 +209,54 @@ export default async function ManuscriptPage({
         </section>
       ) : null}
 
-      <section className="grid gap-3 sm:grid-cols-4">
+      <section
+        className={`grid gap-3 ${docOnlyMode ? "sm:grid-cols-3" : "sm:grid-cols-4"}`}
+      >
         <Stat label="Ord" value={manuscript.wordCount.toLocaleString()} />
-        <Stat label="Manusstruktur" value={String(manuscript.chapterCount)} />
-        <Stat label="Textdelar" value={String(manuscript.chunkCount)} />
-        <Stat label="Analys" value={displayedAnalysisStatus} />
+        {docOnlyMode ? (
+          <>
+            <Stat
+              label="Format"
+              value={formatManuscriptFormat(manuscript.sourceFormat)}
+            />
+            <Stat label="Status" value="Dokument uppladdat" />
+          </>
+        ) : (
+          <>
+            <Stat label="Manusstruktur" value={String(manuscript.chapterCount)} />
+            <Stat label="Textdelar" value={String(manuscript.chunkCount)} />
+            <Stat label="Analys" value={displayedAnalysisStatus} />
+          </>
+        )}
       </section>
 
-      <LivePipelineProgress
-        manuscriptId={manuscript.id}
-        initialStatus={pipelineStatus}
-        analysisStatus={manuscript.analysisStatus}
-        manualQueuedMode={manualQueuedMode}
-        showTechnicalDetails={showDeveloperAdminTools}
+      <DocumentPreview
+        text={manuscript.originalText}
+        sourceFileName={manuscript.sourceFileName}
       />
 
-      {showOperatorPanel ? (
-        <OperatorAnalysisPanel
-          manuscriptId={manuscript.id}
-          endpoint={manualRunEndpoint}
-          manualQueuedMode={manualQueuedMode}
-          inngestEnabled={inngestConfig.enabled}
-          jobCounts={jobCounts}
-        />
-      ) : null}
+      {!docOnlyMode ? (
+        <>
+          <LivePipelineProgress
+            manuscriptId={manuscript.id}
+            initialStatus={pipelineStatus}
+            analysisStatus={manuscript.analysisStatus}
+            manualQueuedMode={manualQueuedMode}
+            showTechnicalDetails={showDeveloperAdminTools}
+            autoRunEndpoint={autoRunAfterUpload ? manualRunEndpoint : null}
+          />
 
-      <section className="grid gap-6 lg:grid-cols-[minmax(520px,0.9fr)_1fr]">
+          {showOperatorPanel ? (
+            <OperatorAnalysisPanel
+              manuscriptId={manuscript.id}
+              endpoint={manualRunEndpoint}
+              manualQueuedMode={manualQueuedMode}
+              inngestEnabled={inngestConfig.enabled}
+              jobCounts={jobCounts}
+            />
+          ) : null}
+
+          <section className="grid gap-6 lg:grid-cols-[minmax(520px,0.9fr)_1fr]">
         <StructureReviewPanel
           rows={structureRows}
           title="Manusstruktur"
@@ -262,8 +298,8 @@ export default async function ManuscriptPage({
         </div>
       </section>
 
-      {showDeveloperAdminTools ? (
-        <details className="detail-toggle">
+          {showDeveloperAdminTools ? (
+            <details className="detail-toggle">
           <summary className="flex cursor-pointer items-center gap-2 px-5 py-4 text-sm font-semibold text-ink hover:text-accent">
             <Settings2 size={16} aria-hidden="true" />
             Adminverktyg
@@ -375,7 +411,9 @@ export default async function ManuscriptPage({
               </details>
             ) : null}
           </div>
-        </details>
+            </details>
+          ) : null}
+        </>
       ) : null}
     </div>
   );
@@ -388,6 +426,44 @@ function Stat({ label, value }: { label: string; value: string }) {
       <div className="mt-2 text-xl font-semibold">{value}</div>
     </div>
   );
+}
+
+function DocumentPreview({
+  text,
+  sourceFileName
+}: {
+  text: string | null;
+  sourceFileName: string;
+}) {
+  const content = text?.trim();
+
+  return (
+    <section className="border border-line bg-white shadow-panel">
+      <div className="border-b border-line px-5 py-4">
+        <h2 className="text-sm font-semibold uppercase tracking-wide text-slate-600">
+          Dokument
+        </h2>
+        <p className="mt-1 text-sm text-muted">{sourceFileName}</p>
+      </div>
+      <div className="bg-[#FAFAF7] px-3 py-4 sm:px-6 sm:py-7">
+        <article className="mx-auto min-h-[520px] max-w-3xl border border-line bg-white px-5 py-7 shadow-[0_18px_42px_rgba(23,23,23,0.08)] sm:px-10 sm:py-11">
+          {content ? (
+            <div className="whitespace-pre-wrap text-base leading-8 text-slate-800">
+              {content}
+            </div>
+          ) : (
+            <p className="text-sm leading-6 text-slate-600">
+              Dokumentet är uppladdat, men ingen läsbar text kunde visas.
+            </p>
+          )}
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function formatManuscriptFormat(format: string) {
+  return format === "DOCX" ? "DOCX" : format;
 }
 
 function OperatorAnalysisPanel({
@@ -571,6 +647,8 @@ function StatusBadge({ status, label }: { status: string; label?: string }) {
         ? "border-accent/20 bg-accent/10 text-accent"
         : status === "FAILED"
           ? "border-danger/20 bg-red-50 text-danger"
+          : status === "UPLOADED"
+            ? "border-success/20 bg-green-50 text-success"
           : "border-line bg-paper-alt text-slate-600";
 
   return (
@@ -594,7 +672,8 @@ function formatStatus(status: string) {
     NOT_STARTED: "Utkast skapat",
     QUEUED: "Väntar",
     REJECTED: "Avvisad",
-    RUNNING: "Analysen pågår"
+    RUNNING: "Analysen pågår",
+    UPLOADED: "Dokument uppladdat"
   };
 
   return labels[status] ?? status.toLowerCase().replace(/_/g, " ");

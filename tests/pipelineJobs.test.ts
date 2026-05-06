@@ -732,6 +732,85 @@ test("zero ready jobs with unfinished work returns a specific runner reason", as
   );
 });
 
+test("zero ready retrying jobs report the retry backoff window", async () => {
+  const retryReadyAt = new Date("2099-04-29T05:10:00Z");
+  const jobs: MutableJob[] = [
+    mutableJob("retrying-embeddings", {
+      type: "createEmbeddingsForChunks",
+      status: PIPELINE_JOB_STATUS.RETRYING,
+      idempotencyKey: "retrying-embeddings",
+      readyAt: retryReadyAt,
+      error: "Embedding API timed out."
+    })
+  ];
+
+  await withPatchedPrisma(
+    [
+      [prisma.pipelineJob, pipelineJobPatch(jobs)],
+      [
+        prisma.workerHeartbeat,
+        {
+          upsert: async (args: { update: Record<string, unknown> }) => args.update
+        }
+      ]
+    ],
+    async () => {
+      const result = await runReadyPipelineJobs({
+        maxJobs: 1,
+        maxSeconds: 5,
+        workerType: "MANUAL",
+        workerId: "manual:test-retry-wait"
+      });
+
+      assert.equal(result.jobsRun, 0);
+      assert.equal(result.hasRemainingWork, true);
+      assert.equal(result.reason, "waiting_for_retry_ready_at");
+      assert.equal(result.blockingJob?.id, "retrying-embeddings");
+      assert.equal(result.blockingJob?.readyAt, retryReadyAt.toISOString());
+      assert.match(result.message ?? "", /waiting for its retry window/);
+    }
+  );
+});
+
+test("ready runner reports retry backoff after a job fails into retrying", async () => {
+  const jobs: MutableJob[] = [
+    mutableJob("unknown-transient-job", {
+      type: "unknownTransientStep",
+      status: PIPELINE_JOB_STATUS.QUEUED,
+      idempotencyKey: "unknown-transient-job",
+      maxAttempts: 3
+    })
+  ];
+
+  await withPatchedPrisma(
+    [
+      [prisma.pipelineJob, pipelineJobPatch(jobs)],
+      [
+        prisma.workerHeartbeat,
+        {
+          upsert: async (args: { update: Record<string, unknown> }) => args.update
+        }
+      ]
+    ],
+    async () => {
+      const result = await runReadyPipelineJobs({
+        maxJobs: 1,
+        maxSeconds: 5,
+        workerType: "MANUAL",
+        workerId: "manual:test-retry-after-failure"
+      });
+
+      assert.equal(result.jobsRun, 1);
+      assert.equal(result.results[0]?.status, "retrying");
+      assert.equal(result.hasRemainingWork, true);
+      assert.equal(result.reason, "waiting_for_retry_ready_at");
+      assert.equal(result.blockingJob?.id, "unknown-transient-job");
+      assert.equal(result.blockingJob?.status, PIPELINE_JOB_STATUS.RETRYING);
+      assert.equal(result.blockingJob?.readyAt, jobs[0].readyAt?.toISOString());
+    }
+  );
+});
+
 test("manual manuscript runner response includes an operator-readable lock reason", async () => {
   const manuscriptId = "manuscript-manual-readable-lock";
   const checkpoint = checkpointBeforeRunChapterAudits();
