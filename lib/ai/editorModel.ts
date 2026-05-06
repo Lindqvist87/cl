@@ -12,6 +12,10 @@ import {
   type ModelRole,
   type ReasoningEffort
 } from "@/lib/ai/modelConfig";
+import {
+  requestBudgetForRole,
+  type EditorServiceTier
+} from "@/lib/ai/costControls";
 import { usageLogFromOpenAIUsage, type AiUsageLog } from "@/lib/ai/usage";
 
 export const EDITOR_PROMPT_VERSION = "editor-v2-1";
@@ -25,6 +29,8 @@ type JsonRequest = {
   temperature?: number;
   retries?: number;
   timeoutMs?: number;
+  maxOutputTokens?: number;
+  serviceTier?: EditorServiceTier;
 };
 
 export type EditorJsonResult<T> = {
@@ -70,12 +76,20 @@ export async function requestEditorJson<T>({
   reasoningEffort,
   temperature,
   retries = 2,
-  timeoutMs
+  timeoutMs,
+  maxOutputTokens,
+  serviceTier
 }: JsonRequest): Promise<EditorJsonResult<T>> {
   const roleConfig = role ? modelConfigForRole(role) : undefined;
   const resolvedModel = model ?? roleConfig?.model ?? auditModel;
   const resolvedReasoningEffort =
     reasoningEffort ?? roleConfig?.reasoningEffort ?? auditReasoningEffort;
+  const budget = requestBudgetForRole({
+    role,
+    reasoningEffort: resolvedReasoningEffort,
+    serviceTier,
+    maxOutputTokens
+  });
   let attempt = 0;
   let lastError: unknown;
 
@@ -85,6 +99,12 @@ export async function requestEditorJson<T>({
         {
           model: resolvedModel,
           reasoning_effort: resolvedReasoningEffort as never,
+          ...(budget.maxOutputTokens === undefined
+            ? {}
+            : { max_completion_tokens: budget.maxOutputTokens }),
+          ...(budget.serviceTier === undefined
+            ? {}
+            : { service_tier: budget.serviceTier }),
           ...(temperature === undefined ? {} : { temperature }),
           response_format: { type: "json_object" },
           messages: [

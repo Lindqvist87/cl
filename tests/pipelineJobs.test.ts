@@ -49,6 +49,7 @@ type MutableJob = PipelineJob;
 type MutableRun = {
   id: string;
   manuscriptId: string;
+  snapshotId: string | null;
   type: string;
   status: string;
   model: string | null;
@@ -214,7 +215,15 @@ test("approved import review releases a previously blocked pipeline job", async 
           prisma.manuscript,
           {
             findUnique: async (args: { select?: { metadata?: boolean } }) =>
-              args.select?.metadata ? { metadata } : { id: manuscriptId }
+              ({
+                id: manuscriptId,
+                originalText: "Chapter 1\n\nTest manuscript text.",
+                sourceFileName: "test.docx",
+                sourceMimeType: null,
+                sourceFormat: "DOCX",
+                wordCount: 4,
+                metadata
+              })
           }
         ],
         [prisma.manuscriptChapter, { count: async () => 1 }],
@@ -365,13 +374,22 @@ test("stuck manuscript with no jobs gets resumable jobs from checkpoint", async 
       [
         prisma.manuscript,
         {
-          findUnique: async () => ({ id: manuscriptId }),
+          findUnique: async () => ({
+            id: manuscriptId,
+            originalText: "Chapter 1\n\nTest manuscript text.",
+            sourceFileName: "test.docx",
+            sourceMimeType: null,
+            sourceFormat: "DOCX",
+            wordCount: 4,
+            metadata: { documentEditor: { revision: 1 } }
+          }),
           update: async (args: { data: Record<string, unknown> }) => ({
             id: manuscriptId,
             ...args.data
           })
         }
       ],
+      [prisma.analysisSnapshot, analysisSnapshotPatch(mutableSnapshot(manuscriptId))],
       [prisma.analysisRun, analysisRunPatch(run)],
       [prisma.pipelineJob, pipelineJobPatch(jobs)],
       [
@@ -504,13 +522,22 @@ test("run-until-idle bootstraps missing manuscript jobs before running", async (
         [
           prisma.manuscript,
           {
-            findUnique: async () => ({ id: manuscriptId }),
+            findUnique: async () => ({
+              id: manuscriptId,
+              originalText: "Chapter 1\n\nChapter text.",
+              sourceFileName: "test.docx",
+              sourceMimeType: null,
+              sourceFormat: "DOCX",
+              wordCount: 4,
+              metadata: { documentEditor: { revision: 1 } }
+            }),
             update: async (args: { data: Record<string, unknown> }) => ({
               id: manuscriptId,
               ...args.data
             })
           }
         ],
+        [prisma.analysisSnapshot, analysisSnapshotPatch(mutableSnapshot(manuscriptId))],
         [prisma.analysisRun, analysisRunPatch(run)],
         [prisma.pipelineJob, pipelineJobPatch(jobs)],
         [
@@ -1822,6 +1849,7 @@ function mutableRun(manuscriptId: string, checkpoint: unknown): MutableRun {
   return {
     id: `${manuscriptId}-run`,
     manuscriptId,
+    snapshotId: null,
     type: "FULL_AUDIT",
     status: "RUNNING",
     model: "test-model",
@@ -1840,6 +1868,7 @@ function mutableRun(manuscriptId: string, checkpoint: unknown): MutableRun {
 function analysisRunPatch(run: MutableRun) {
   return {
     findFirst: async () => run,
+    findUnique: async () => run,
     update: async (args: { data: Record<string, unknown> }) => {
       Object.assign(run, args.data, { updatedAt: new Date() });
       return run;
@@ -1952,11 +1981,20 @@ function manuscriptRunnerPatches(input: {
   run: MutableRun;
   jobs: MutableJob[];
 }): Array<[object, Record<string, unknown>]> {
+  const snapshot = mutableSnapshot(input.manuscriptId);
   return [
     [
       prisma.manuscript,
       {
-        findUnique: async () => ({ id: input.manuscriptId }),
+        findUnique: async () => ({
+          id: input.manuscriptId,
+          originalText: "Chapter 1\n\nTest manuscript text.",
+          sourceFileName: "test.docx",
+          sourceMimeType: null,
+          sourceFormat: "DOCX",
+          wordCount: 4,
+          metadata: { documentEditor: { revision: 1 } }
+        }),
         findUniqueOrThrow: async () => ({
           id: input.manuscriptId,
           title: "Test Manuscript",
@@ -1971,6 +2009,7 @@ function manuscriptRunnerPatches(input: {
         })
       }
     ],
+    [prisma.analysisSnapshot, analysisSnapshotPatch(snapshot)],
     [prisma.analysisRun, analysisRunPatch(input.run)],
     [prisma.pipelineJob, pipelineJobPatch(input.jobs)],
     [
@@ -1980,6 +2019,27 @@ function manuscriptRunnerPatches(input: {
       }
     ]
   ];
+}
+
+function mutableSnapshot(manuscriptId: string) {
+  return {
+    id: `${manuscriptId}-snapshot`,
+    manuscriptId,
+    documentRevision: 1,
+    textHash: "test-snapshot-hash",
+    wordCount: 4,
+    sourceFileName: "test.docx",
+    sourceMimeType: null,
+    sourceFormat: "DOCX",
+    createdAt: new Date("2026-04-29T05:00:00Z")
+  };
+}
+
+function analysisSnapshotPatch(snapshot: ReturnType<typeof mutableSnapshot>) {
+  return {
+    findUnique: async () => snapshot,
+    upsert: async () => snapshot
+  };
 }
 
 function narrativeMemoryJobPatches(input: {
@@ -2168,6 +2228,12 @@ function chapterCapsulePipelineDb(manuscriptId: string, chapterCount: number) {
       targetAudience: "Adult",
       chapterCount,
       chunkCount: chapterCount,
+      originalText: chapters.map((chapter) => chapter.text).join("\n\n"),
+      sourceFileName: "test.docx",
+      sourceMimeType: null,
+      sourceFormat: "DOCX",
+      wordCount: chapterCount * 4,
+      metadata: { documentEditor: { revision: 1 } },
       status: "IMPORTED",
       analysisStatus: "QUEUED",
       profile: {
@@ -2393,6 +2459,7 @@ function summarizeChunksPatches(input: {
         })
       }
     ],
+    [prisma.analysisSnapshot, analysisSnapshotPatch(mutableSnapshot(input.manuscriptId))],
     [prisma.analysisRun, analysisRunPatch(input.run)],
     [prisma.pipelineJob, pipelineJobPatch(input.jobs)],
     [
@@ -2508,9 +2575,15 @@ function chapterAuditPatches(input: {
     title: "Late Audit Manuscript",
     targetGenre: "Fantasy",
     targetAudience: "Adult",
+    originalText: input.chapters
+      .map((chapter) => String(chapter.text ?? chapter.title ?? "Chapter text."))
+      .join("\n\n"),
+    sourceFileName: "test.docx",
+    sourceMimeType: null,
+    sourceFormat: "DOCX",
     wordCount: input.chapters.length * 1200,
     chapterCount: input.chapters.length,
-    metadata: null,
+    metadata: { documentEditor: { revision: 1 } },
     profile: {
       id: "profile-1",
       manuscriptId: input.manuscriptId,
@@ -2537,6 +2610,7 @@ function chapterAuditPatches(input: {
         }
       }
     ],
+    [prisma.analysisSnapshot, analysisSnapshotPatch(mutableSnapshot(input.manuscriptId))],
     [prisma.analysisRun, analysisRunPatch(input.run)],
     [prisma.pipelineJob, pipelineJobPatch(input.jobs)],
     [
@@ -2718,6 +2792,7 @@ function mutableJob(id: string, data: Record<string, unknown>): MutableJob {
   return {
     id,
     manuscriptId: stringOrNull(data.manuscriptId),
+    snapshotId: stringOrNull(data.snapshotId),
     chapterId: stringOrNull(data.chapterId),
     type: String(data.type),
     status: String(data.status ?? PIPELINE_JOB_STATUS.QUEUED),

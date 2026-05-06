@@ -16,6 +16,10 @@ import {
 } from "@/lib/corpus/corpusAnalysisJobs";
 import { jsonInput } from "@/lib/json";
 import {
+  createLockedAnalysisSnapshot,
+  snapshotRunMetadata
+} from "@/lib/pipeline/analysisSnapshot";
+import {
   findOrCreatePipelineRun,
   isImportStructureReviewRequired,
   isPipelineStepRunComplete,
@@ -140,11 +144,12 @@ export async function ensureManuscriptPipelineJobs(
     throw new Error("Manuscript not found.");
   }
 
-  const run = await findOrCreatePipelineRun(manuscriptId);
+  const snapshot = await createLockedAnalysisSnapshot(manuscriptId);
+  const run = await findOrCreatePipelineRun(manuscriptId, snapshot.id);
   const checkpoint = normalizeCheckpoint(run.checkpoint);
   let nextCheckpoint = checkpoint;
   let checkpointChanged = false;
-  const planned = plannedPipelineJobs(manuscriptId, checkpoint);
+  const planned = plannedPipelineJobs(manuscriptId, checkpoint, snapshot);
   const jobsByKey = new Map<string, PipelineJob>();
   const jobs: PipelineJob[] = [];
 
@@ -152,9 +157,14 @@ export async function ensureManuscriptPipelineJobs(
     const dependencyIds = jobPlan.dependencyKeys
       .map((key) => jobsByKey.get(key)?.id)
       .filter((id): id is string => Boolean(id));
-    const existing = await prisma.pipelineJob.findUnique({
-      where: { idempotencyKey: jobPlan.idempotencyKey }
-    });
+    const legacyIdempotencyKey = pipelineStepJobKey(manuscriptId, jobPlan.type);
+    const existing =
+      (await prisma.pipelineJob.findUnique({
+        where: { idempotencyKey: jobPlan.idempotencyKey }
+      })) ??
+      (await prisma.pipelineJob.findUnique({
+        where: { idempotencyKey: legacyIdempotencyKey }
+      }));
     const completedFromCheckpoint = jobPlan.completedFromCheckpoint;
     const shouldRetryFailed =
       (mode === "RESUME" || mode === "FULL_PIPELINE") &&
@@ -169,9 +179,13 @@ export async function ensureManuscriptPipelineJobs(
     }
     const baseData = {
       manuscriptId,
+      snapshotId: snapshot.id,
       type: jobPlan.type,
       dependencyIds: jsonInput(dependencyIds),
-      metadata: jsonInput(jobPlan.metadata),
+      metadata: jsonInput({
+        ...jobPlan.metadata,
+        snapshot: snapshotRunMetadata(snapshot)
+      }),
       maxAttempts: maxAttemptsForJobType(jobPlan.type)
     };
     const job = existing
@@ -179,6 +193,7 @@ export async function ensureManuscriptPipelineJobs(
           where: { id: existing.id },
           data: {
             ...baseData,
+            idempotencyKey: jobPlan.idempotencyKey,
             ...(completedFromCheckpoint
               ? {
                   status: PIPELINE_JOB_STATUS.COMPLETED,
@@ -292,7 +307,8 @@ export async function ensureChapterRewriteJob(input: {
 }
 
 export async function ensureChapterRewriteDraftsJob(manuscriptId: string) {
-  const run = await findOrCreatePipelineRun(manuscriptId);
+  const snapshot = await createLockedAnalysisSnapshot(manuscriptId);
+  const run = await findOrCreatePipelineRun(manuscriptId, snapshot.id);
   const checkpoint = normalizeCheckpoint(run.checkpoint);
   const rewritePlanComplete = isStepComplete(checkpoint, "createRewritePlan");
 
@@ -777,7 +793,12 @@ async function runManuscriptPipelineStepJob(
   }
 
   const step = job.type as ManuscriptPipelineStep;
-  const run = await findOrCreatePipelineRun(job.manuscriptId);
+  const jobMetadata = toJsonRecord(job.metadata);
+  const snapshotId = stringOrUndefined(jobMetadata.snapshotId) ??
+    stringOrUndefined(toJsonRecord(jobMetadata.snapshot).snapshotId) ??
+    job.snapshotId ??
+    undefined;
+  const run = await findOrCreatePipelineRun(job.manuscriptId, snapshotId);
   let checkpoint = normalizeCheckpoint(run.checkpoint);
 
   await prisma.manuscript.update({
@@ -799,7 +820,8 @@ async function runManuscriptPipelineStepJob(
   );
   const metadata = await runPipelineStep(step, job.manuscriptId, run.id, {
     maxItems: options.maxItemsPerStep,
-    forceCompilerFallback: options.forceCompilerFallback
+    forceCompilerFallback: options.forceCompilerFallback,
+    snapshotId
   });
 
   if (!isPipelineStepRunComplete(metadata)) {

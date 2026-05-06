@@ -51,6 +51,10 @@ import {
 } from "@/lib/corpus/rights";
 import { jsonInput } from "@/lib/json";
 import {
+  extractRawEditorialMemoryItems,
+  upsertEditorialMemoryItemsFromRawOutput
+} from "@/lib/editorialMemory";
+import {
   importManifestFromMetadata,
   importManifestToNormalizedText,
   importSignatureFromManifest,
@@ -76,6 +80,10 @@ import {
   type ManuscriptPipelineStep,
   type PipelineCheckpoint
 } from "@/lib/pipeline/steps";
+import {
+  createLockedAnalysisSnapshot,
+  snapshotRunMetadata
+} from "@/lib/pipeline/analysisSnapshot";
 import { prisma } from "@/lib/prisma";
 import { draftChapterRewrite } from "@/lib/rewrite/chapterRewrite";
 import { countWords, estimateTokensFromWords } from "@/lib/text/wordCount";
@@ -90,6 +98,7 @@ import type {
 export type PipelineStepRunOptions = {
   maxItems?: number;
   forceCompilerFallback?: boolean;
+  snapshotId?: string | null;
 };
 
 export type PipelineStepRunResult = Record<string, unknown> & {
@@ -111,7 +120,8 @@ export function setCorpusComparisonRunnerForTest(runner: CorpusComparisonRunner)
 }
 
 export async function runFullManuscriptPipeline(manuscriptId: string) {
-  const run = await findOrCreatePipelineRun(manuscriptId);
+  const snapshot = await createLockedAnalysisSnapshot(manuscriptId);
+  const run = await findOrCreatePipelineRun(manuscriptId, snapshot.id);
   let checkpoint = normalizeCheckpoint(run.checkpoint);
 
   await prisma.manuscript.update({
@@ -129,7 +139,9 @@ export async function runFullManuscriptPipeline(manuscriptId: string) {
       }
 
       checkpoint = await persistCheckpoint(run.id, markStepStarted(checkpoint, step));
-      const metadata = await runPipelineStep(step, manuscriptId, run.id);
+      const metadata = await runPipelineStep(step, manuscriptId, run.id, {
+        snapshotId: snapshot.id
+      });
       checkpoint = await persistCheckpoint(
         run.id,
         markStepComplete(checkpoint, step, metadata)
@@ -181,11 +193,21 @@ export async function runFullManuscriptPipeline(manuscriptId: string) {
   }
 }
 
-export async function findOrCreatePipelineRun(manuscriptId: string) {
+export async function findOrCreatePipelineRun(
+  manuscriptId: string,
+  snapshotId?: string | null
+) {
+  const snapshot = snapshotId
+    ? await prisma.analysisSnapshot.findUnique({ where: { id: snapshotId } })
+    : null;
+  const runScope = {
+    manuscriptId,
+    type: AnalysisRunType.FULL_AUDIT,
+    ...(snapshotId ? { snapshotId } : {})
+  };
   const activeRun = await prisma.analysisRun.findFirst({
     where: {
-      manuscriptId,
-      type: AnalysisRunType.FULL_AUDIT,
+      ...runScope,
       status: {
         in: [
           AnalysisRunStatus.QUEUED,
@@ -202,11 +224,13 @@ export async function findOrCreatePipelineRun(manuscriptId: string) {
       where: { id: activeRun.id },
       data: {
         status: AnalysisRunStatus.RUNNING,
+        snapshotId: snapshotId ?? activeRun.snapshotId,
         model: getEditorModel(),
         error: null,
         metadata: jsonInput({
           pipelineVersion: "v2",
-          steps: FULL_MANUSCRIPT_PIPELINE_STEPS
+          steps: FULL_MANUSCRIPT_PIPELINE_STEPS,
+          ...(snapshot ? { snapshot: snapshotRunMetadata(snapshot) } : {})
         })
       }
     });
@@ -214,8 +238,7 @@ export async function findOrCreatePipelineRun(manuscriptId: string) {
 
   const completedRun = await prisma.analysisRun.findFirst({
     where: {
-      manuscriptId,
-      type: AnalysisRunType.FULL_AUDIT,
+      ...runScope,
       status: AnalysisRunStatus.COMPLETED
     },
     orderBy: [{ completedAt: "desc" }, { createdAt: "desc" }]
@@ -228,13 +251,15 @@ export async function findOrCreatePipelineRun(manuscriptId: string) {
   return prisma.analysisRun.create({
     data: {
       manuscriptId,
+      snapshotId: snapshotId ?? undefined,
       type: AnalysisRunType.FULL_AUDIT,
       status: AnalysisRunStatus.RUNNING,
       model: getEditorModel(),
       checkpoint: jsonInput({ completedSteps: [] }),
       metadata: jsonInput({
         pipelineVersion: "v2",
-        steps: FULL_MANUSCRIPT_PIPELINE_STEPS
+        steps: FULL_MANUSCRIPT_PIPELINE_STEPS,
+        ...(snapshot ? { snapshot: snapshotRunMetadata(snapshot) } : {})
       })
     }
   });
@@ -267,6 +292,10 @@ export async function runPipelineStep(
   if (importGate) {
     return importGate;
   }
+  const snapshotOptions = async () => ({
+    ...options,
+    snapshotId: options.snapshotId ?? (await snapshotIdForRun(runId))
+  });
 
   switch (step) {
     case "parseAndNormalizeManuscript":
@@ -286,15 +315,15 @@ export async function runPipelineStep(
     case "buildManuscriptNodes":
       return buildManuscriptNodes(manuscriptId);
     case "compileSceneDigests":
-      return compileSceneDigests(manuscriptId, options);
+      return compileSceneDigests(manuscriptId, await snapshotOptions());
     case "extractNarrativeMemory":
-      return extractNarrativeMemory(manuscriptId, options);
+      return extractNarrativeMemory(manuscriptId, await snapshotOptions());
     case "compileChapterCapsules":
-      return compileChapterCapsules(manuscriptId, options);
+      return compileChapterCapsules(manuscriptId, await snapshotOptions());
     case "compileWholeBookMap":
-      return compileWholeBookMap(manuscriptId, options);
+      return compileWholeBookMap(manuscriptId, await snapshotOptions());
     case "createNextBestEditorialActions":
-      return createNextBestEditorialActions(manuscriptId, options);
+      return createNextBestEditorialActions(manuscriptId, await snapshotOptions());
     case "runChapterAudits":
       return runChapterAudits(manuscriptId, runId, options);
     case "runWholeBookAudit":
@@ -1717,6 +1746,7 @@ async function createRewritePlan(manuscriptId: string, runId: string) {
     data: {
       manuscriptId,
       analysisRunId: runId,
+      snapshotId: await snapshotIdForRun(runId),
       globalStrategy: result.json.globalStrategy,
       chapterPlans: jsonInput(result.json.chapterPlans),
       continuityRules: jsonInput(result.json.continuityRules),
@@ -1824,9 +1854,27 @@ async function findOutput(
   });
 }
 
+async function snapshotIdForRun(runId: string) {
+  if (!process.env.DATABASE_URL) {
+    return null;
+  }
+
+  try {
+    const run = await prisma.analysisRun.findUnique({
+      where: { id: runId },
+      select: { snapshotId: true }
+    });
+
+    return run?.snapshotId ?? null;
+  } catch {
+    return null;
+  }
+}
+
 async function saveOutput(input: {
   runId: string;
   manuscriptId: string;
+  snapshotId?: string | null;
   passType: AnalysisPassType;
   scopeType: string;
   scopeId: string;
@@ -1845,7 +1893,9 @@ async function saveOutput(input: {
   chunkId?: string;
   chapterId?: string;
 }) {
-  await prisma.analysisOutput.upsert({
+  const snapshotId = input.snapshotId ?? (await snapshotIdForRun(input.runId));
+
+  const outputRow = await prisma.analysisOutput.upsert({
     where: {
       runId_passType_scopeType_scopeId: {
         runId: input.runId,
@@ -1857,6 +1907,7 @@ async function saveOutput(input: {
     create: {
       runId: input.runId,
       manuscriptId: input.manuscriptId,
+      snapshotId,
       passType: input.passType,
       scopeType: input.scopeType,
       scopeId: input.scopeId,
@@ -1869,12 +1920,34 @@ async function saveOutput(input: {
       rawText: input.rawText
     },
     update: {
+      snapshotId,
       model: input.model,
       inputSummary: jsonInput(withAiUsage(input.inputSummary ?? {}, input.usage)),
       output: jsonInput(input.output),
       rawText: input.rawText
     }
   });
+
+  if (extractRawEditorialMemoryItems(input.output).length > 0) {
+    await upsertEditorialMemoryItemsFromRawOutput({
+      manuscriptId: input.manuscriptId,
+      analysisRunId: input.runId,
+      analysisOutputId: outputRow.id,
+      snapshotId,
+      rawOutput: input.output,
+      source: {
+        sourceType: "analysis_output",
+        sourceId: outputRow.id,
+        promptVersion: EDITOR_PROMPT_VERSION,
+        model: input.model,
+        provenance: {
+          passType: input.passType,
+          scopeType: input.scopeType,
+          scopeId: input.scopeId
+        }
+      }
+    });
+  }
 }
 
 async function saveSkippedComparisonOutput(input: {
@@ -1917,6 +1990,7 @@ async function saveSkippedComparisonOutput(input: {
 async function saveFindings(input: {
   runId: string;
   manuscriptId: string;
+  snapshotId?: string | null;
   chapterId?: string;
   chunkId?: string;
   findings?: FindingDraft[];
@@ -1935,10 +2009,13 @@ async function saveFindings(input: {
     return;
   }
 
+  const snapshotId = input.snapshotId ?? (await snapshotIdForRun(input.runId));
+
   await prisma.finding.createMany({
     data: findings.map((finding) => ({
       analysisRunId: input.runId,
       manuscriptId: input.manuscriptId,
+      snapshotId,
       chapterId: input.chapterId,
       chunkId: input.chunkId,
       issueType: finding.issueType || "editorial",
@@ -1967,11 +2044,13 @@ async function createAuditReportFromWholeBook(input: {
 
   const report = wholeBookToAuditReport(input.wholeBook);
   const markdown = auditReportToMarkdown(report, input.title);
+  const snapshotId = await snapshotIdForRun(input.runId);
 
   return prisma.auditReport.create({
     data: {
       manuscriptId: input.manuscriptId,
       runId: input.runId,
+      snapshotId,
       executiveSummary: report.executiveSummary,
       topIssues: jsonInput(report.topIssues),
       chapterNotes: jsonInput(report.chapterNotes),

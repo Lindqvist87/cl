@@ -19,6 +19,7 @@ const envSchema = z.object({
   OPENAI_AUDIT_MODEL: z.string().min(1).optional(),
   OPENAI_REWRITE_MODEL: z.string().min(1).optional(),
   OPENAI_EDITOR_MODEL: z.string().min(1).optional(),
+  OPENAI_BACKGROUND_SERVICE_TIER: z.enum(["flex"]).optional(),
   OPENAI_EMBEDDING_MODEL: z.string().min(1).default("text-embedding-3-small"),
   NEXT_PUBLIC_APP_NAME: z.string().min(1).default("Manuscript Audit"),
   AUTO_GENERATE_FULL_BOOK_REWRITES: z.string().min(1).default("false"),
@@ -56,6 +57,8 @@ export const env = envSchema.parse({
   OPENAI_AUDIT_MODEL: process.env.OPENAI_AUDIT_MODEL || undefined,
   OPENAI_REWRITE_MODEL: process.env.OPENAI_REWRITE_MODEL || undefined,
   OPENAI_EDITOR_MODEL: process.env.OPENAI_EDITOR_MODEL || undefined,
+  OPENAI_BACKGROUND_SERVICE_TIER:
+    process.env.OPENAI_BACKGROUND_SERVICE_TIER === "flex" ? "flex" : undefined,
   OPENAI_EMBEDDING_MODEL: process.env.OPENAI_EMBEDDING_MODEL,
   NEXT_PUBLIC_APP_NAME: process.env.NEXT_PUBLIC_APP_NAME,
   AUTO_GENERATE_FULL_BOOK_REWRITES:

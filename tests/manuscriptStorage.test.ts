@@ -164,7 +164,8 @@ test("saveEditableManuscriptDocument autosaves edited document text", async () =
                   revision: 2,
                   note: "preserve"
                 }
-              }
+              },
+              chapters: []
             }),
             update: async (args: { data: Record<string, unknown> }) => {
               updates.push(args.data);
@@ -249,7 +250,14 @@ test("saveEditableManuscriptDocument resets analysis state when text changes", a
                   revision: 4,
                   note: "preserve"
                 }
-              }
+              },
+              chapters: [
+                {
+                  id: "chapter-old",
+                  order: 1,
+                  text: "Old title\n\nOld paragraph."
+                }
+              ]
             })
           },
           $transaction: async (
@@ -504,7 +512,18 @@ function editableDocumentTx(
     scene: deleteDelegate("scene"),
     manuscriptChapter: deleteDelegate("manuscriptChapter"),
     pipelineJob: deleteDelegate("pipelineJob"),
-    analysisRun: deleteDelegate("analysisRun")
+    analysisRun: deleteDelegate("analysisRun"),
+    editorialMemoryAnchor: {
+      findMany: async () => [],
+      updateMany: async () => ({ count: 0 })
+    },
+    editorialMemoryItem: {
+      findUnique: async () => null,
+      update: async () => null
+    },
+    editorialMemoryRevision: {
+      create: async () => ({ id: "memory-revision" })
+    }
   };
 }
 

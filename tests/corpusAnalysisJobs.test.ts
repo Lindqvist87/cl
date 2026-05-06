@@ -1070,6 +1070,7 @@ function corpusPipelineJobForTest(
   return {
     id: `${type.toLowerCase()}-job`,
     manuscriptId: null,
+    snapshotId: null,
     chapterId: null,
     type,
     status: PIPELINE_JOB_STATUS.QUEUED,

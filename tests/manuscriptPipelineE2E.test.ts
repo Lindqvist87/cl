@@ -18,6 +18,7 @@ type FakeDb = ReturnType<typeof createFakeDb>;
 type FakeRun = {
   id: string;
   manuscriptId: string;
+  snapshotId: string | null;
   type: string;
   status: string;
   model: string | null;
@@ -34,6 +35,7 @@ type FakeRun = {
 type FakeJob = {
   id: string;
   manuscriptId: string | null;
+  snapshotId: string | null;
   chapterId: string | null;
   type: string;
   status: string;
@@ -266,6 +268,7 @@ function createFakeDb() {
     chunkFixture("chunk-3", manuscript.id, chapters[1], 3, "A cost appears.")
   ];
   const runs: FakeRun[] = [];
+  const snapshots: Array<Record<string, unknown>> = [];
   const jobs: FakeJob[] = [];
   const outputs: Array<Record<string, unknown>> = [];
   const findings: Array<Record<string, unknown>> = [];
@@ -286,6 +289,7 @@ function createFakeDb() {
     chapters,
     chunks,
     runs,
+    snapshots,
     jobs,
     outputs,
     findings,
@@ -352,6 +356,7 @@ function chunkFixture(
 function createPatches(db: FakeDb): Array<[object, Record<string, unknown>]> {
   return [
     [prisma.analysisRun, analysisRunDelegate(db)],
+    [prisma.analysisSnapshot, analysisSnapshotDelegate(db)],
     [prisma.pipelineJob, pipelineJobDelegate(db)],
     [prisma.workerHeartbeat, { upsert: async (args: { update: unknown }) => args.update }],
     [prisma.manuscript, manuscriptDelegate(db)],
@@ -395,6 +400,8 @@ function analysisRunDelegate(db: FakeDb) {
   return {
     findFirst: async (args: { where?: Record<string, unknown> } = {}) =>
       db.runs.find((run) => matchesRunWhere(run, args.where)) ?? null,
+    findUnique: async (args: { where: { id: string } }) =>
+      db.runs.find((run) => run.id === args.where.id) ?? null,
     update: async (args: { where: { id: string }; data: Record<string, unknown> }) => {
       const run = db.runs.find((candidate) => candidate.id === args.where.id);
       assert.ok(run);
@@ -405,6 +412,7 @@ function analysisRunDelegate(db: FakeDb) {
       const run = {
         id: "run-1",
         manuscriptId: String(args.data.manuscriptId),
+        snapshotId: stringOrNull(args.data.snapshotId),
         type: String(args.data.type ?? AnalysisRunType.FULL_AUDIT),
         status: String(args.data.status ?? AnalysisRunStatus.RUNNING),
         model: typeof args.data.model === "string" ? args.data.model : null,
@@ -420,6 +428,37 @@ function analysisRunDelegate(db: FakeDb) {
       };
       db.runs.push(run);
       return run;
+    }
+  };
+}
+
+function analysisSnapshotDelegate(db: FakeDb) {
+  return {
+    findUnique: async (args: { where: { id?: string } }) =>
+      db.snapshots.find((snapshot) => snapshot.id === args.where.id) ?? null,
+    upsert: async (args: {
+      where: { manuscriptId_textHash_documentRevision: Record<string, unknown> };
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    }) => {
+      const key = args.where.manuscriptId_textHash_documentRevision;
+      const existing = db.snapshots.find(
+        (snapshot) =>
+          snapshot.manuscriptId === key.manuscriptId &&
+          snapshot.textHash === key.textHash &&
+          snapshot.documentRevision === key.documentRevision
+      );
+      if (existing) {
+        Object.assign(existing, args.update);
+        return existing;
+      }
+      const snapshot = {
+        id: `snapshot-${db.snapshots.length + 1}`,
+        createdAt: new Date(),
+        ...args.create
+      };
+      db.snapshots.push(snapshot);
+      return snapshot;
     }
   };
 }
@@ -787,6 +826,7 @@ function mutableJob(id: string, data: Record<string, unknown>): FakeJob {
   return {
     id,
     manuscriptId: stringOrNull(data.manuscriptId),
+    snapshotId: stringOrNull(data.snapshotId),
     chapterId: stringOrNull(data.chapterId),
     type: String(data.type),
     status: String(data.status ?? PIPELINE_JOB_STATUS.QUEUED),

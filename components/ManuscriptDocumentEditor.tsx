@@ -94,26 +94,33 @@ export function ManuscriptDocumentEditor({
   const lastSavedTextRef = useRef(initialSerializedText);
   const isSavingRef = useRef(false);
   const queuedTextRef = useRef<string | null>(null);
+  const queuedSaveResolversRef = useRef<Array<(saved: boolean) => void>>([]);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     textRef.current = text;
   }, [text]);
 
+  const resolveQueuedSaveWaiters = useCallback((saved: boolean) => {
+    const resolvers = queuedSaveResolversRef.current;
+    queuedSaveResolversRef.current = [];
+    resolvers.forEach((resolve) => resolve(saved));
+  }, []);
+
   const saveDocument = useCallback(
     async (nextText: string): Promise<boolean> => {
-      if (nextText === lastSavedTextRef.current) {
+      if (nextText === lastSavedTextRef.current && !isSavingRef.current) {
         setError(null);
-        if (!isSavingRef.current) {
-          setStatus("saved");
-        }
+        setStatus("saved");
         return true;
       }
 
       if (isSavingRef.current) {
         queuedTextRef.current = nextText;
         setStatus("saving");
-        return false;
+        return new Promise((resolve) => {
+          queuedSaveResolversRef.current.push(resolve);
+        });
       }
 
       isSavingRef.current = true;
@@ -147,6 +154,7 @@ export function ManuscriptDocumentEditor({
           saveError instanceof Error ? saveError.message : "Kunde inte spara dokumentet.";
         setError(message);
         setStatus("error");
+        resolveQueuedSaveWaiters(false);
         return false;
       } finally {
         isSavingRef.current = false;
@@ -156,14 +164,14 @@ export function ManuscriptDocumentEditor({
       queuedTextRef.current = null;
 
       if (queuedText !== null && queuedText !== lastSavedTextRef.current) {
-        void saveDocument(queuedText);
-        return true;
+        return saveDocument(queuedText);
       }
 
       setStatus(textRef.current === lastSavedTextRef.current ? "saved" : "dirty");
+      resolveQueuedSaveWaiters(true);
       return true;
     },
-    [manuscriptId]
+    [manuscriptId, resolveQueuedSaveWaiters]
   );
 
   useEffect(() => {
@@ -233,7 +241,7 @@ export function ManuscriptDocumentEditor({
     setAnalysisError(null);
 
     const saved = await saveDocument(textRef.current);
-    if (!saved && textRef.current !== lastSavedTextRef.current) {
+    if (!saved || isSavingRef.current || textRef.current !== lastSavedTextRef.current) {
       setAnalysisStartStatus("error");
       setAnalysisError("Spara dokumentet innan analysen startas.");
       return;

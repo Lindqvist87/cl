@@ -1,7 +1,15 @@
 import { AnalysisStatus, type Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { jsonInput } from "@/lib/json";
-import { stripDocumentPageMarkers } from "@/lib/document/pageMarkers";
+import {
+  splitDocumentIntoPages,
+  stripDocumentPageMarkers
+} from "@/lib/document/pageMarkers";
+import {
+  detectDocumentChapters,
+  type DocumentChapter
+} from "@/lib/document/chapterMarkers";
+import { markEditorialMemoryForAnchorChanges } from "@/lib/editorialMemory";
 import { hashText } from "@/lib/compiler/hash";
 import {
   importSignatureFromManifest,
@@ -56,7 +64,14 @@ export async function saveEditableManuscriptDocument(
       originalText: true,
       sourceFileName: true,
       sourceMimeType: true,
-      metadata: true
+      metadata: true,
+      chapters: {
+        select: {
+          id: true,
+          order: true,
+          text: true
+        }
+      }
     }
   });
 
@@ -106,7 +121,19 @@ export async function saveEditableManuscriptDocument(
   };
 
   if (textChanged) {
+    const memoryChanges = editorialMemoryChangesForEditableDocument({
+      previousChapters: manuscript.chapters,
+      nextText: text,
+      nextSourceHash: sourceHash,
+      nextRevision: numberValue(currentEditorMetadata.revision) + 1
+    });
+
     return prisma.$transaction(async (tx) => {
+      await markEditorialMemoryForAnchorChanges(
+        input.manuscriptId,
+        memoryChanges,
+        tx
+      );
       await deleteEditableDocumentDerivedState(tx, input.manuscriptId);
 
       return tx.manuscript.update({
@@ -210,6 +237,59 @@ async function deleteEditableDocumentDerivedState(
   await tx.manuscriptChapter.deleteMany({ where: { manuscriptId } });
   await tx.pipelineJob.deleteMany({ where: { manuscriptId } });
   await tx.analysisRun.deleteMany({ where: { manuscriptId } });
+}
+
+function editorialMemoryChangesForEditableDocument(input: {
+  previousChapters: Array<{ id: string; order: number; text: string }>;
+  nextText: string;
+  nextSourceHash: string;
+  nextRevision: number;
+}) {
+  const nextChapters = detectDocumentChapters(
+    splitDocumentIntoPages(input.nextText)
+  ).chapters;
+  const changes = input.previousChapters.flatMap((chapter) => {
+    const nextChapter = nextChapters.find((candidate) => candidate.order === chapter.order);
+    if (!nextChapter) {
+      return [
+        {
+          chapterId: chapter.id,
+          textHash: input.nextSourceHash,
+          revision: input.nextRevision,
+          reason: "Chapter anchor could not be matched after editable document save."
+        }
+      ];
+    }
+
+    const nextHash = hashText(chapterAnalysisText(nextChapter));
+    return [
+      {
+        chapterId: chapter.id,
+        textHash: nextHash,
+        revision: input.nextRevision,
+        reason:
+          nextHash === hashText(chapter.text)
+            ? "Editable document revision changed."
+            : "Editable document chapter text changed."
+      }
+    ];
+  });
+
+  if (changes.length > 0) {
+    return changes;
+  }
+
+  return [
+    {
+      textHash: input.nextSourceHash,
+      revision: input.nextRevision,
+      reason: "Editable document text changed before structure was rebuilt."
+    }
+  ];
+}
+
+function chapterAnalysisText(chapter: DocumentChapter) {
+  return stripDocumentPageMarkers(chapter.text);
 }
 
 function metadataRecord(value: unknown): Record<string, unknown> {

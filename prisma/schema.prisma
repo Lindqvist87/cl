@@ -110,6 +110,18 @@ enum EditorialDecisionScope {
   PARAGRAPH
 }
 
+enum EditorialMemoryStatus {
+  ACTIVE
+  STALE
+  NEEDS_REANCHOR
+  SUPERSEDED
+}
+
+enum AnalysisSnapshotStatus {
+  LOCKED
+  SUPERSEDED
+}
+
 model Source {
   id          String     @id @default(cuid())
   name        String
@@ -350,6 +362,11 @@ model Manuscript {
   rewritePlans RewritePlan[]
   pipelineJobs PipelineJob[]
   decisions    EditorialDecision[]
+  memoryItems  EditorialMemoryItem[]
+  memorySources EditorialMemorySource[]
+  memoryAnchors EditorialMemoryAnchor[]
+  memoryRevisions EditorialMemoryRevision[]
+  analysisSnapshots AnalysisSnapshot[]
 
   @@index([createdAt])
   @@index([analysisStatus])
@@ -370,6 +387,38 @@ model ManuscriptVersion {
 
   @@unique([manuscriptId, versionNumber])
   @@index([sourceHash])
+}
+
+model AnalysisSnapshot {
+  id                 String                 @id @default(cuid())
+  manuscriptId       String
+  documentRevision   Int                    @default(0)
+  textHash           String
+  wordCount          Int                    @default(0)
+  sourceFileName     String
+  sourceMimeType     String?
+  sourceFormat       ManuscriptFormat?
+  sourceText         String
+  metadata           Json?
+  status             AnalysisSnapshotStatus @default(LOCKED)
+  createdAt          DateTime               @default(now())
+
+  manuscript      Manuscript                 @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  runs            AnalysisRun[]
+  outputs         AnalysisOutput[]
+  reports         AuditReport[]
+  findings        Finding[]
+  rewritePlans    RewritePlan[]
+  pipelineJobs    PipelineJob[]
+  compilerArtifacts CompilerArtifact[]
+  memorySources   EditorialMemorySource[]
+  memoryRevisions EditorialMemoryRevision[]
+
+  @@unique([manuscriptId, textHash, documentRevision])
+  @@index([manuscriptId])
+  @@index([textHash])
+  @@index([status])
+  @@index([createdAt])
 }
 
 model ManuscriptChapter {
@@ -520,6 +569,7 @@ model ManuscriptProfile {
 model AnalysisRun {
   id           String            @id @default(cuid())
   manuscriptId String
+  snapshotId   String?
   type         AnalysisRunType   @default(FULL_AUDIT)
   status       AnalysisRunStatus @default(RUNNING)
   model        String?
@@ -534,20 +584,25 @@ model AnalysisRun {
   updatedAt    DateTime          @updatedAt
 
   manuscript   Manuscript       @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  snapshot     AnalysisSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
   outputs      AnalysisOutput[]
   report       AuditReport?
   rewrites     ChapterRewrite[]
   findings     Finding[]
   rewritePlans RewritePlan[]
+  memorySources EditorialMemorySource[]
+  memoryRevisions EditorialMemoryRevision[]
 
   @@index([manuscriptId, status])
   @@index([manuscriptId, type])
+  @@index([snapshotId])
 }
 
 model AnalysisOutput {
   id             String               @id @default(cuid())
   runId          String
   manuscriptId   String
+  snapshotId     String?
   passType       AnalysisPassType
   scopeType      String
   scopeId        String
@@ -564,10 +619,13 @@ model AnalysisOutput {
 
   run        AnalysisRun      @relation(fields: [runId], references: [id], onDelete: Cascade)
   manuscript Manuscript       @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  snapshot   AnalysisSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
   chunk      ManuscriptChunk? @relation(fields: [chunkId], references: [id], onDelete: SetNull)
+  memorySources EditorialMemorySource[]
 
   @@unique([runId, passType, scopeType, scopeId])
   @@index([manuscriptId, passType])
+  @@index([snapshotId])
   @@index([chunkId])
 }
 
@@ -575,6 +633,7 @@ model AuditReport {
   id               String   @id @default(cuid())
   manuscriptId     String
   runId            String   @unique
+  snapshotId       String?
   executiveSummary String
   topIssues        Json
   chapterNotes     Json
@@ -586,14 +645,17 @@ model AuditReport {
 
   manuscript Manuscript @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
   run        AnalysisRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  snapshot   AnalysisSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
 
   @@index([manuscriptId])
+  @@index([snapshotId])
 }
 
 model Finding {
   id                 String   @id @default(cuid())
   analysisRunId      String
   manuscriptId       String
+  snapshotId         String?
   chapterId          String?
   chunkId            String?
   issueType          String
@@ -607,12 +669,14 @@ model Finding {
 
   analysisRun AnalysisRun        @relation(fields: [analysisRunId], references: [id], onDelete: Cascade)
   manuscript  Manuscript         @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  snapshot    AnalysisSnapshot?  @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
   chapter     ManuscriptChapter? @relation(fields: [chapterId], references: [id], onDelete: SetNull)
   chunk       ManuscriptChunk?   @relation(fields: [chunkId], references: [id], onDelete: SetNull)
   decisions   EditorialDecision[]
 
   @@index([analysisRunId])
   @@index([manuscriptId])
+  @@index([snapshotId])
   @@index([chapterId])
   @@index([chunkId])
   @@index([issueType])
@@ -623,6 +687,7 @@ model RewritePlan {
   id                String   @id @default(cuid())
   manuscriptId      String
   analysisRunId     String
+  snapshotId        String?
   globalStrategy    String
   chapterPlans      Json
   continuityRules   Json
@@ -632,11 +697,13 @@ model RewritePlan {
 
   manuscript      Manuscript       @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
   analysisRun     AnalysisRun      @relation(fields: [analysisRunId], references: [id], onDelete: Cascade)
+  snapshot        AnalysisSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
   chapterRewrites ChapterRewrite[]
   decisions        EditorialDecision[]
 
   @@index([manuscriptId])
   @@index([analysisRunId])
+  @@index([snapshotId])
 }
 
 model EditorialDecision {
@@ -664,6 +731,128 @@ model EditorialDecision {
   @@index([rewritePlanId])
   @@index([status])
   @@index([scope])
+}
+
+model EditorialMemoryItem {
+  id             String                @id @default(cuid())
+  manuscriptId   String
+  key            String
+  type           String
+  title          String?
+  content        String
+  status         EditorialMemoryStatus @default(ACTIVE)
+  confidence     Float                 @default(0.5)
+  supersededById String?
+  metadata       Json?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  manuscript   Manuscript              @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  supersededBy EditorialMemoryItem?     @relation("EditorialMemorySupersession", fields: [supersededById], references: [id], onDelete: SetNull)
+  supersedes   EditorialMemoryItem[]    @relation("EditorialMemorySupersession")
+  sources      EditorialMemorySource[]
+  anchors      EditorialMemoryAnchor[]
+  revisions    EditorialMemoryRevision[]
+
+  @@unique([manuscriptId, key])
+  @@index([manuscriptId])
+  @@index([status])
+  @@index([type])
+  @@index([supersededById])
+  @@index([manuscriptId, status])
+  @@index([manuscriptId, type])
+}
+
+model EditorialMemorySource {
+  id               String   @id @default(cuid())
+  itemId           String
+  manuscriptId     String
+  analysisRunId    String?
+  analysisOutputId String?
+  snapshotId       String?
+  sourceType       String
+  sourceId         String?
+  promptVersion    String?
+  model            String?
+  rawOutputHash    String?
+  rawOutput        Json?
+  provenance       Json?
+  createdAt        DateTime @default(now())
+
+  item           EditorialMemoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  manuscript     Manuscript          @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  analysisRun    AnalysisRun?        @relation(fields: [analysisRunId], references: [id], onDelete: SetNull)
+  analysisOutput AnalysisOutput?     @relation(fields: [analysisOutputId], references: [id], onDelete: SetNull)
+  snapshot       AnalysisSnapshot?   @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
+
+  @@index([itemId])
+  @@index([manuscriptId])
+  @@index([analysisRunId])
+  @@index([analysisOutputId])
+  @@index([snapshotId])
+  @@index([sourceType])
+  @@index([rawOutputHash])
+}
+
+model EditorialMemoryAnchor {
+  id                String                @id @default(cuid())
+  itemId            String
+  manuscriptId      String
+  nodeId            String?
+  chapterId         String?
+  sceneId           String?
+  chunkId           String?
+  paragraphStart    Int?
+  paragraphEnd      Int?
+  startOffset       Int?
+  endOffset         Int?
+  textHash          String?
+  revision          Int?
+  sourceTextSnippet String?
+  status            EditorialMemoryStatus @default(ACTIVE)
+  metadata          Json?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  item       EditorialMemoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  manuscript Manuscript          @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+
+  @@index([itemId])
+  @@index([manuscriptId])
+  @@index([nodeId])
+  @@index([chapterId])
+  @@index([sceneId])
+  @@index([chunkId])
+  @@index([textHash])
+  @@index([status])
+  @@index([manuscriptId, status])
+}
+
+model EditorialMemoryRevision {
+  id            String                 @id @default(cuid())
+  itemId        String
+  manuscriptId  String
+  analysisRunId String?
+  snapshotId    String?
+  fromStatus    EditorialMemoryStatus?
+  toStatus      EditorialMemoryStatus
+  reason        String
+  previousValue Json?
+  nextValue     Json?
+  metadata      Json?
+  createdAt     DateTime               @default(now())
+
+  item        EditorialMemoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  manuscript  Manuscript          @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  analysisRun AnalysisRun?        @relation(fields: [analysisRunId], references: [id], onDelete: SetNull)
+  snapshot    AnalysisSnapshot?   @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
+
+  @@index([itemId])
+  @@index([manuscriptId])
+  @@index([analysisRunId])
+  @@index([snapshotId])
+  @@index([toStatus])
+  @@index([createdAt])
 }
 
 model ChapterRewrite {
@@ -731,6 +920,7 @@ model ManuscriptNode {
 model CompilerArtifact {
   id              String   @id @default(cuid())
   manuscriptId    String
+  snapshotId      String?
   nodeId          String?
   chapterId       String?
   sceneId         String?
@@ -747,8 +937,11 @@ model CompilerArtifact {
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  snapshot        AnalysisSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
+
   @@unique([manuscriptId, artifactType, inputHash])
   @@index([manuscriptId])
+  @@index([snapshotId])
   @@index([nodeId])
   @@index([chapterId])
   @@index([sceneId])
@@ -865,6 +1058,7 @@ model StyleFingerprint {
 model PipelineJob {
   id             String    @id @default(cuid())
   manuscriptId   String?
+  snapshotId     String?
   chapterId      String?
   type           String
   status         String    @default("QUEUED")
@@ -885,8 +1079,10 @@ model PipelineJob {
   updatedAt      DateTime  @updatedAt
 
   manuscript Manuscript? @relation(fields: [manuscriptId], references: [id], onDelete: Cascade)
+  snapshot   AnalysisSnapshot? @relation(fields: [snapshotId], references: [id], onDelete: SetNull)
 
   @@index([manuscriptId])
+  @@index([snapshotId])
   @@index([chapterId])
   @@index([type])
   @@index([status])

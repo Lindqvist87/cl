@@ -17,6 +17,7 @@ const PROMPT_VERSION = "compiler-v1";
 type StepOptions = {
   maxItems?: number;
   forceCompilerFallback?: boolean;
+  snapshotId?: string | null;
 };
 
 type CompilerResult<T> = {
@@ -180,6 +181,7 @@ export async function compileSceneDigests(
 
     const artifact = await saveCompilerArtifact({
       manuscriptId,
+      snapshotId: options.snapshotId,
       nodeId: node?.id,
       chapterId: item.scene.chapterId,
       sceneId: item.scene.id,
@@ -372,6 +374,7 @@ export async function compileChapterCapsules(
 
     await saveCompilerArtifact({
       manuscriptId,
+      snapshotId: options.snapshotId,
       nodeId: node?.id,
       chapterId: item.chapter.id,
       artifactType: "CHAPTER_CAPSULE",
@@ -442,7 +445,13 @@ export async function compileWholeBookMap(
     profile: compactProfile(manuscript.profile),
     chapterCapsules: chapterCapsules.map((artifact) => artifact.output),
     facts: facts.map(compactFact),
-    events: events.map(compactEvent)
+    events: events.map(compactEvent),
+    coverage: wholeBookCoverageMap({
+      chapterCount: manuscript.chapterCount,
+      chapterCapsules,
+      facts,
+      events
+    })
   };
   const inputHash = hashJson(inputPackage);
   const existing = await prisma.compilerArtifact.findFirst({
@@ -489,7 +498,8 @@ export async function compileWholeBookMap(
               topCommercialRisks: ["risks"],
               revisionStrategy: "strategy",
               confidence: "0-1",
-              uncertainties: ["uncertainties"]
+              uncertainties: ["uncertainties"],
+              coverageGaps: ["missing or weak evidence areas"]
             },
             context: inputPackage
           },
@@ -500,6 +510,7 @@ export async function compileWholeBookMap(
 
   await saveCompilerArtifact({
     manuscriptId,
+    snapshotId: options.snapshotId,
     nodeId: node?.id,
     artifactType: "WHOLE_BOOK_MAP",
     inputHash,
@@ -558,6 +569,11 @@ export async function createNextBestEditorialActions(
   const inputPackage = {
     wholeBookMap: wholeBookMap?.output ?? {},
     chapterCapsules: chapterCapsules.map((artifact) => artifact.output),
+    coverage: chiefEditorCoverageMap({
+      wholeBookMap: wholeBookMap?.output,
+      chapterCapsules,
+      findings
+    }),
     highSeverityFindings: findings.map((finding) => ({
       id: finding.id,
       chapterId: finding.chapterId,
@@ -614,7 +630,8 @@ export async function createNextBestEditorialActions(
                   riskIfIgnored: "risk",
                   suggestedNextStep: "specific next step"
                 }
-              ]
+              ],
+              uncertainties: ["what the editor still cannot know from available memory"]
             },
             context: inputPackage
           },
@@ -625,6 +642,7 @@ export async function createNextBestEditorialActions(
 
   await saveCompilerArtifact({
     manuscriptId,
+    snapshotId: options.snapshotId,
     artifactType: "NEXT_BEST_ACTIONS",
     inputHash,
     result
@@ -689,6 +707,7 @@ function shouldUseCompilerFallback(options: StepOptions = {}) {
 
 async function saveCompilerArtifact(input: {
   manuscriptId: string;
+  snapshotId?: string | null;
   nodeId?: string | null;
   chapterId?: string | null;
   sceneId?: string | null;
@@ -707,6 +726,7 @@ async function saveCompilerArtifact(input: {
     },
     create: {
       manuscriptId: input.manuscriptId,
+      snapshotId: input.snapshotId,
       nodeId: input.nodeId,
       chapterId: input.chapterId,
       sceneId: input.sceneId,
@@ -721,6 +741,7 @@ async function saveCompilerArtifact(input: {
     },
     update: {
       nodeId: input.nodeId,
+      snapshotId: input.snapshotId,
       chapterId: input.chapterId,
       sceneId: input.sceneId,
       chunkId: input.chunkId,
@@ -938,6 +959,59 @@ async function createEditorialDecisionsFromActions(
       })
     }))
   });
+}
+
+export function wholeBookCoverageMap(input: {
+  chapterCount: number;
+  chapterCapsules: Array<{ chapterId?: string | null }>;
+  facts: Array<{ chapterId?: string | null }>;
+  events: Array<{ chapterId?: string | null }>;
+}) {
+  const coveredChapterIds = new Set(
+    input.chapterCapsules
+      .map((artifact) => artifact.chapterId)
+      .filter((id): id is string => Boolean(id))
+  );
+  const chaptersWithFacts = new Set(
+    input.facts.map((fact) => fact.chapterId).filter((id): id is string => Boolean(id))
+  );
+  const chaptersWithEvents = new Set(
+    input.events.map((event) => event.chapterId).filter((id): id is string => Boolean(id))
+  );
+
+  return {
+    expectedChapterCount: input.chapterCount,
+    chapterCapsuleCount: input.chapterCapsules.length,
+    coveredChapterIds: [...coveredChapterIds].sort(),
+    factCount: input.facts.length,
+    eventCount: input.events.length,
+    chaptersWithFacts: [...chaptersWithFacts].sort(),
+    chaptersWithEvents: [...chaptersWithEvents].sort(),
+    incomplete:
+      input.chapterCount > 0 && input.chapterCapsules.length < input.chapterCount,
+    uncertainties:
+      input.chapterCount > 0 && input.chapterCapsules.length < input.chapterCount
+        ? [
+            `Only ${input.chapterCapsules.length} of ${input.chapterCount} chapter capsule(s) are available.`
+          ]
+        : []
+  };
+}
+
+export function chiefEditorCoverageMap(input: {
+  wholeBookMap?: unknown;
+  chapterCapsules: unknown[];
+  findings: unknown[];
+}) {
+  return {
+    hasWholeBookMap: Boolean(input.wholeBookMap),
+    chapterCapsuleCount: input.chapterCapsules.length,
+    prioritizedFindingCount: input.findings.length,
+    uncertainties: [
+      ...(input.wholeBookMap ? [] : ["Whole-book map is missing."]),
+      ...(input.chapterCapsules.length > 0 ? [] : ["Chapter capsules are missing."])
+    ]
+  };
 }
 
 function sceneDigestInputHash(
