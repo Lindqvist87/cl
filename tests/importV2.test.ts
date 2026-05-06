@@ -7,6 +7,7 @@ import { buildImportInspectorData } from "../lib/editorial/importInspector";
 import {
   importManifestToParsedManuscript
 } from "../lib/import/v2/adapter";
+import { detectDocumentChapters } from "../lib/document/chapterMarkers";
 import {
   buildImportInvalidationPlan
 } from "../lib/import/v2/invalidation";
@@ -298,6 +299,75 @@ ${paragraphs}
     ),
     false
   );
+});
+
+test("document chapter detection accepts sequential numeric page headings", () => {
+  const detection = detectDocumentChapters([
+    {
+      pageNumber: 1,
+      text: "1\n\nForsta kapitlet oppnar med en tydlig scen."
+    },
+    {
+      pageNumber: 2,
+      text: "2\n\nAndra kapitlet flyttar konflikten framat."
+    },
+    {
+      pageNumber: 3,
+      text: "3\n\nTredje kapitlet samlar tradarna."
+    }
+  ]);
+
+  assert.equal(detection.canDetermineChapters, true);
+  assert.equal(detection.warning, null);
+  assert.deepEqual(
+    detection.chapters.map((chapter) => chapter.title),
+    ["1", "2", "3"]
+  );
+  assert.deepEqual(
+    detection.chapters.map((chapter) => chapter.method),
+    ["numeric_sequence", "numeric_sequence", "numeric_sequence"]
+  );
+});
+
+test("document chapter detection accepts short headings at the top of pages", () => {
+  const detection = detectDocumentChapters([
+    {
+      pageNumber: 1,
+      text: "Hemkomsten\n\nForsta sidan har brodtext nog for att vara en kapitelstart."
+    },
+    {
+      pageNumber: 2,
+      text: "Avskedet\n\nNasta sida fortsatter med en ny tydlig rubrik och brodtext."
+    }
+  ]);
+
+  assert.equal(detection.canDetermineChapters, true);
+  assert.deepEqual(
+    detection.chapters.map((chapter) => chapter.title),
+    ["Hemkomsten", "Avskedet"]
+  );
+  assert.deepEqual(
+    detection.chapters.map((chapter) => chapter.method),
+    ["page_top_heading", "page_top_heading"]
+  );
+});
+
+test("document chapter detection warns when chapters cannot be determined", () => {
+  const detection = detectDocumentChapters([
+    {
+      pageNumber: 1,
+      text: "Det regnade over hamnen och texten fortsatte utan rubriker."
+    },
+    {
+      pageNumber: 2,
+      text: "Berattelsen fortsatte pa nasta sida med samma lopande scen."
+    }
+  ]);
+
+  assert.equal(detection.canDetermineChapters, false);
+  assert.equal(detection.chapters.length, 0);
+  assert.equal(detection.warning?.code, "chapters_not_detected");
+  assert.equal(detection.warning?.instructions.length, 3);
 });
 
 test("broken docx fixture fails structured parsing and surfaces extraction phase", async () => {
