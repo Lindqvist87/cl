@@ -10,6 +10,7 @@ import {
 import {
   buildImportInvalidationPlan
 } from "../lib/import/v2/invalidation";
+import { importManifestToPagedDocumentText } from "../lib/document/pageMarkers";
 import {
   importManifestToNormalizedText
 } from "../lib/import/v2/manifest";
@@ -237,6 +238,8 @@ test("structured docx import reads styles, lists, page breaks, comments and trac
   assert.equal(manifest.blocks.some((block) => block.type === "title"), true);
   assert.equal(manifest.blocks.some((block) => block.type === "list_item"), true);
   assert.equal(manifest.blocks.some((block) => block.type === "page_break"), true);
+  assert.match(importManifestToPagedDocumentText(manifest), /\[\[Sida 1\]\]/);
+  assert.match(importManifestToPagedDocumentText(manifest), /\[\[Sida 2\]\]/);
   assert.equal(
     manifest.blocks.some((block) => block.text === "Tabellrad som inte far tappas."),
     true
@@ -246,6 +249,54 @@ test("structured docx import reads styles, lists, page breaks, comments and trac
   assert.deepEqual(
     parsed.chapters.map((chapter) => chapter.title),
     ["Kapitel 1"]
+  );
+});
+
+test("docx upload text preserves imported page boundaries for the editor", async () => {
+  const extracted = await extractTextFromUpload(
+    new File([await docxFixtureBuffer()], "structured.docx", {
+      type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    })
+  );
+
+  assert.match(extracted.text, /\[\[Sida 1\]\]/);
+  assert.match(extracted.text, /\[\[Sida 2\]\]/);
+  assert.match(extracted.text, /Forsta stycket/);
+  assert.match(extracted.text, /Infogat stycke/);
+});
+
+test("docx upload text estimates page boundaries when Word page breaks are missing", async () => {
+  const paragraphs = Array.from(
+    { length: 40 },
+    (_, index) =>
+      `<w:p><w:pPr><w:spacing w:after="160"/></w:pPr><w:r><w:t>Stycke ${index + 1} ${Array.from({ length: 60 }, () => "ord").join(" ")}</w:t></w:r></w:p>`
+  ).join("\n");
+  const extracted = await extractTextFromUpload(
+    new File(
+      [
+        await docxBodyFixtureBuffer(`
+${paragraphs}
+    <w:sectPr><w:pgSz w:w="6000" w:h="6000"/><w:pgMar w:top="720" w:right="720" w:bottom="720" w:left="720"/></w:sectPr>`)
+      ],
+      "estimated-pages.docx",
+      {
+        type: "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+      }
+    )
+  );
+  const pageMarkers = extracted.text.match(/\[\[Sida [0-9]+\]\]/g) ?? [];
+  const pageLayout = extracted.importManifest?.metadata?.pageLayout as
+    | Record<string, unknown>
+    | undefined;
+
+  assert.equal(pageMarkers.length > 1, true);
+  assert.match(extracted.text, /\[\[Sida 2\]\]/);
+  assert.equal(pageLayout?.pageWidthTwips, 6000);
+  assert.equal(
+    extracted.importManifest?.blocks.some(
+      (block) => block.type === "page_break" || block.pageBreakBefore
+    ),
+    false
   );
 });
 

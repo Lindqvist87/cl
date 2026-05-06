@@ -9,6 +9,7 @@ import {
 } from "@/lib/import/v2/manifest";
 import type { ImportManifest } from "@/lib/import/v2/types";
 import { jsonInput } from "@/lib/json";
+import { stripDocumentPageMarkers } from "@/lib/document/pageMarkers";
 import { countWords, normalizeWhitespace } from "@/lib/text/wordCount";
 
 type CreateManuscriptInput = {
@@ -189,7 +190,8 @@ export async function createUploadedManuscriptShell(
   input: CreateUploadedManuscriptShellInput
 ) {
   const originalText = normalizeWhitespace(input.originalText);
-  const wordCount = countWords(originalText);
+  const readableText = stripDocumentPageMarkers(originalText);
+  const wordCount = countWords(readableText);
 
   if (wordCount === 0) {
     throw new Error("No readable manuscript text was found in the uploaded file.");
@@ -203,7 +205,7 @@ export async function createUploadedManuscriptShell(
     : null;
   const title =
     input.title?.trim() ||
-    inferManuscriptTitle(originalText, input.sourceFileName);
+    inferManuscriptTitle(readableText, input.sourceFileName);
   const metadata = {
     compilerVersion: "compiler-v1",
     importFlow: "doc-only",

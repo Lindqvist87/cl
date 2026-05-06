@@ -2,6 +2,10 @@ import mammoth from "mammoth";
 import { ManuscriptFormat } from "@prisma/client";
 import { hashText } from "@/lib/compiler/hash";
 import {
+  importManifestToPagedDocumentText,
+  stripDocumentPageMarkers
+} from "@/lib/document/pageMarkers";
+import {
   importManifestToNormalizedText
 } from "@/lib/import/v2/manifest";
 import { parseDocxToImportManifest } from "@/lib/import/v2/docx";
@@ -51,7 +55,7 @@ export function validateManuscriptUploadFile(file: File) {
 export function validateExtractedManuscriptText(
   extracted: ExtractedManuscriptText
 ) {
-  if (countWords(extracted.text) === 0) {
+  if (countWords(stripDocumentPageMarkers(extracted.text)) === 0) {
     throw new Error("No readable manuscript text was found in the uploaded file.");
   }
 }
@@ -82,7 +86,7 @@ export async function extractTextFromUpload(file: File): Promise<ExtractedManusc
 
       if (guarded) {
         return {
-          text: importManifestToNormalizedText(guarded),
+          text: importManifestToPagedDocumentText(guarded),
           format: ManuscriptFormat.DOCX,
           mimeType,
           importManifest: guarded
@@ -90,7 +94,7 @@ export async function extractTextFromUpload(file: File): Promise<ExtractedManusc
       }
 
       return {
-        text: structuredText,
+        text: importManifestToPagedDocumentText(importManifest),
         format: ManuscriptFormat.DOCX,
         mimeType,
         importManifest
@@ -116,7 +120,7 @@ export async function extractTextFromUpload(file: File): Promise<ExtractedManusc
       });
 
       return {
-        text: importManifestToNormalizedText(importManifest),
+        text: importManifestToPagedDocumentText(importManifest),
         format: ManuscriptFormat.DOCX,
         mimeType,
         importManifest
