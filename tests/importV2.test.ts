@@ -7,7 +7,10 @@ import { buildImportInspectorData } from "../lib/editorial/importInspector";
 import {
   importManifestToParsedManuscript
 } from "../lib/import/v2/adapter";
-import { detectDocumentChapters } from "../lib/document/chapterMarkers";
+import {
+  detectDocumentChapters,
+  updateDocumentChapterText
+} from "../lib/document/chapterMarkers";
 import {
   buildImportInvalidationPlan
 } from "../lib/import/v2/invalidation";
@@ -358,6 +361,34 @@ test("document chapter detection accepts short headings at the top of pages", ()
   assert.deepEqual(
     detection.chapters.map((chapter) => chapter.method),
     ["page_top_heading", "page_top_heading"]
+  );
+});
+
+test("document chapter editing updates the same paged document text", () => {
+  const pages = [
+    { pageNumber: 1, text: "1\n\nForsta sidan." },
+    { pageNumber: 2, text: "Fortsattning pa forsta kapitlet." },
+    { pageNumber: 3, text: "2\n\nAndra kapitlet borjar." },
+    { pageNumber: 4, text: "Andra kapitlet fortsatter." },
+    { pageNumber: 5, text: "3\n\nSlutet fortsatter." }
+  ];
+  const updatedPages = updateDocumentChapterText(
+    pages,
+    2,
+    "2\n\nAndra kapitlet har redigerats.\n\nNy rad i samma kapitel."
+  );
+  const detection = detectDocumentChapters(updatedPages);
+
+  assert.equal(updatedPages.length, pages.length);
+  assert.match(updatedPages[2].text, /^2\n\nAndra kapitlet har redigerats\./);
+  assert.match(updatedPages[3].text, /Ny rad i samma kapitel\./);
+  assert.deepEqual(
+    detection.chapters.map((chapter) => chapter.title),
+    ["1", "2", "3"]
+  );
+  assert.equal(
+    detection.chapters[1].text,
+    "2\n\nAndra kapitlet har redigerats.\n\nNy rad i samma kapitel."
   );
 });
 

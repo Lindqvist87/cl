@@ -11,6 +11,7 @@ export type DocumentChapter = {
   order: number;
   title: string;
   heading: string;
+  text: string;
   startPageNumber: number;
   endPageNumber: number;
   wordCount: number;
@@ -74,13 +75,10 @@ export function detectDocumentChapters(
   pages: DocumentPage[]
 ): DocumentChapterDetection {
   const lines = flattenPages(pages);
-  const explicitCandidates = findExplicitHeadingCandidates(lines);
-  const numericCandidates = findSequentialNumericCandidates(lines);
-  const pageTopCandidates = findPageTopHeadingCandidates(pages, lines);
-  const candidates =
-    explicitCandidates.length > 0 || numericCandidates.length > 0
-      ? mergeCandidates([...explicitCandidates, ...numericCandidates])
-      : mergeCandidates(pageTopCandidates);
+  const { candidates, pageTopCandidates } = findChapterStartCandidates(
+    pages,
+    lines
+  );
 
   const canDetermineChapters =
     candidates.some((candidate) => candidate.method !== "page_top_heading") ||
@@ -103,6 +101,85 @@ export function detectDocumentChapters(
     methods: [...new Set(chapters.map((chapter) => chapter.method))],
     warning: chapters.length > 0 ? null : chapterDetectionWarning()
   };
+}
+
+export function updateDocumentChapterText(
+  pages: DocumentPage[],
+  chapterOrder: number,
+  nextText: string
+): DocumentPage[] {
+  const lines = flattenPages(pages);
+  const { candidates } = findChapterStartCandidates(pages, lines);
+  const target = candidates[chapterOrder - 1];
+
+  if (!target) {
+    return pages;
+  }
+
+  const nextCandidate = candidates[chapterOrder];
+  const rangeLines = lines.filter(
+    (line) =>
+      line.globalLineIndex >= target.line.globalLineIndex &&
+      (!nextCandidate || line.globalLineIndex < nextCandidate.line.globalLineIndex)
+  );
+
+  if (rangeLines.length === 0) {
+    return pages;
+  }
+
+  const replacementLines = normalizeLineEndings(nextText).split("\n");
+  const linesByPage = pages.map((page) => normalizeLineEndings(page.text).split("\n"));
+  const rangeByPage = new Map<number, LineRef[]>();
+
+  for (const line of rangeLines) {
+    const pageLines = rangeByPage.get(line.pageIndex) ?? [];
+    pageLines.push(line);
+    rangeByPage.set(line.pageIndex, pageLines);
+  }
+
+  const affectedPageIndexes = [...rangeByPage.keys()].sort((a, b) => a - b);
+  let replacementOffset = 0;
+
+  affectedPageIndexes.forEach((pageIndex, index) => {
+    const pageRangeLines = rangeByPage.get(pageIndex) ?? [];
+    if (pageRangeLines.length === 0) {
+      return;
+    }
+
+    const firstLineIndex = pageRangeLines[0].lineIndex;
+    const removeCount = pageRangeLines.length;
+    const isLastPage = index === affectedPageIndexes.length - 1;
+    const insertCount = isLastPage
+      ? replacementLines.length - replacementOffset
+      : Math.min(
+          pageRangeLines.length,
+          Math.max(0, replacementLines.length - replacementOffset)
+        );
+    const insertLines = replacementLines.slice(
+      replacementOffset,
+      replacementOffset + insertCount
+    );
+
+    replacementOffset += insertCount;
+    linesByPage[pageIndex].splice(firstLineIndex, removeCount, ...insertLines);
+  });
+
+  return pages.map((page, index) => ({
+    ...page,
+    text: linesByPage[index].join("\n")
+  }));
+}
+
+function findChapterStartCandidates(pages: DocumentPage[], lines: LineRef[]) {
+  const explicitCandidates = findExplicitHeadingCandidates(lines);
+  const numericCandidates = findSequentialNumericCandidates(lines);
+  const pageTopCandidates = findPageTopHeadingCandidates(pages, lines);
+  const candidates =
+    explicitCandidates.length > 0 || numericCandidates.length > 0
+      ? mergeCandidates([...explicitCandidates, ...numericCandidates])
+      : mergeCandidates(pageTopCandidates);
+
+  return { candidates, pageTopCandidates };
 }
 
 function findExplicitHeadingCandidates(lines: LineRef[]) {
@@ -233,6 +310,7 @@ function buildDetectedChapters(
       order: index + 1,
       title: candidate.title,
       heading: candidate.line.trimmed,
+      text: rangeLines.map((line) => line.text).join("\n"),
       startPageNumber: candidate.line.pageNumber,
       endPageNumber: lastContentLine.pageNumber,
       wordCount: countWords(chapterText),

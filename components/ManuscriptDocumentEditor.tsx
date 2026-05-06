@@ -27,6 +27,7 @@ import {
 } from "@/lib/document/pageMarkers";
 import {
   detectDocumentChapters,
+  updateDocumentChapterText,
   type DocumentChapterDetection,
   type DocumentChapterDetectionMethod,
   type DocumentChapterDetectionWarning
@@ -217,6 +218,18 @@ export function ManuscriptDocumentEditor({
     });
   }
 
+  function updateChapterText(chapterOrder: number, nextText: string) {
+    setPages((currentPages) => {
+      const nextPages = updateDocumentChapterText(
+        currentPages,
+        chapterOrder,
+        nextText
+      );
+      setText(joinDocumentPages(nextPages));
+      return nextPages;
+    });
+  }
+
   function addPage() {
     setPages((currentPages) => {
       const nextPages = [
@@ -331,7 +344,15 @@ export function ManuscriptDocumentEditor({
       ) : null}
 
       {viewMode === "chapters" ? (
-        <ChapterOverview detection={chapterDetection} />
+        <ChapterOverview
+          detection={chapterDetection}
+          onChapterTextChange={updateChapterText}
+          onChapterTextBlur={() => {
+            if (textRef.current !== lastSavedTextRef.current) {
+              void saveDocument(textRef.current);
+            }
+          }}
+        />
       ) : (
       <div className="space-y-8 bg-[#FAFAF7] px-3 py-4 sm:px-6 sm:py-7">
         {pages.map((page, index) => (
@@ -431,9 +452,13 @@ function ChapterDetectionWarning({
 }
 
 function ChapterOverview({
-  detection
+  detection,
+  onChapterTextBlur,
+  onChapterTextChange
 }: {
   detection: DocumentChapterDetection;
+  onChapterTextBlur: () => void;
+  onChapterTextChange: (chapterOrder: number, nextText: string) => void;
 }) {
   if (!detection.canDetermineChapters) {
     return (
@@ -474,11 +499,17 @@ function ChapterOverview({
                 </span>
               </div>
             </div>
-            {chapter.preview ? (
-              <p className="mt-3 line-clamp-3 text-sm leading-6 text-slate-700">
-                {chapter.preview}
-              </p>
-            ) : null}
+            <textarea
+              aria-label={`Kapitel ${chapter.order} dokumenttext`}
+              spellCheck
+              value={chapter.text}
+              onChange={(event) =>
+                onChapterTextChange(chapter.order, event.target.value)
+              }
+              onBlur={onChapterTextBlur}
+              className="mt-4 block min-h-[260px] w-full resize-y border-0 bg-transparent p-0 text-base leading-8 text-slate-800 outline-none placeholder:text-slate-400 focus:ring-0"
+              placeholder="BÃ¶rja skriva hÃ¤r..."
+            />
           </article>
         ))}
       </div>
