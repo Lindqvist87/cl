@@ -100,6 +100,9 @@ export default async function ManuscriptPage({
     }) ?? formatStatus(manuscript.analysisStatus);
   const showOperatorPanel =
     showOperatorTools && (!showDeveloperAdminTools || manualQueuedMode);
+  const hasPipelineActivity =
+    manuscript.pipelineJobs.length > 0 ||
+    manuscript.analysisStatus !== "NOT_STARTED";
   const lastInngestEvent = showDeveloperAdminTools
     ? await prisma.inngestEventLog.findFirst({
         where: { manuscriptId: manuscript.id },
@@ -137,8 +140,16 @@ export default async function ManuscriptPage({
             </Link>
             <div className="mt-4 flex flex-wrap items-center gap-3">
               <StatusBadge
-                status={docOnlyMode ? "UPLOADED" : manuscript.analysisStatus}
-                label={docOnlyMode ? "Dokument uppladdat" : displayedAnalysisStatus}
+                status={
+                  docOnlyMode && !hasPipelineActivity
+                    ? "UPLOADED"
+                    : manuscript.analysisStatus
+                }
+                label={
+                  docOnlyMode && !hasPipelineActivity
+                    ? "Dokument uppladdat"
+                    : displayedAnalysisStatus
+                }
               />
               {latestRewritePlan ? (
                 <span className="inline-flex min-h-8 items-center rounded-full border border-line bg-paper-alt px-3 text-sm font-semibold text-slate-600">
@@ -220,7 +231,14 @@ export default async function ManuscriptPage({
               label="Format"
               value={formatManuscriptFormat(manuscript.sourceFormat)}
             />
-            <Stat label="Status" value="Dokument uppladdat" />
+            <Stat
+              label={hasPipelineActivity ? "Analys" : "Status"}
+              value={
+                hasPipelineActivity
+                  ? displayedAnalysisStatus
+                  : "Dokument uppladdat"
+              }
+            />
           </>
         ) : (
           <>
@@ -239,7 +257,32 @@ export default async function ManuscriptPage({
           initialUpdatedAt={manuscript.updatedAt.toISOString()}
           sourceFileName={manuscript.sourceFileName}
           downloadHref={`/api/manuscripts/${manuscript.id}/document/docx`}
+          analysisStartHref={`/api/manuscripts/${manuscript.id}/run-pipeline`}
+          analysisDisabled={manuscript.analysisStatus === "RUNNING"}
         />
+      ) : null}
+
+      {docOnlyMode && hasPipelineActivity ? (
+        <>
+          <LivePipelineProgress
+            manuscriptId={manuscript.id}
+            initialStatus={pipelineStatus}
+            analysisStatus={manuscript.analysisStatus}
+            manualQueuedMode={manualQueuedMode}
+            showTechnicalDetails={showDeveloperAdminTools}
+            autoRunEndpoint={autoRunAfterUpload ? manualRunEndpoint : null}
+          />
+
+          {showOperatorPanel ? (
+            <OperatorAnalysisPanel
+              manuscriptId={manuscript.id}
+              endpoint={manualRunEndpoint}
+              manualQueuedMode={manualQueuedMode}
+              inngestEnabled={inngestConfig.enabled}
+              jobCounts={jobCounts}
+            />
+          ) : null}
+        </>
       ) : null}
 
       {!docOnlyMode ? (

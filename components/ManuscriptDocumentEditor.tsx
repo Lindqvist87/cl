@@ -8,10 +8,12 @@ import {
   Download,
   FileText,
   Loader2,
+  PlayCircle,
   Plus,
   Save,
   TriangleAlert
 } from "lucide-react";
+import { useRouter } from "next/navigation";
 import {
   useCallback,
   useEffect,
@@ -32,14 +34,20 @@ import {
   type DocumentChapterDetectionMethod,
   type DocumentChapterDetectionWarning
 } from "@/lib/document/chapterMarkers";
+import { PIPELINE_DIAGNOSTICS_REFRESH_EVENT } from "@/components/pipelineEvents";
 
 type SaveStatus = "saved" | "dirty" | "saving" | "error";
 type DocumentViewMode = "pages" | "chapters";
+type AnalysisStartStatus = "idle" | "starting" | "started" | "error";
 
 type SaveResponse = {
   error?: string;
   wordCount?: number;
   updatedAt?: string;
+};
+
+type AnalysisStartResponse = {
+  error?: string;
 };
 
 type ManuscriptDocumentEditorProps = {
@@ -49,6 +57,8 @@ type ManuscriptDocumentEditorProps = {
   initialUpdatedAt: string;
   sourceFileName: string;
   downloadHref: string;
+  analysisStartHref?: string;
+  analysisDisabled?: boolean;
 };
 
 const AUTOSAVE_DELAY_MS = 1200;
@@ -59,8 +69,11 @@ export function ManuscriptDocumentEditor({
   initialWordCount,
   initialUpdatedAt,
   sourceFileName,
-  downloadHref
+  downloadHref,
+  analysisStartHref,
+  analysisDisabled = false
 }: ManuscriptDocumentEditorProps) {
+  const router = useRouter();
   const initialPages = useMemo(() => splitDocumentIntoPages(initialText), [initialText]);
   const initialSerializedText = useMemo(
     () => joinDocumentPages(initialPages),
@@ -73,6 +86,9 @@ export function ManuscriptDocumentEditor({
   const [error, setError] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<string | null>(initialUpdatedAt);
   const [viewMode, setViewMode] = useState<DocumentViewMode>("pages");
+  const [analysisStartStatus, setAnalysisStartStatus] =
+    useState<AnalysisStartStatus>("idle");
+  const [analysisError, setAnalysisError] = useState<string | null>(null);
 
   const textRef = useRef(initialSerializedText);
   const lastSavedTextRef = useRef(initialSerializedText);
@@ -208,6 +224,63 @@ export function ManuscriptDocumentEditor({
     }
   }
 
+  async function handleStartAnalysis() {
+    if (!analysisStartHref) {
+      return;
+    }
+
+    setAnalysisStartStatus("starting");
+    setAnalysisError(null);
+
+    const saved = await saveDocument(textRef.current);
+    if (!saved && textRef.current !== lastSavedTextRef.current) {
+      setAnalysisStartStatus("error");
+      setAnalysisError("Spara dokumentet innan analysen startas.");
+      return;
+    }
+
+    dispatchProgressRefresh("starting", true);
+
+    try {
+      const response = await fetch(analysisStartHref, {
+        method: "POST"
+      });
+      const payload = (await response.json().catch(() => ({}))) as
+        AnalysisStartResponse;
+
+      if (!response.ok) {
+        throw new Error(payload.error ?? "Analysen kunde inte startas.");
+      }
+
+      setAnalysisStartStatus("started");
+      dispatchProgressRefresh("running", false);
+      router.refresh();
+    } catch (startError) {
+      const message =
+        startError instanceof Error
+          ? startError.message
+          : "Analysen kunde inte startas.";
+      setAnalysisStartStatus("error");
+      setAnalysisError(message);
+      dispatchProgressRefresh("failed", false);
+    }
+  }
+
+  function dispatchProgressRefresh(
+    phase: "starting" | "running" | "failed",
+    autoRunnerActive: boolean
+  ) {
+    window.dispatchEvent(
+      new CustomEvent(PIPELINE_DIAGNOSTICS_REFRESH_EVENT, {
+        detail: {
+          manuscriptId,
+          autoRunnerActive,
+          phase
+        }
+      })
+    );
+  }
+
   function updatePageText(pageIndex: number, nextText: string) {
     setPages((currentPages) => {
       const nextPages = currentPages.map((page, index) =>
@@ -310,6 +383,26 @@ export function ManuscriptDocumentEditor({
             <Save size={16} aria-hidden="true" />
             Spara nu
           </button>
+          {analysisStartHref ? (
+            <button
+              type="button"
+              onClick={handleStartAnalysis}
+              disabled={
+                status === "saving" ||
+                analysisDisabled ||
+                analysisStartStatus === "starting" ||
+                analysisStartStatus === "started"
+              }
+              className="primary-button min-h-9 px-3"
+            >
+              {analysisStartStatus === "starting" ? (
+                <Loader2 size={16} className="animate-spin" aria-hidden="true" />
+              ) : (
+                <PlayCircle size={16} aria-hidden="true" />
+              )}
+              {analysisStartLabel(analysisStartStatus, analysisDisabled)}
+            </button>
+          ) : null}
           <button
             type="button"
             onClick={addPage}
@@ -336,6 +429,15 @@ export function ManuscriptDocumentEditor({
           role="alert"
         >
           {error}
+        </div>
+      ) : null}
+
+      {analysisError ? (
+        <div
+          className="border-b border-danger/20 bg-red-50 px-5 py-3 text-sm font-semibold text-danger"
+          role="alert"
+        >
+          {analysisError}
         </div>
       ) : null}
 
@@ -564,6 +666,21 @@ function getStatusMeta(status: SaveStatus) {
     label: "Osparade ändringar",
     className: "border-warn/20 bg-warn/10 text-warn"
   };
+}
+
+function analysisStartLabel(
+  status: AnalysisStartStatus,
+  disabled: boolean
+) {
+  if (status === "starting") {
+    return "Startar...";
+  }
+
+  if (status === "started" || disabled) {
+    return "Analysen pågår";
+  }
+
+  return "Starta analys";
 }
 
 function formatSavedAt(value: string | null) {

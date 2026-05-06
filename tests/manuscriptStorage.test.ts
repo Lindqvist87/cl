@@ -5,6 +5,8 @@ import {
   createStoredManuscript,
   createUploadedManuscriptShell
 } from "../lib/storage/manuscripts";
+import { buildTextImportManifest } from "../lib/import/v2/text";
+import { importManifestFromMetadata } from "../lib/import/v2/manifest";
 import { saveEditableManuscriptDocument } from "../lib/server/manuscriptDocument";
 import { prisma } from "../lib/prisma";
 import type { ParsedChunk, ParsedManuscript } from "../lib/types";
@@ -180,6 +182,90 @@ test("saveEditableManuscriptDocument autosaves edited document text", async () =
   assert.equal(editor.revision, 3);
   assert.equal(editor.note, "preserve");
   assert.equal(editor.lastAutosavedAt, savedAt.toISOString());
+});
+
+test("saveEditableManuscriptDocument clears stale import manifest when text changes", async () => {
+  const updates: Array<Record<string, unknown>> = [];
+  const savedAt = new Date("2026-05-06T11:30:00Z");
+  const manifest = buildTextImportManifest({
+    rawText: "Old title\n\nOld paragraph.",
+    sourceFileName: "old.docx"
+  });
+
+  await withPatchedPrisma(
+    [
+      [
+        prisma,
+        {
+          manuscript: {
+            findUnique: async () => ({
+              id: "manuscript-1",
+              originalText: "Old title\n\nOld paragraph.",
+              metadata: {
+                importFlow: "doc-only",
+                importManifestV2: manifest,
+                importManifest: manifest,
+                importV2: {
+                  signature: "stale-signature",
+                  sourceHash: "stale-source",
+                  structureHash: "stale-structure"
+                },
+                import: {
+                  parserVersion: manifest.parserVersion,
+                  importSignature: "stale-signature",
+                  normalizedTextHash: "stale-normalized",
+                  sourceHash: "stale-source",
+                  structureHash: "stale-structure"
+                },
+                importReview: { pendingInvalidation: true },
+                structureReview: { recommended: true },
+                importSignature: "stale-signature",
+                documentEditor: {
+                  revision: 4,
+                  note: "preserve"
+                }
+              }
+            }),
+            update: async (args: { data: Record<string, unknown> }) => {
+              updates.push(args.data);
+              return {
+                id: "manuscript-1",
+                title: "Test Manuscript",
+                originalText: args.data.originalText,
+                wordCount: args.data.wordCount,
+                updatedAt: savedAt
+              };
+            }
+          }
+        }
+      ]
+    ],
+    async () => {
+      await saveEditableManuscriptDocument({
+        manuscriptId: "manuscript-1",
+        text: "New title\n\nNew paragraph text.",
+        now: savedAt
+      });
+    }
+  );
+
+  const metadata = updates[0].metadata as Record<string, unknown>;
+  const editor = metadata.documentEditor as Record<string, unknown>;
+
+  assert.equal(importManifestFromMetadata(metadata), null);
+  assert.equal("importManifestV2" in metadata, false);
+  assert.equal("importManifest" in metadata, false);
+  assert.equal("importV2" in metadata, false);
+  assert.equal("import" in metadata, false);
+  assert.equal("importReview" in metadata, false);
+  assert.equal("structureReview" in metadata, false);
+  assert.equal("importSignature" in metadata, false);
+  assert.equal(metadata.importFlow, "doc-only");
+  assert.equal(metadata.roughWordCount, 5);
+  assert.equal(metadata.sourceHash, editor.sourceHash);
+  assert.equal(editor.revision, 5);
+  assert.equal(editor.note, "preserve");
+  assert.equal(editor.importManifestInvalidatedAt, savedAt.toISOString());
 });
 
 test("createStoredManuscript persists large parsed manuscripts with batched createMany calls", async () => {
