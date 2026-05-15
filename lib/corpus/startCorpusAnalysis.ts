@@ -23,6 +23,7 @@ export async function startCorpusAnalysis(input: {
   corpusBookId: string;
   source: string;
   runFallbackWhenDisabled?: boolean;
+  runManualFallbackAfterDispatch?: boolean;
   maxJobs?: number;
   maxSeconds?: number;
 }) {
@@ -55,10 +56,34 @@ export async function startCorpusAnalysis(input: {
         eventSent: false,
         eventIds: [] as string[],
         eventError: event.error,
+        manualFallbackRan: true,
         warnings: [
           ...corpusAnalysisWarnings(config, "MANUAL"),
           "Inngest event dispatch failed; ran the manual corpus fallback for this request."
         ],
+        batch,
+        nextEligibleJobReason: batch.nextEligibleJobReason,
+        summary: await getCorpusAnalysisSummary(input.corpusBookId)
+      };
+    }
+
+    if (event.sent && input.runManualFallbackAfterDispatch) {
+      const batch = await runReadyCorpusAnalysisJobs({
+        corpusBookId: input.corpusBookId,
+        maxJobs: input.maxJobs ?? 10,
+        maxSeconds: input.maxSeconds ?? 240
+      });
+
+      return {
+        executionMode,
+        accepted: true,
+        corpusBookId: input.corpusBookId,
+        jobCount: ensured.jobs.length,
+        eventSent: true,
+        eventIds: event.ids,
+        eventError: null,
+        manualFallbackRan: true,
+        warnings: corpusAnalysisWarnings(config, executionMode),
         batch,
         nextEligibleJobReason: batch.nextEligibleJobReason,
         summary: await getCorpusAnalysisSummary(input.corpusBookId)
@@ -73,6 +98,7 @@ export async function startCorpusAnalysis(input: {
       eventSent: event.sent,
       eventIds: event.ids,
       eventError: event.error,
+      manualFallbackRan: false,
       warnings: corpusAnalysisWarnings(config, executionMode),
       ...(await corpusAnalysisDiagnostics(input.corpusBookId)),
       summary: await getCorpusAnalysisSummary(input.corpusBookId)
@@ -94,6 +120,7 @@ export async function startCorpusAnalysis(input: {
       eventSent: false,
       eventIds: [] as string[],
       eventError: null,
+      manualFallbackRan: true,
       warnings: corpusAnalysisWarnings(config, executionMode),
       batch,
       nextEligibleJobReason: batch.nextEligibleJobReason,
@@ -109,6 +136,7 @@ export async function startCorpusAnalysis(input: {
     eventSent: false,
     eventIds: [] as string[],
     eventError: null,
+    manualFallbackRan: false,
     warnings: corpusAnalysisWarnings(config, executionMode),
     ...(await corpusAnalysisDiagnostics(input.corpusBookId)),
     summary: await getCorpusAnalysisSummary(input.corpusBookId)
